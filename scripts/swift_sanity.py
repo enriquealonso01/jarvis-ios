@@ -148,10 +148,13 @@ required_guard_pins = [
     # UUID()` field makes the 5s pollHistory compare unequal every tick and
     # re-create every bubble (flicker + scroll jump).
     ("ChatsView.swift", ['var id: String { role + "|" + text }',
-                         # startTask slug: project is a plain String —
-                         # `project.map {}` iterates CHARACTERS and fails the
-                         # build; must slug-ify the whole string.
-                         "project.components(separatedBy: CharacterSet.alphanumerics.inverted)"]),
+                         # startTask slug MUST mirror the server's rule
+                         # (control_project_task: keep [A-Za-z0-9_-], truncate
+                         # 48). The old alphanumerics.inverted filter dropped
+                         # hyphens/underscores → "jarvis-ios" became
+                         # "project-jarvisios" ≠ server "project-jarvis-ios",
+                         # so chats posted to a nonexistent thread.
+                         'Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")']),
     # SecretsView resilience: a failed load must KEEP the last-known-good
     # list and surface the error — the old `secrets = []` catch turned a
     # transient bridge outage into the lie "No secrets stored".

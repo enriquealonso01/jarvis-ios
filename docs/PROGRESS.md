@@ -1,5 +1,29 @@
 # PROGRESS
 
+## 2026-09-18 13:35 UTC (build-loop run) — ChatsView new-task slug now mirrors the server's slug rule exactly
+
+- Contract-audit of the Chats "New project task" flow found ONE real defect:
+  **the app's slug-ifier didn't match the server's.** Dashboard
+  `control_project_task` builds `project-<slug>` with
+  `re.sub(r"[^A-Za-z0-9_-]", "", project)[:48]` (keeps hyphens/underscores);
+  the app used `CharacterSet.alphanumerics.inverted`, which DROPS them —
+  "jarvis-ios" produced `project-jarvisios` client-side while the server
+  created `project-jarvis-ios`. The optimistic row inserted the wrong id and
+  every subsequent chat POST/history GET in that thread hit a conversation
+  that doesn't exist server-side (silent divergent threads for any project
+  whose name contains a hyphen — which is most of Enrique's).
+- Fixed in ChatsView.startTask: explicit allowed-set filter
+  `[A-Za-z0-9_-]` + 48-char truncate + "adhoc" fallback, byte-for-byte the
+  server rule; comment documents why.
+- swift_sanity pin swapped to require the allowed-set form (the old pin
+  actually pinned the BUGGY alphanumerics.inverted line — a revert to it now
+  fails the sweep).
+- Parity harness run (8 tricky inputs incl. "jarvis-ios", "Krendora_IG",
+  "---", 50+ char truncation): server slug == swift slug on all — PASS.
+- swift_sanity: exit 0 with the new pin.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 13:04 UTC (build-loop run) — CallsView scheduled list no longer wipes on outage (last lie of this class); sweep all green
 
 - Defect-hunt pass (all 9 backlog items built; remaining runs are audit/hardening)

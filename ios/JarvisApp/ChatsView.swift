@@ -141,9 +141,18 @@ struct ProjectsView: View {
                 as: TaskReply.self)
             // NOTE: project is a plain String — `project.map {}` would iterate
             // its CHARACTERS (Character has no components(separatedBy:)) and
-            // fail the build. Slug-ify the whole string directly.
-            let slug = project.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "")
-            let id = "project-" + (slug.isEmpty ? "adhoc" : String(slug.prefix(48)))
+            // fail the build. Slug-ify directly — and it MUST mirror the
+            // server's rule exactly (control_center.py control_project_task:
+            // keep [A-Za-z0-9_-], truncate 48, fallback "adhoc"). An earlier
+            // version used CharacterSet.alphanumerics.inverted, which DROPS
+            // hyphens/underscores: "jarvis-ios" became "project-jarvisios"
+            // client-side while the server created "project-jarvis-ios" —
+            // the inserted row and every chat POST then hit a thread that
+            // doesn't exist server-side.
+            let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+            let filtered = project.filter { allowed.contains($0) }
+            let slug = String(filtered.prefix(48))
+            let id = "project-" + (slug.isEmpty ? "adhoc" : slug)
             Haptics.success()
             showNewTask = false
             threads.insert(ThreadRow(id: id, title: text, project: project, openCount: 1, lastMessage: ""), at: 0)
