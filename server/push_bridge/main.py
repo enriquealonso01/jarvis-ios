@@ -301,7 +301,7 @@ async def schedule_list(request: Request, x_bridge_sig: str = Header(default="")
 async def schedule_cancel(request: Request, x_bridge_sig: str = Header(default="")):
     """Cancel one scheduled call by call_id, or all if call_id omitted."""
     raw = await request.body()
-    _auth(x_bridge_sig, raw)
+    _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
     req = CancelReq(**json.loads(raw or b"{}"))
     items = _load_schedule()
     kept = [i for i in items if req.call_id and i["call_id"] != req.call_id]
@@ -316,7 +316,7 @@ async def schedule_cancel(request: Request, x_bridge_sig: str = Header(default="
 @app.post("/call")
 async def call(request: Request, x_bridge_sig: str = Header(default="")):
     raw = await request.body()
-    _auth(x_bridge_sig, raw)
+    _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
     req = CallReq(**json.loads(raw or b"{}"))
     call_id = str(uuid.uuid4())[:8]
     device_token = _load_env().get("DEVICE_TOKEN", "")
@@ -327,7 +327,7 @@ async def call(request: Request, x_bridge_sig: str = Header(default="")):
 @app.post("/schedule")
 async def schedule(request: Request, x_bridge_sig: str = Header(default="")):
     raw = await request.body()
-    _auth(x_bridge_sig, raw)
+    _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
     req = ScheduleReq(**json.loads(raw or b"{}"))
     item = {"call_id": str(uuid.uuid4())[:8], "at_iso": req.at_iso, "reason": req.reason,
             "scheduled_by": req.scheduled_by, "device_token": _load_env().get("DEVICE_TOKEN", "")}

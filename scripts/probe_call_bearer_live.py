@@ -1,0 +1,130 @@
+"""Functional checks for backlog #4's server half: /call and /schedule now
+accept the iOS app's dashboard Bearer token (dual auth, like /secrets) while
+agents keep the x-bridge-sig HMAC path.
+
+Run against a throwaway instance:
+  BRIDGE_NO_SCHEDULER=1 BRIDGE_STATE_DIR=$(mktemp -d) \
+  BRIDGE_SHARED_SECRET=testsecret uvicorn main:app --port 9162 &
+  python3 scripts/probe_call_bearer_live.py --port 9162 --secret testsecret
+"""
+import argparse
+import base64
+import hashlib
+import hmac
+import json
+import time
+import urllib.error
+import urllib.request
+
+import yaml
+
+CFG = yaml.safe_load(open("/root/.hermes/config.yaml"))
+raw = (CFG.get("dashboard") or {}).get("basic_auth", {}).get("secret", "")
+secret_bytes = None
+for dec in (base64.b64decode, bytes.fromhex):
+    try:
+        cand = dec(raw)
+        if len(cand) >= 16:
+            secret_bytes = cand
+            break
+    except Exception:
+        pass
+if secret_bytes is None:
+    secret_bytes = raw.encode()
+
+
+def mint_token(kind="access", ttl=600):
+    payload = {"sub": "probe", "kind": kind, "exp": int(time.time()) + ttl}
+    blob = json.dumps(payload, separators=(",", ":")).encode()
+    sig = hmac.new(secret_bytes, blob, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(blob + sig).decode()
+
+
+def sig_for(secret, body: bytes) -> str:
+    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def req(base, method, path, headers=None, body=None):
+    r = urllib.request.Request(base + path, method=method,
+                               data=body,
+                               headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with urllib.request.urlopen(r, timeout=8) as resp:
+            return resp.status, json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=9162)
+    ap.add_argument("--secret", default="testsecret")
+    a = ap.parse_args()
+    base = f"http://127.0.0.1:{a.port}"
+    token = mint_token()
+    refresh = mint_token(kind="refresh")
+    results = []
+
+    def check(name, cond):
+        results.append((name, bool(cond)))
+        print(("PASS " if cond else "FAIL ") + name)
+
+    good_body = json.dumps({"reason": "probe call", "scheduled_by": "probe"}).encode()
+
+    # /call with valid bearer -> 200 (pushed False: no APNs on probe box)
+    st, out = req(base, "POST", "/call", {"Authorization": f"Bearer {token}"}, good_body)
+    check("/call valid bearer 200 + call_id", st == 200 and out.get("call_id"))
+    call_id = out.get("call_id")
+
+    # /call with invalid bearer -> 401
+    st, _ = req(base, "POST", "/call", {"Authorization": "Bearer nope"}, good_body)
+    check("/call bad bearer 401", st == 401)
+
+    # /call with refresh-kind token -> 401
+    st, _ = req(base, "POST", "/call", {"Authorization": f"Bearer {refresh}"}, good_body)
+    check("/call refresh-kind 401", st == 401)
+
+    # /call with NO auth -> 401 (dual ladder: neither path present)
+    st, _ = req(base, "POST", "/call", {}, good_body)
+    check("/call no auth 401", st == 401)
+
+    # /call with classic HMAC sig still works (agents unaffected)
+    st, out2 = req(base, "POST", "/call", {"x-bridge-sig": sig_for(a.secret, good_body)}, good_body)
+    check("/call HMAC path still 200", st == 200 and out2.get("call_id"))
+
+    # /schedule with bearer -> 200; list (HMAC) shows it
+    sched_body = json.dumps({"at_iso": "2031-01-01T00:00:00+00:00", "reason": "probe sched"}).encode()
+    st, out3 = req(base, "POST", "/schedule", {"Authorization": f"Bearer {token}"}, sched_body)
+    check("/schedule valid bearer 200", st == 200 and out3.get("call_id"))
+    sched_id = out3.get("call_id")
+
+    # /schedule with bad bearer -> 401
+    st, _ = req(base, "POST", "/schedule", {"Authorization": "Bearer x"}, sched_body)
+    check("/schedule bad bearer 401", st == 401)
+
+    # list via HMAC over empty body
+    st, out4 = req(base, "GET", "/schedule/list", {"x-bridge-sig": sig_for(a.secret, b"")})
+    ids = [i["call_id"] for i in out4.get("scheduled", [])]
+    check("/schedule/list shows bearer-created entry", st == 200 and sched_id in ids)
+
+    # cancel that entry via bearer
+    cancel_body = json.dumps({"call_id": sched_id}).encode()
+    st, out5 = req(base, "POST", "/schedule/cancel", {"Authorization": f"Bearer {token}"}, cancel_body)
+    check("/schedule/cancel with bearer", st == 200 and out5.get("cancelled") == 1)
+
+    # bad bearer on cancel -> 401
+    st, _ = req(base, "POST", "/schedule/cancel", {"Authorization": "Bearer x"}, cancel_body)
+    check("/schedule/cancel bad bearer 401", st == 401)
+
+    # secrets endpoints unchanged sanity (bearer list)
+    st, _ = req(base, "GET", "/secrets", {"Authorization": f"Bearer {token}"})
+    check("/secrets bearer still 200", st == 200)
+
+    bad = [n for n, ok in results if not ok]
+    print(f"\n{len(results) - len(bad)}/{len(results)} passed")
+    if bad:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
