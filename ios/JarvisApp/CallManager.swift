@@ -424,9 +424,15 @@ extension CallManager: CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        // CXAction is internally synchronized and CallKit permits fulfilling
+        // from any thread; the MainActor hop is only for CallManager's
+        // published state. Swift 6.2's region check can't see that the
+        // non-Sendable action never escapes back into the caller's region,
+        // so bind it once here.
+        nonisolated(unsafe) let endAction = action
         Task { @MainActor in
             self.endActiveCall()
-            action.fulfill()
+            endAction.fulfill()
         }
     }
 
