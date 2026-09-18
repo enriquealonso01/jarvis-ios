@@ -37,26 +37,37 @@ You only ever do these steps. Everything else is agent-deployed.
 ## First TestFlight setup — DONE (2026-09-18)
 - ASC app record "EA's J.A.R.V.I.S" (id 6813590605), bundle reassigned to
   com.enriquecodes.jarvis. Build 19 uploaded by CI run 35378698056.
-- Remaining: (1) ASC UI — open EA's J.A.R.V.I.S → TestFlight and check for a
-  banner (new Apple terms/agreement or an ingest error) and accept it. Three
-  uploads (builds 19/20/21, Sep 18) reached Apple but no build record was ever
-  created (~80 min, vs ~4 min for HeRose on the same team/.p8) — the app record's
-  ingest looks stuck; a banner-accept usually clears it. (2) Phone: install
-  TestFlight, accept the internal-tester invite (enriquealonsorequejo@icloud.com),
-  install the build once it appears, open it once — the app POSTs /register to
-  the bridge on launch, which makes VoIP pushes live.
+- RESOLVED (2026-09-18 ~20:40 UTC): the "stuck ingest" was a misdiagnosis.
+  Builds 19/20/21 FAILED Apple asset validation with **ITMS-90683** (missing
+  NSCameraUsageDescription) — rejections are invisible in /v1/builds and only
+  show up in GET /v1/apps/{id}/buildUploads. After commit 2fed80a added the
+  purpose string, build 1 (CI run 35391242548, uploaded 20:26 UTC) passed
+  validation in ~90 s: processingState=VALID, internalBuildState=IN_BETA_TESTING,
+  autoNotify on, export compliance pre-marked, auto-added to the internal
+  group "App Store Connect Users" (no manual betaGroups POST needed — a POST
+  returns 422 "cannot be assigned" when membership is already automatic).
+- Remaining: (1) Phone: install TestFlight, accept the internal-tester invite
+  (enriquealonsorequejo@icloud.com), install build 1, open it once — the app
+  POSTs /register to the bridge on launch, which makes VoIP pushes live.
+  (2) No ASC web-UI banner check needed anymore: ingest was never stuck;
+  internalBuildState=IN_BETA_TESTING is the authoritative all-clear.
 
 ## ASC build-visibility watcher
-- Cron `testflight-build-watch` (d6d31d5fec17, every 15m) polls
-  `GET /v1/builds?filter[app]=6813590605` until a build record appears,
-  then pings Enrique and self-removes. Its poller is the repo script
-  `scripts/poll_asc_builds.py` (canonical copy survives reboots; the
-  original /tmp copy did not). Key detail: the APNs .p8 doubles as the
-  ASC API key but the JWT **issuer** is the ASC issuer ID
+- Cron `testflight-build-watch` (d6d31d5fec17, every 15m) polls ASC until a
+  build record appears, then pings Enrique and self-removes. Its poller is
+  the repo script `scripts/poll_asc_builds.py` (canonical copy survives
+  reboots; the original /tmp copy did not). Key detail: the APNs .p8 doubles
+  as the ASC API key but the JWT **issuer** is the ASC issuer ID
   (cbd7e0fd-925b-4aa8-8ce1-facbc1b39881), NOT the APNS_TEAM_ID — a
   team-ID issuer gets HTTP 401. The poller reads both kid and issuer
   itself; run with `--expect 19` to filter to a single version. Any
   "BUILD:" line on stdout = build visible.
+- POLLER GOTCHA (cost hours on 2026-09-18): GET /v1/builds lists only builds
+  that PASSED asset validation. A rejected upload (ITMS-90683 etc.) never
+  appears there, which looks exactly like a stuck ingest. The poller now
+  also prints "UPLOAD:" lines from /v1/apps/{id}/buildUploads (real
+  validation state + ITMS codes) and a "BETA:" line (internalBuildState)
+  for the newest build — always check UPLOAD lines before diagnosing.
 
 ## Notes
 - TestFlight builds expire after 90 days — the loop agent will remind you well ahead.

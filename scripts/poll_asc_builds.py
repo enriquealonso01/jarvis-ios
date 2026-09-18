@@ -101,14 +101,66 @@ def main() -> int:
 
     data = d.get("data", [])
     print("count:", len(data))
+    latest_build_id = None
     for b in data:
         a = b["attributes"]
         ver = str(a.get("version"))
+        if latest_build_id is None:
+            latest_build_id = b["id"]
         if args.expect and ver != str(args.expect):
             continue
         print(f"BUILD: {ver} | {a.get('processingState')} | {a.get('uploadedDate')}")
     print_control(args, token)
+    print_upload_uploads(args, token)
+    print_beta_detail(args, token, latest_build_id)
     return 0
+
+
+def print_upload_uploads(args, token: str) -> None:
+    """Print recent buildUploads with real validation state.
+
+    /v1/builds only lists builds that PASSED asset validation. Uploads that
+    FAIL validation (e.g. ITMS-90683 missing purpose string) never appear
+    there — the failure is only visible in /apps/{id}/buildUploads. Without
+    this, a failed upload looks exactly like a 'stuck ingest' (see PROGRESS
+    2026-09-18: hours were spent chasing a phantom ingest stall that was an
+    ITMS-90683 rejection).
+    """
+    url = (f"https://api.appstoreconnect.apple.com/v1/apps/{args.app}"
+           f"/buildUploads?limit=3")
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.loads(r.read().decode())
+    except Exception as e:
+        print(f"uploads: unreadable ({e})")
+        return
+    for u in d.get("data", []):
+        a = u["attributes"]
+        st = a.get("state", {})
+        errs = st.get("errors") or []
+        err_s = ";".join(e.get("code", "?") for e in errs) or "-"
+        print(f"UPLOAD: cfBundleVersion={a.get('cfBundleVersion')} | "
+              f"{st.get('state')} | itms={err_s} | {a.get('uploadedDate')}")
+
+
+def print_beta_detail(args, token: str, build_id) -> None:
+    """Print internal beta state for the newest visible build."""
+    if not build_id:
+        return
+    url = (f"https://api.appstoreconnect.apple.com/v1/builds/{build_id}"
+           f"/buildBetaDetail")
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.loads(r.read().decode())
+    except Exception as e:
+        print(f"beta-detail: unreadable ({e})")
+        return
+    a = (d.get("data") or {}).get("attributes", {})
+    print(f"BETA: internal={a.get('internalBuildState')} | "
+          f"external={a.get('externalBuildState')} | "
+          f"autoNotify={a.get('autoNotifyEnabled')}")
 
 
 def print_control(args, token: str) -> None:

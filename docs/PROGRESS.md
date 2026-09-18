@@ -1,3 +1,29 @@
+## 2026-09-18 20:45 UTC (build-loop run) — TestFlight LIVE: build 1 VALID + IN_BETA_TESTING; "ingest stall" was ITMS-90683 all along
+
+- ROOT CAUSE FOUND: builds 19/20/21 never "stalled in ingest" — they FAILED
+  Apple asset validation with ITMS-90683 (missing NSCameraUsageDescription).
+  Rejections never appear in GET /v1/builds; they are only visible in
+  GET /v1/apps/6813590605/buildUploads (relationship earlier probes missed).
+  The team-wide-sweep / agreement theories are dead; account is healthy.
+- BUILD 1 IS LIVE: commit 2fed80a (camera purpose string) → CI run
+  35391242548 uploaded 20:26 UTC → VALID at ~20:28 (90 s processing).
+  buildBetaDetail: internalBuildState=IN_BETA_TESTING, autoNotify=true,
+  export compliance pre-marked (usesNonExemptEncryption=false). Internal
+  group "App Store Connect Users" auto-includes it — a manual betaGroups
+  POST correctly 422s ("cannot be assigned to this internal group").
+- Poller upgraded (scripts/poll_asc_builds.py): now also prints UPLOAD:
+  lines (buildUploads validation state + ITMS codes) and a BETA: line
+  (internal/external state, autoNotify) so a rejected upload can never
+  masquerade as a stuck ingest again. Verified live: all three views green.
+- docs/BUILD.md corrected: phantom ASC banner check removed; remaining
+  step is phone-only. Watch cron (d6d31d5fec17) will see BUILD lines on
+  its next 15m tick and self-remove as designed.
+- NEEDS ENRIQUE (final, phone-only): install TestFlight, accept invite
+  (enriquealonsorequejo@icloud.com), install **build 1**, open once →
+  app POSTs /register → VoIP pushes live → mission complete.
+- Full verify_all.sh suite unaffected (no server/gateway/app code changed
+  this run — poller + docs only).
+
 ## 2026-09-18 20:05 UTC (build-loop run) — team-wide ASC ingest sweep: both apps frozen; ingest stall confirmed as account/key-wide
 
 - New `scripts/asc_team_sweep.py`: pages ALL of /v1/builds (no app filter,
