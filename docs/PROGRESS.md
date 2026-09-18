@@ -1,5 +1,24 @@
 # PROGRESS
 
+## 2026-09-18 05:44 UTC (build-loop run) — maintenance sweep + verify_all.sh one-command harness
+
+- Backlog 1–9 remain complete; nothing new actionable until the Enrique-gated
+  ladder. No drift found.
+- **New: `scripts/verify_all.sh`** — the entire maintenance sweep (swift_sanity,
+  bridge 12/12 bearer probe on a throwaway instance, gateway bearer-gate check,
+  live health of bridge :9160 / gateway :9150 / public /bridge/health) is now
+  ONE command with a proper exit code. Replaces the last three runs' repeated
+  manual steps; future runs just execute it. Verified: exit 0, ALL GREEN.
+  - Gateway-gate check asserts semantics, not the literal string "FAIL"
+    (valid bearer 500 = gate passed; invalid/no-auth/refresh-kind all 401).
+- Live verification this run: swift_sanity OK; bridge probe **12/12 PASS**
+  (prod untouched); gateway bearer gate passed; bridge /health ok
+  (apns_configured:false, scheduled:0); voice-gw /healthz realtime:true;
+  public /bridge/health 200. Prod bridge runs straight from the repo working
+  dir (systemd ExecStart), so code/prod parity is structural.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 05:35 UTC (build-loop run) — maintenance sweep, all green
 
 - Backlog 1–9 complete; nothing new actionable until the Enrique-gated ladder.
