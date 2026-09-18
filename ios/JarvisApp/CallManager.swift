@@ -125,10 +125,10 @@ extension CallManager: PKPushRegistryDelegate {
 
     @MainActor
     private func sendDeviceToken(_ token: String) async {
-        // /register requires the agent HMAC; the app cannot compute it, but the
-        // endpoint also accepts nothing else — so we proxy through the bridge's
-        // Bearer-authed path once available. For now fire-and-forget against
-        // /register using the Bearer (bridge accepts dual auth after this commit).
+        // /register accepts dual auth: the app sends its dashboard Bearer
+        // (bridge-verified locally, same ladder as /call); agents use the
+        // x-bridge-sig HMAC path. Fire-and-forget — a 401 just means the
+        // access token expired and the next launch retries.
         let cfg = ServerConfig.shared.config
         let url = URL(string: cfg.bridgeBaseURL + "/register")
         guard let url else { return }

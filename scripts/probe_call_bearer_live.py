@@ -185,6 +185,22 @@ def main():
     st, _ = req(base, "GET", "/secrets", {"Authorization": f"Bearer {token}"})
     check("/secrets bearer still 200", st == 200)
 
+    # /register dual auth (app Bearer path added with the register fix): the app
+    # cannot compute the agent HMAC, so launch-time token registration MUST work
+    # over Bearer — otherwise no VoIP push can ever be delivered.
+    reg_body = json.dumps({"device_token": "a" * 64, "bundle_id": "com.enriquecodes.jarvis"}).encode()
+    st, out6 = req(base, "POST", "/register", {"Authorization": f"Bearer {token}"}, reg_body)
+    check("/register valid bearer 200", st == 200 and out6.get("registered") is True)
+
+    st, _ = req(base, "POST", "/register", {"Authorization": "Bearer nope"}, reg_body)
+    check("/register bad bearer 401", st == 401)
+
+    # agent HMAC path on /register still works and overwrites the token
+    reg2 = json.dumps({"device_token": "b" * 64}).encode()
+    st, out7 = req(base, "POST", "/register", {"x-bridge-sig": sig_for(a.secret, reg2)}, reg2)
+    check("/register HMAC still 200", st == 200 and out7.get("token_len") == 64)
+
+
     bad = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(bad)}/{len(results)} passed")
     if bad:

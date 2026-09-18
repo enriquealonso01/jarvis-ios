@@ -281,7 +281,7 @@ async def register(request: Request, x_bridge_sig: str = Header(default="")):
     """App calls this on launch with its APNs token; persisted to apns.env
     (DEVICE_TOKEN=...) and auto-injected into every /call + /schedule payload."""
     raw = await request.body()
-    _auth(x_bridge_sig, raw)
+    _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
     req = RegisterReq(**json.loads(raw))
     if not req.device_token or len(req.device_token) < 20:
         raise HTTPException(422, "device_token missing or malformed")
