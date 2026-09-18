@@ -1,5 +1,20 @@
 # PROGRESS
 
+## 2026-09-18 05:55 UTC (build-loop run) — maintenance sweep, all green
+
+- Backlog 1–9 remain complete; nothing new actionable until the Enrique-gated
+  ladder. No drift found.
+- Full sweep via `scripts/verify_all.sh` (exit 0, ALL GREEN): swift_sanity OK;
+  bridge probe **12/12 PASS** on a throwaway :9162 instance (prod untouched);
+  gateway bearer gate passed (valid 500 / invalid-no-refresh 401); live health:
+  bridge :9160 ok (apns_configured:false, scheduled:0), voice-gw :9150
+  realtime:true, public /bridge/health 200.
+- Repo clean, synced with origin/main (HEAD 75f3812).
+- Reminder crons armed: jarvis-ios-apple-setup-guide (2026-09-19 13:00 UTC),
+  jarvis-ios-loop-sunset (2026-09-19 23:00 UTC).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 05:44 UTC (build-loop run) — maintenance sweep + verify_all.sh one-command harness
 
 - Backlog 1–9 remain complete; nothing new actionable until the Enrique-gated
