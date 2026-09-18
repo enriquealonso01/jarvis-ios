@@ -1,0 +1,7 @@
+__pycache__/
+*.xcuserstate
+xcuserdata/
+DerivedData/
+*.p8
+*.pem
+secrets/
