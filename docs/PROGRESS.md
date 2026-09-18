@@ -1,5 +1,18 @@
 # PROGRESS
 
+## 2026-09-19 05:18 UTC (build-loop run) — maintenance sweep, all green
+
+- Backlog 1–9 remain complete; nothing new actionable server-side until the
+  Enrique-gated ladder. Full re-verification, no drift:
+  - Repo clean, synced with origin/main (HEAD 3e3ac0b). swift_sanity.py OK.
+  - probe_call_bearer_live.py --spawn on a fresh throwaway (:9162, isolated
+    state): **12/12 PASS**, instance + state cleaned up; prod bridge untouched.
+  - Live health: bridge :9160 /health 200; public /bridge/health 200.
+  - Reminder crons armed: jarvis-ios-apple-setup-guide 2026-09-19 13:00 UTC,
+    jarvis-ios-loop-sunset 23:00 UTC.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-19 (build-blocker audit run) — first-Xcode-build hardening
 
 - Full audit of all 12 Swift files for would-be Xcode build errors (Swift has
