@@ -167,7 +167,7 @@ struct HomeView: View {
                             Text(s.title ?? "Untitled").font(.caption).lineLimit(2)
                                 .foregroundStyle(.primary)
                             HStack {
-                                Text(s.source ?? "").font(.caption2).foregroundStyle(.jarvisAccent)
+                                Text(s.source ?? "").font(.caption2).foregroundStyle(Color.jarvisAccent)
                                 if let ago = s.ago_seconds {
                                     Text("· \(Self.ago(ago))").font(.caption2).foregroundStyle(.secondary)
                                 }

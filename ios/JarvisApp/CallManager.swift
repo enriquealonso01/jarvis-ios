@@ -95,7 +95,7 @@ final class CallManager: NSObject, ObservableObject {
         if recentlyEndedCallIDs[p.callID] != nil {
             let dedupeID = UUID()
             provider?.reportNewIncomingCall(with: dedupeID, update: update) { [weak self] _ in
-                self?.provider?.reportCall(with: dedupeID, endedAt: Date())
+                self?.provider?.reportCall(with: dedupeID, endedAt: Date(), reason: .remoteEnded)
                 onReported?()
             }
             return
@@ -124,7 +124,7 @@ final class CallManager: NSObject, ObservableObject {
             let bumpUpdate = update
             let bumpReason = p.reason
             provider?.reportNewIncomingCall(with: bumpedID, update: bumpUpdate) { [weak self] _ in
-                self?.provider?.reportCall(with: bumpedID, endedAt: Date())
+                self?.provider?.reportCall(with: bumpedID, endedAt: Date(), reason: .remoteEnded)
                 onReported?()
             }
             let bumpEntry = CallLogStore.shared.add(reason: bumpReason, outgoing: false)
@@ -197,8 +197,10 @@ final class CallManager: NSObject, ObservableObject {
         config.maximumCallGroups = 1
         config.supportedHandleTypes = [.generic]
         let prov = CXProvider(configuration: config)
-        prov.delegate = self
-        provider = prov   // swift_sanity-safe: 'prov' is local here; scope-level uses must go through `provider`
+        // Xcode 26 SDK: CXProvider.delegate became ObjC-direct and is no
+        // longer visible to Swift — setDelegate(_:queue:) is the exposed API.
+        prov.setDelegate(self, queue: nil)
+        provider = prov
         callController = CXCallController()
     }
 
@@ -252,7 +254,7 @@ final class CallManager: NSObject, ObservableObject {
         logEntryID = nil
         callStart = nil
         Haptics.error()
-        if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date()) }
+        if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date(), reason: .failed) }
         webRTC?.hangup()
         webRTC = nil
         // Same post-end redelivery memory for the failure path.
@@ -308,7 +310,7 @@ final class CallManager: NSObject, ObservableObject {
         }
         logEntryID = nil
         callStart = nil
-        if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date()) }
+        if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded) }
         webRTC?.hangup()
         webRTC = nil
         // Remember this call_id so a late APNs re-delivery can't ring again.
@@ -405,7 +407,7 @@ extension CallManager: CXProviderDelegate {
             do {
                 // CallKit contract: report the call as outgoing-connected so
                 // the system audio UI engages, then connect media.
-                provider.reportCall(with: action.callUUID, startedAt: Date())
+                provider.reportCall(with: action.callUUID, connectedAt: Date())
                 try await self.connectWebRTC()
                 action.fulfill()
             } catch {

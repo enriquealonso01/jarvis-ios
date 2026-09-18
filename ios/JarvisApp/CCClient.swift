@@ -2,6 +2,10 @@ import Foundation
 
 /// Typed client for the dashboard Control Center API. Bearer-authed,
 /// auto-refreshes on 401, decodes the real CC payload shapes.
+/// MainActor-isolated: every call site is a SwiftUI view/task on the main
+/// actor, and the token/refresh bookkeeping reads AuthStore.shared (itself
+/// MainActor-isolated), so that's the correct isolation domain.
+@MainActor
 final class CCClient: @unchecked Sendable {
     static let shared = CCClient()
 

@@ -73,7 +73,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         // Pre-warm the session so the first audio unit start happens with
         // permission already granted and the category set.
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
+        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .defaultToSpeaker])
         return true
     }
 
@@ -315,6 +315,13 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
+        // Required by RTCPeerConnectionDelegate (M130). The gateway client
+        // creates its own "app" data channel in openAppChannel(); if the
+        // peer opens one instead, adopt it so app messages still flow.
+        dataChannel.delegate = self
+        appChannel = dataChannel
+    }
 
     // MARK: RTCDataChannelDelegate (the gateway's "app" channel)
 

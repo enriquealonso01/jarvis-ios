@@ -57,8 +57,10 @@ final class AuthStore: ObservableObject {
             let challenge = Self.s256(verifier)
             let state = Self.randomURLSafe(length: 16)
             let redirect = "http://127.0.0.1:8619/cb"
-            guard var comps = URLComponents(url: Self.serverURL(base, "/auth/native/authorize"),
-                                            resolvingAgainstBaseURL: false) else {
+            // serverURL returns an optional; unwrap it before handing it to
+            // URLComponents (which requires a concrete URL).
+            guard let authorizeBase = Self.serverURL(base, "/auth/native/authorize"),
+                  var comps = URLComponents(url: authorizeBase, resolvingAgainstBaseURL: false) else {
                 throw AuthError.badResponse("bad server URL")
             }
             comps.queryItems = [
@@ -230,7 +232,7 @@ final class AuthStore: ObservableObject {
     /// URLSession.data with a one-off cookie jar (for the login round trip).
     static func send(_ req: URLRequest, cookieJar: HTTPCookieStorage?) async throws -> (Data, URLResponse) {
         let config = URLSessionConfiguration.ephemeral
-        if let jar { config.httpCookieStorage = jar }
+        if let jar = cookieJar { config.httpCookieStorage = jar }
         let session = URLSession(configuration: config)
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse, !(400...599).contains(http.statusCode) else {
@@ -266,7 +268,7 @@ final class AuthStore: ObservableObject {
     }
 
     static func loadString(_ key: String) -> String? {
-        var query = [
+        let query = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrAccount: key,
             kSecReturnData: true,
