@@ -1,5 +1,15 @@
 # PROGRESS
 
+## 2026-09-18 (build-loop run) — maintenance sweep, ALL GREEN
+
+- Backlog 1–9 complete; no drift found. Full `scripts/verify_all.sh` sweep:
+  exit 0 — swift_sanity OK, bridge probe 12/12 PASS (throwaway :9162, prod
+  untouched), gateway bearer gate correct (valid 500 / invalid+refresh 401),
+  live health bridge :9160 ok + voice-gw :9150 realtime:true + public
+  /bridge/health 200, prod parity both services active + gateway mirror
+  identical, reminder crons armed (build-loop, loop-sunset, apple-setup-guide).
+- NEEDS ENRIQUE (the only remaining ladder): Xcode build → TestFlight upload →
+  APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
 ## 2026-09-18 06:00 UTC (build-loop run) — verify_all.sh extended to prod parity + cron guard (5/5)
 
 - Backlog 1–9 remain complete; nothing new actionable until the Enrique-gated
