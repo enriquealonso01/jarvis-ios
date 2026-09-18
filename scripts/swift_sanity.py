@@ -135,14 +135,23 @@ required_guard_pins = [
     ("CallManager.swift", ["for attempt in 0..<5"]),
     # HomeView per-endpoint resilience: load1 + try? keeps one failing CC
     # endpoint from blanking the whole Home tab (all-or-nothing tuple throw).
-    ("HomeView.swift", ["try? load1", "vitals = v2 ?? vitals"]),
+    ("HomeView.swift", ["try? load1", "vitals = v2 ?? vitals",
+                         # Attention card: a.msg is String? — `!a.msg.isEmpty`
+                         # / `Text(a.msg)` are hard Xcode errors (optional
+                         # member access + no Text(String?)). Must stay
+                         # `if let msg = a.msg` (PROGRESS 2026-09-18 12:00).
+                         "if let msg = a.msg, !msg.isEmpty"]),
     # HomeView gateway dot must reflect real bridge reachability — a hardcoded
     # .green Circle() lies when the dashboard can't reach the gateway.
     ("HomeView.swift", ["gatewayOK ? .green : .red"]),
     # Chats poll identity: ChatLine.id must be CONTENT-derived. A `let id =
     # UUID()` field makes the 5s pollHistory compare unequal every tick and
     # re-create every bubble (flicker + scroll jump).
-    ("ChatsView.swift", ["var id: String { role + \"|\" + text }"]),
+    ("ChatsView.swift", ["var id: String { role + \"|\" + text }",
+                         # startTask slug: project is a plain String —
+                         # `project.map {}` iterates CHARACTERS and fails the
+                         # build; must slug-ify the whole string.
+                         "project.components(separatedBy: CharacterSet.alphanumerics.inverted)"]),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):

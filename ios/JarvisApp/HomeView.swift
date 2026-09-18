@@ -67,8 +67,8 @@ struct HomeView: View {
                                 .frame(width: 7, height: 7)
                             Text(a.title).font(.caption).lineLimit(1)
                         }
-                        if !a.msg.isEmpty {
-                            Text(a.msg).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                        if let msg = a.msg, !msg.isEmpty {
+                            Text(msg).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                         }
                     }
                 }

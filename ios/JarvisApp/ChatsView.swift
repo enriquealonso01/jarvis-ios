@@ -139,7 +139,10 @@ struct ProjectsView: View {
                 "/api/control/project/task",
                 body: ["project": project, "text": text],
                 as: TaskReply.self)
-            let slug = project.map { $0.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "") } ?? ""
+            // NOTE: project is a plain String — `project.map {}` would iterate
+            // its CHARACTERS (Character has no components(separatedBy:)) and
+            // fail the build. Slug-ify the whole string directly.
+            let slug = project.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "")
             let id = "project-" + (slug.isEmpty ? "adhoc" : String(slug.prefix(48)))
             Haptics.success()
             showNewTask = false

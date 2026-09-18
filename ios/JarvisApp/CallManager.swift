@@ -370,13 +370,13 @@ extension CallManager: CXProviderDelegate {
                 action.fulfill()
             } catch {
                 action.fail()
-                self.callState = "failed: \(error.localizedDescription)"
-                CallLogStore.shared.finish(id: self.logEntryID, outcome: "failed")
-                self.logEntryID = nil
-                self.callStart = nil
-                self.activeCallUUID = nil
+                // Full teardown — same as the answer-fail path (09:02) and
+                // ICE failures: without the reportCall(endedAt:) here the
+                // failed dial lingered in CallKit/system UI, and without
+                // clearing pendingAnswerPayload the next incoming push could
+                // be misread as a re-delivery of this dead call.
+                self.handleConnectionFailure(error.localizedDescription)
                 self.pendingAnswerPayload = nil
-                Haptics.error()
             }
         }
     }
