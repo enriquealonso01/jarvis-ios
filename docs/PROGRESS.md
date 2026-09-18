@@ -1,5 +1,27 @@
 # PROGRESS
 
+## 2026-09-18 18:40 UTC (build-loop run) — post-upload audit clean; propagation watch extended (build 19 still not visible at ~25 min)
+
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN (doc pins 6/6, swift_sanity
+  incl. required-guards, bridge probe 16/16 on a throwaway instance, gateway
+  bearer gate, live health — bridge :9160 ok with **apns_configured:true**
+  and scheduled:1, public /bridge/health 200, prod parity + 3 reminder crons,
+  native WebRTC e2e PASS vs live gateway).
+- Build 19 propagation check: ASC GET /v1/builds?filter[app]=6813590605 still
+  returns count 0 at 18:38 UTC (>25 min after the 18:14 upload — first upload
+  propagation is often slow). Extended the self-removing watcher cron
+  testflight-build-watch (d6d31d5fec17) from 4 to 16 × 15m runs (~4h of
+  coverage) so a slow first-propagation can't fall through the cracks; it
+  still self-removes and pings Enrique on first sight of the build.
+- Repo audit vs backlog 1–9: no drift, no new code defects this pass (all
+  Swift files already pinned by swift_sanity required-guards; bridge+gateway
+  contracts pinned by the doc-contract and live probes). ITSAppUsesNon-
+  ExemptEncryption:false already in project.yml (no export-compliance prompt
+  on build 19 processing).
+- NEEDS ENRIQUE (phone-side only): TestFlight install → accept invite →
+  install build 19 → open once → app POSTs /register → VoIP pushes live
+  (docs/BUILD.md; apple-setup-guide cron fires 9AM Miami Sep 19).
+
 ## 2026-09-18 18:35 UTC (build-loop run) — FIRST FULL PIPELINE GREEN: build 19 on TestFlight; stale pins/docs reconciled
 
 - **Upload SUCCEEDED.** GitHub Actions run 35378698056 (triggered by Enrique's
