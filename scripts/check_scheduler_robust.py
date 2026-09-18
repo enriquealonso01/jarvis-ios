@@ -73,6 +73,33 @@ def main():
     m._run_scheduler_tick()
     check("successful push removes entry", json.loads(sp.read_text()) == [])
 
+    # 4b: FIRE-TIME device token — the tick must push to the bridge's CURRENT
+    # registered DEVICE_TOKEN, not the /schedule snapshot. A snapshot can be
+    # empty (scheduled before the device registered) or stale (app reinstall
+    # = new APNs token); pushing at it means "call me at 10am" never rings.
+    m._save_env_key("DEVICE_TOKEN", "livetoken99887766")
+    seen = {}
+    m._send_voip = lambda devtok, payload: seen.setdefault("devtok", devtok) or True
+    sp.write_text(json.dumps([
+        {"call_id": "stale-snap", "at_iso": (now - timedelta(minutes=1)).isoformat(),
+         "reason": "ring", "device_token": "OLDSNAPSHOT0011"},
+    ]))
+    m._run_scheduler_tick()
+    check("scheduler pushes at LIVE registered token, not the stale snapshot",
+          seen.get("devtok") == "livetoken99887766")
+
+    # 4c: nothing registered live -> fall back to the snapshot (old state).
+    m._save_env_key("DEVICE_TOKEN", "")
+    seen2 = {}
+    m._send_voip = lambda devtok, payload: seen2.setdefault("devtok", devtok) or True
+    sp.write_text(json.dumps([
+        {"call_id": "legacy", "at_iso": (now - timedelta(minutes=1)).isoformat(),
+         "reason": "ring", "device_token": "LEGACYTOKEN0022"},
+    ]))
+    m._run_scheduler_tick()
+    check("scheduler falls back to snapshot token when nothing is registered",
+          seen2.get("devtok") == "LEGACYTOKEN0022")
+
     # 5: loop guard — a raising tick must not propagate from the loop body
     # (simulate one iteration by calling the guarded pattern the loop uses)
     try:

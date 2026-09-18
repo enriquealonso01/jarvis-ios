@@ -152,7 +152,14 @@ def _run_scheduler_tick() -> None:
             print(f"[bridge] scheduler: dropping malformed entry {item.get('call_id', '?')}: {e}")
             continue
         try:
-            ok = _send_voip(item.get("device_token", ""), payload)
+            # Fire-time token: ALWAYS prefer the bridge's CURRENT registered
+            # DEVICE_TOKEN; the /schedule snapshot can be EMPTY (device not
+            # yet registered when the call was scheduled — fresh install)
+            # or STALE (app reinstall mints a new APNs token). Falling back
+            # to the snapshot only when nothing is registered keeps old
+            # state working but never pushes at a dead token.
+            live_token = _load_env().get("DEVICE_TOKEN", "")
+            ok = _send_voip(live_token or item.get("device_token", ""), payload)
         except Exception as e:
             print(f"[bridge] scheduler: push error for {item.get('call_id', '?')}: {e}")
             ok = False
@@ -347,7 +354,13 @@ async def schedule_cancel(request: Request, x_bridge_sig: str = Header(default="
     _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
     req = CancelReq(**json.loads(raw or b"{}"))
     items = _load_schedule()
-    kept = [i for i in items if req.call_id and i["call_id"] != req.call_id]
+    if req.call_id:
+        kept = [i for i in items if i["call_id"] != req.call_id]
+    else:
+        # Documented contract (CancelReq: "None/empty cancels all"): an empty
+        # body / empty call_id clears the whole schedule. The old filter kept
+        # every item when call_id was None — cancel-all silently did nothing.
+        kept = []
     cancelled = len(items) - len(kept)
     if cancelled:
         _save_schedule(kept)
