@@ -1,5 +1,26 @@
 # PROGRESS
 
+## 2026-09-18 05:27 UTC (build-loop run) — maintenance sweep, all green
+
+- Backlog 1-9 complete; nothing new actionable until the Enrique-gated ladder.
+  Full re-verification, no drift:
+  - Repo clean; swift_sanity.py OK.
+  - probe_call_bearer_live.py --spawn (fresh throwaway, isolated state):
+    **12/12 PASS**; prod bridge untouched.
+  - probe_gateway_bearer_live.py: valid bearer 500 (gate passed), invalid /
+    no / refresh-kind bearer all 401.
+  - Live health: bridge :9160 /health 200 (ok / apns_configured:false /
+    scheduled:0); public /bridge/health 200; voice-gw :9150 /healthz 200
+    (realtime:true, openai_status ok).
+  - gateway.py byte-identical to /opt/voice-gw/gateway.py.
+  - Reminder crons confirmed armed: jarvis-ios-apple-setup-guide (9AM Miami
+    Sat Sep 19) and jarvis-ios-loop-sunset (23:00 UTC Sep 19).
+- Cleanup: removed a stray duplicate `# PROGRESS` H1 mid-file (introduced by
+  an earlier prepend; file now has exactly one).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build ->
+  TestFlight upload -> APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
+
 ## 2026-09-19 05:18 UTC (build-loop run) — maintenance sweep, all green
 
 - Backlog 1–9 remain complete; nothing new actionable server-side until the
@@ -197,8 +218,6 @@
   without it; real rings start once the key is installed).
 - Next: backlog #9 polish (icon spec, launch screen, Settings), then re-verify
   full ladder when Enrique does the Xcode build + TestFlight upload.
-
-# PROGRESS
 
 ## 2026-09-18 04:25 UTC — backlog #7: fastlane Fastfile + one-command upload.sh
 
