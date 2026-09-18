@@ -49,3 +49,7 @@ targets:
         ENABLE_PREVIEWS: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Push Notifications entitlement (aps-environment) — REQUIRED for the VoIP
+        # push path: without it the signed profile carries no push capability and
+        # APNs rejects every push (calls never ring even with the .p8 installed).
+        CODE_SIGN_ENTITLEMENTS: JarvisApp/JarvisApp.entitlements

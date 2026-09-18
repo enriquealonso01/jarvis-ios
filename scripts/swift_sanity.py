@@ -188,9 +188,27 @@ for entry in ["AppIcon.appiconset/icon-1024.png", "LaunchReactor.imageset/launch
 # 4. project.yml wiring.
 pyml = open(os.path.join(ROOT, "ios", "project.yml")).read()
 for needle in ["ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon",
-               "UILaunchScreen:", "UIColorName: LaunchBackground", "UIImageName: LaunchReactor"]:
+               "UILaunchScreen:", "UIColorName: LaunchBackground", "UIImageName: LaunchReactor",
+               # Push Notifications entitlement wiring — without
+               # CODE_SIGN_ENTITLEMENTS -> aps-environment the signed profile
+               # carries NO push capability and APNs rejects every VoIP push
+               # ("ring this phone" silently never rings, even after the .p8
+               # is installed). First-build blocker class.
+               "CODE_SIGN_ENTITLEMENTS: JarvisApp/JarvisApp.entitlements",
+               # WebRTC SPM pin must keep pointing at a tag that exists
+               # upstream (stasel/WebRTC 130.0.0 verified 2026-09-18; a bump
+               # to a nonexistent tag fails Enrique's first package resolve).
+               "url: https://github.com/stasel/WebRTC.git"]:
     if needle not in pyml:
         failures.append(f"project.yml missing: {needle}")
+
+ent = os.path.join(APP, "JarvisApp.entitlements")
+if not os.path.exists(ent):
+    failures.append("missing ios/JarvisApp/JarvisApp.entitlements (aps-environment)")
+else:
+    etext = open(ent).read()
+    if "aps-environment" not in etext:
+        failures.append("JarvisApp.entitlements missing aps-environment (VoIP pushes would be rejected)")
 
 if failures:
     print("FAIL")

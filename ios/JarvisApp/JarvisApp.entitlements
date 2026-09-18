@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push Notifications entitlement: without aps-environment the signed
+	     profile carries no push capability and APNs rejects every VoIP push
+	     (the "JARVIS calls this phone" path would silently never ring, even
+	     after the .p8 is installed). Xcode automatic signing registers the
+	     Push Notifications service on the App ID from this key; archives for
+	     TestFlight/App Store are rewritten to `production` automatically. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

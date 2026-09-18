@@ -17,10 +17,15 @@ You only ever do these steps. Everything else is agent-deployed.
 
 ## First build after backlog #4 (WebRTC added)
 - `ios/project.yml` now pulls the Google WebRTC (STS) prebuilt via SPM
-  (stasel/WebRTC mirror). After `xcodegen`, open the project and let Xcode
+  (stasel/WebRTC mirror, pinned at 130.0.0 — verified live upstream). After
+  `xcodegen`, open the project and let Xcode
   resolve the package (File > Packages > Resolve Latest Package Versions) —
   first resolve downloads ~400MB, be patient. Then sign + run as usual.
 - VoIP push background mode (`voip` in UIBackgroundModes) is already set.
+- Push Notifications entitlement (`aps-environment`) is already wired via
+  `JarvisApp.entitlements` (CODE_SIGN_ENTITLEMENTS in project.yml). After you
+  select your team, Signing & Capabilities should show "Push Notifications"
+  ON the target — if it's missing, add it manually from + Capability.
 - CallKit reporting happens inside the PushKit callback (iOS hard
   requirement); do not remove the PushKit registration from AppDelegate.
 
