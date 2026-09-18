@@ -24,7 +24,7 @@ platform :ios do
 
   desc "ONE-TIME: create the App Store distribution cert + provisioning profile and store them (encrypted) in the match repo. Run this once before the first beta."
   lane :bootstrap_signing do
-    sh("xcodegen")
+    Dir.chdir(IOS_DIR) { sh("xcodegen") }
     match(
       type:           "appstore",
       app_identifier: APP_ID,
@@ -71,7 +71,7 @@ platform :ios do
 
   desc "Build and ship to TestFlight (installs on your iPhone via the TestFlight app — no Mac needed)"
   lane :beta do
-    sh("xcodegen")
+    Dir.chdir(IOS_DIR) { sh("xcodegen") }
     archive
     upload_to_testflight(
       api_key:                           asc_api_key,
