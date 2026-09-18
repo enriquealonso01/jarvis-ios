@@ -50,9 +50,19 @@ def req(base, method, path, headers=None, body=None):
                                headers={"Content-Type": "application/json", **(headers or {})})
     try:
         with urllib.request.urlopen(r, timeout=8) as resp:
-            return resp.status, json.loads(resp.read() or b"{}")
+            return resp.status, _as_json(resp.read())
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+        return e.code, _as_json(e.read())
+
+
+def _as_json(raw: bytes):
+    """Parse a response body as JSON; fall back to {"raw": ...} for non-JSON
+    error pages (e.g. a bare 500 from a stale/misconfigured instance) so the
+    probe reports FAIL instead of crashing with a JSONDecodeError."""
+    try:
+        return json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        return {"raw": (raw or b"").decode(errors="replace")[:200]}
 
 
 def main():

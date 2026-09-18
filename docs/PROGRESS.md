@@ -1,5 +1,29 @@
 # PROGRESS
 
+## 2026-09-19 (maintenance run) — all green; probe hardened
+
+- Full sweep, no drift:
+  - Bridge prod :9160 /health 200 (ok / apns_configured:false / scheduled:0);
+    public https://jarvis.enriquecodes.com/bridge/health 200; voice-gw :9150
+    /healthz 200 (realtime:true). Repo clean, synced with origin/main.
+  - swift_sanity.py OK; py_compile clean; gateway.py byte-identical to
+    /opt/voice-gw/gateway.py; bridge service runs from the repo working tree
+    (systemd app-dir), so no server drift by construction.
+  - probe_gateway_bearer_live.py: valid bearer reaches SDP handler (500 = gate
+    passed), invalid/no/refresh-kind all 401.
+  - probe_call_bearer_live.py on a fresh throwaway (:9166, isolated state):
+    **12/12 PASS**; instance killed after; prod state untouched.
+- Hardened the probe itself: this run it first hit an ORPHANED stale test
+  instance from a prior run (bind conflict + bare-HTML 500s), which crashed the
+  probe with a JSONDecodeError instead of failing cleanly. `req()` now
+  falls back to {"raw": ...} on non-JSON bodies, so a stale instance reads as
+  FAIL with the raw body visible. Verified still 12/12 against a fresh
+  instance. (Ops note: orphaned uvicorn test instances can linger when a run
+  dies mid-probe — probes must always clean up their own listeners.)
+- Backlog 1–9 remain complete. NEEDS ENRIQUE (unchanged, the only remaining
+  ladder): Xcode build → TestFlight upload → APNs p8 install
+  (docs/BUILD.md, docs/FASTLANE.md, docs/API.md "Pending").
+
 ## 2026-09-18 (late, run 2) — maintenance re-verification: all green, backlog remains complete
 
 - Full sweep re-run, no drift anywhere:
