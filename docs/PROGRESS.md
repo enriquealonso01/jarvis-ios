@@ -1,5 +1,25 @@
 # PROGRESS
 
+## 2026-09-18 06:25 UTC (build-loop run) — CRITICAL FIX: /register now accepts the app's Bearer
+
+- Found a real mission-blocker during a code audit: `POST /register` was
+  HMAC-only while the iOS app registers its APNs device token with the
+  dashboard Bearer (the app cannot compute the agent HMAC). Every launch-time
+  registration would 401 → DEVICE_TOKEN never persisted → **no VoIP push could
+  ever ring the phone**, even after Enrique installs the p8. The Swift comment
+  even said "bridge accepts dual auth after this commit" — that half never
+  landed. Fixed: `/register` now uses `_auth_dual` (same ladder as /call).
+- Probe extended to 15/15 (new: /register valid-bearer 200, bad-bearer 401,
+  agent-HMAC still 200 + token overwrite). All PASS on a throwaway :9162.
+- Deployed: py_compile gate → systemd restart jarvis-ios-bridge → live-verified
+  on prod :9160 (bearer /register 200 registered:true; apns.env restored
+  byte-identical afterward; /health ok; public /bridge/health 200). Full
+  verify_all.sh sweep ALL GREEN (5/5, bridge active, gateway parity, crons armed).
+- CallManager.swift comment corrected to match reality; swift_sanity OK.
+- Committed + pushed f26c2c2 (main).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 (build-loop run) — maintenance sweep, ALL GREEN
 
 - Backlog 1–9 complete; no drift found. Full `scripts/verify_all.sh` sweep:
