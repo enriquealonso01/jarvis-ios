@@ -167,10 +167,16 @@ def main():
     st, _ = req(base, "POST", "/schedule", {"Authorization": "Bearer x"}, sched_body)
     check("/schedule bad bearer 401", st == 401)
 
-    # list via HMAC over empty body
+    # /schedule/list shows bearer-created entry, and must NOT leak the
+    # snapshotted APNs device_token (or the internal failures counter) —
+    # the token is a push-delivery secret; only the scheduler needs it.
     st, out4 = req(base, "GET", "/schedule/list", {"x-bridge-sig": sig_for(a.secret, b"")})
-    ids = [i["call_id"] for i in out4.get("scheduled", [])]
+    entries = out4.get("scheduled", [])
+    ids = [i["call_id"] for i in entries]
     check("/schedule/list shows bearer-created entry", st == 200 and sched_id in ids)
+    check("/schedule/list strips device_token + failures",
+          st == 200 and entries and
+          all("device_token" not in i and "failures" not in i for i in entries))
 
     # cancel that entry via bearer
     cancel_body = json.dumps({"call_id": sched_id}).encode()

@@ -147,11 +147,16 @@ required_guard_pins = [
     # Chats poll identity: ChatLine.id must be CONTENT-derived. A `let id =
     # UUID()` field makes the 5s pollHistory compare unequal every tick and
     # re-create every bubble (flicker + scroll jump).
-    ("ChatsView.swift", ["var id: String { role + \"|\" + text }",
+    ("ChatsView.swift", ['var id: String { role + "|" + text }',
                          # startTask slug: project is a plain String —
                          # `project.map {}` iterates CHARACTERS and fails the
                          # build; must slug-ify the whole string.
                          "project.components(separatedBy: CharacterSet.alphanumerics.inverted)"]),
+    # SecretsView resilience: a failed load must KEEP the last-known-good
+    # list and surface the error — the old `secrets = []` catch turned a
+    # transient bridge outage into the lie "No secrets stored".
+    ("SecretsView.swift", ["loadFailed = true",
+                           "secrets.isEmpty && !loading && !loadFailed"]),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):

@@ -342,9 +342,19 @@ async def register(request: Request, x_bridge_sig: str = Header(default="")):
 @app.get("/schedule/list")
 async def schedule_list(request: Request, x_bridge_sig: str = Header(default="")):
     """List pending scheduled calls. GETs authenticate via HMAC over an empty
-    body: sig = HMAC-SHA256(secret, b'') — or the app's dashboard Bearer."""
+    body: sig = HMAC-SHA256(secret, b'') — or the app's dashboard Bearer.
+
+    device_token (the snapshotted APNs token) and the internal `failures`
+    counter are STRIPPED from the response — the device token is a secret
+    that identifies the phone for pushes; only the scheduler fire path needs
+    it, never a client. The app's Decodable model has no such field anyway.
+    """
     _auth_dual(request, x_bridge_sig, b"")
-    return {"scheduled": _load_schedule()}
+    public = []
+    for item in _load_schedule():
+        entry = {k: v for k, v in item.items() if k not in ("device_token", "failures")}
+        public.append(entry)
+    return {"scheduled": public}
 
 
 @app.post("/schedule/cancel")

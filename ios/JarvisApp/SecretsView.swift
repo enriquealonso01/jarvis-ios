@@ -24,6 +24,7 @@ struct SecretsView: View {
     @State private var newValue = ""
     @State private var loading = false
     @State private var status: String?
+    @State private var loadFailed = false
     @State private var confirmDelete: SecretMeta?
     @State private var unlocked = false
     @AppStorage("jarvis.settings.faceid") private var faceIDLock = false
@@ -76,9 +77,16 @@ struct SecretsView: View {
     private var secretsList: some View {
         List {
                 Section {
-                    if secrets.isEmpty && !loading {
+                    // Load failure ≠ empty server: a transient bridge outage
+                    // must show the error, not the lie "No secrets stored"
+                    // (the empty check below only runs when the fetch SUCCEEDED).
+                    if secrets.isEmpty && !loading && !loadFailed {
                         Text("No secrets stored. Values live server-side only.")
                             .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if loadFailed && secrets.isEmpty {
+                        Label("Can't reach the bridge — secrets NOT loaded.", systemImage: "wifi.exclamationmark")
+                            .font(.caption).foregroundStyle(.red)
                     }
                     ForEach(secrets) { s in
                         HStack {
@@ -160,9 +168,12 @@ struct SecretsView: View {
         do {
             let resp = try await CCClient.shared.get("\(bridgeBase())/secrets", as: SecretsListResp.self)
             secrets = resp.secrets
+            loadFailed = false
         } catch {
             status = nil
-            secrets = []
+            // Keep last-known-good entries; a transient outage must not look
+            // like an empty server (the list view now shows the load error).
+            loadFailed = true
         }
     }
 

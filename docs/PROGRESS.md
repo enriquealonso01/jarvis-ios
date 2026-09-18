@@ -1,5 +1,31 @@
 # PROGRESS
 
+## 2026-09-18 13:20 UTC (build-loop run) — /schedule/list no longer leaks the APNs device token; SecretsView outage no longer lies "empty"; sweep all green
+
+- Audit found TWO real defects (bridge runs from the repo dir, so repo = prod):
+- **`GET /schedule/list` returned raw schedule entries — including the
+  snapshotted APNs `device_token`** (and the internal `failures` counter)
+  to every authed caller. The device token is a push-delivery secret; only
+  the scheduler fire path needs it. Fixed: entries are now stripped of
+  `device_token`/`failures` in the response. Probe pin added
+  ("/schedule/list strips device_token + failures") — 16/16 on a throwaway
+  instance; live prod check shows the scheduled entry WITHOUT the token.
+- **SecretsView wiped the list on any transient fetch failure**
+  (`catch { secrets = [] }`): a bridge blip rendered the lie "No secrets
+  stored. Values live server-side only." Fixed: load failure now keeps the
+  last-known-good list and shows "Can't reach the bridge — secrets NOT
+  loaded."; the empty-state only renders when the fetch SUCCEEDED and
+  returned nothing. swift_sanity required-guard pins both.
+- Deploy: py_compile pass → jarvis-ios-bridge restart → /health ok
+  (scheduled:1 preserved) → public /bridge/health 200 → live
+  /schedule/list verified stripped. Full scripts/verify_all.sh: exit 0 ALL
+  GREEN (swift_sanity incl. new pins, scheduler pins 7/7, bridge probe
+  16/16, gateway bearer gate, live health, prod parity + 3 crons, native
+  WebRTC e2e PASS vs live gateway).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md,
+  apple-setup guide cron fires 9AM Miami tomorrow).
+
 ## 2026-09-18 12:55 UTC (build-loop run) — Push Notifications entitlement wired (first-build VoIP blocker); sweep all green
 
 - Audit pivot: every Swift file has been line-by-line hardened across prior
