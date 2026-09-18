@@ -1,0 +1,38 @@
+name: JarvisApp
+options:
+  bundleIdPrefix: com.enriquecodes
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""            # Enrique sets his team in Xcode (BUILD.md)
+    PRODUCT_BUNDLE_IDENTIFIER: com.enriquecodes.jarvis
+targets:
+  JarvisApp:
+    type: application
+    platform: iOS
+    sources:
+      - JarvisApp
+    info:
+      path: JarvisApp/Info.plist
+      properties:
+        CFBundleDisplayName: JARVIS
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIUserInterfaceStyle: Dark
+        NSFaceIDUsageDescription: "Unlock JARVIS secrets."
+        ITSAppUsesNonExemptEncryption: false
+        UIBackgroundModes:
+          - audio
+          - voip
+    settings:
+      base:
+        PRODUCT_NAME: JarvisApp
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_PREVIEWS: YES
