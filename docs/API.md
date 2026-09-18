@@ -52,6 +52,31 @@ curl -s -X POST http://127.0.0.1:9160/secrets/set -H "x-bridge-sig: $sig" -H "Co
 ```
 
 ## Calling Enrique (for WhatsApp/voice JARVIS tools)
+
+### One-liner (backlog #8, added 2026-09-18): `scripts/call_enrique.py`
+
+Wraps the whole recipe — reads the secret, signs, calls the bridge:
+
+```
+python3 scripts/call_enrique.py call     --reason "Market update" --by "cron:jobname"
+python3 scripts/call_enrique.py schedule --at 2026-09-19T14:00:00+00:00 --reason "10am Miami chat"
+python3 scripts/call_enrique.py list
+python3 scripts/call_enrique.py cancel --id ab12cd34      # or omit --id to cancel all
+```
+
+(`pushed:false` on `call` = no registered iPhone yet; check `GET /health`.)
+
+### Voice JARVIS: `call_enrique` tool (LIVE 2026-09-18)
+
+The voice brain (Pipecat tool layer, /opt/voice-gw/brain.py — repo mirror
+`server/voice_gateway/brain.py`) exposes a `call_enrique` function tool:
+`action=now|schedule|list|cancel` (+ `reason`, `at_iso`, `call_id`). During a
+call Enrique can say "give me a ring", "call me at 10am about X" and the brain
+signs the bridge request itself (same HMAC contract). Proven end-to-end
+2026-09-18: schedule→list→cancel and now→pushed:false-with-guidance.
+
+### Raw curl recipe
+
 1. `secret=$(cat /opt/jarvis-ios-bridge/shared_secret)`
 2. `body='{"reason":"Call about X","scheduled_by":"whatsapp-jarvis"}'`
 3. `sig=$(printf %s "$body" | openssl dgst -sha256 -hmac "$secret" -hex | cut -d' ' -f2)`

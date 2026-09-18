@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""call_enrique — the agent-facing entry point to the JARVIS-iOS push bridge.
+
+Backlog #8 integration: any JARVIS surface (this cron loop, WhatsApp/Signal
+chat, the voice brain's tool layer, a reminder cron) rings or schedules a
+call to Enrique's iPhone with one command. Wraps docs/API.md recipe:
+
+    POST /call                       {reason, scheduled_by?}          -> ring now
+    POST /schedule                   {at_iso, reason, scheduled_by?}  -> later
+    GET  /schedule/list                                                -> pending
+    POST /schedule/cancel            {call_id?} (omit = cancel all)
+
+Auth: HMAC-SHA256 over the raw body with the bridge shared secret
+(/opt/jarvis-ios-bridge/shared_secret, root-only). GET /schedule/list signs
+the empty body. The secret is read at call time and never printed.
+
+Usage:
+  call_enrique.py call     --reason "Market update" [--by "cron:jobname"]
+  call_enrique.py schedule --at "2026-09-19T14:00:00+00:00" --reason "..." [--by ...]
+  call_enrique.py list
+  call_enrique.py cancel                # all
+  call_enrique.py cancel --id ab12cd34  # one
+
+Exit codes: 0 success (even pushed:false — see below), 1 usage/config error,
+2 bridge unreachable/HTTP error. `pushed:false` on /call means APNs is not
+configured OR no device has registered yet; the JSON says which state.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import hmac
+import json
+import socket
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+BRIDGE = "http://127.0.0.1:9160"
+SECRET_PATH = Path("/opt/jarvis-ios-bridge/shared_secret")
+
+
+def _sign(body: bytes) -> str:
+    secret = SECRET_PATH.read_bytes().strip()
+    return hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+
+def _request(method: str, path: str, body: dict | None = None) -> dict:
+    raw = json.dumps(body).encode() if body is not None else b""
+    req = urllib.request.Request(
+        BRIDGE + path, data=raw if method == "POST" else None, method=method,
+        headers={"Content-Type": "application/json", "x-bridge-sig": _sign(raw)})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode()[:200]
+        print(f"bridge HTTP {e.code}: {detail}", file=sys.stderr)
+        sys.exit(2)
+    except (urllib.error.URLError, socket.timeout, OSError) as e:
+        print(f"bridge unreachable at {BRIDGE}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="Ring or schedule a call to Enrique's iPhone (JARVIS-iOS push bridge).")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    c = sub.add_parser("call", help="ring now")
+    c.add_argument("--reason", required=True)
+    c.add_argument("--by", default=None, help="who asked (e.g. 'cron:jobname', 'voice', 'chat')")
+
+    s = sub.add_parser("schedule", help="ring at an ISO-8601 time (prefer +00:00 offset)")
+    s.add_argument("--at", required=True, dest="at_iso")
+    s.add_argument("--reason", required=True)
+    s.add_argument("--by", default=None)
+
+    sub.add_parser("list", help="list pending scheduled calls")
+
+    x = sub.add_parser("cancel", help="cancel one (--id) or all scheduled calls")
+    x.add_argument("--id", default=None, help="call_id from `list`; omit to cancel ALL")
+
+    a = p.parse_args()
+    if not SECRET_PATH.exists():
+        print(f"missing {SECRET_PATH} (run on the JARVIS box as root)", file=sys.stderr)
+        sys.exit(1)
+
+    if a.cmd == "call":
+        body: dict = {"reason": a.reason}
+        if a.by:
+            body["scheduled_by"] = a.by
+        out = _request("POST", "/call", body)
+        if not out.get("pushed"):
+            print("NOTE pushed=false — APNs unconfigured or device not registered yet (bridge /health says which).")
+    elif a.cmd == "schedule":
+        body = {"at_iso": a.at_iso, "reason": a.reason}
+        if a.by:
+            body["scheduled_by"] = a.by
+        out = _request("POST", "/schedule", body)
+    elif a.cmd == "list":
+        out = _request("GET", "/schedule/list")
+    else:
+        body = {} if not a.id else {"call_id": a.id}
+        out = _request("POST", "/schedule/cancel", body)
+
+    print(json.dumps(out, indent=2))
+
+
+if __name__ == "__main__":
+    main()

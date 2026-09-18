@@ -448,6 +448,10 @@ class VoiceSession:
         """Heartbeat to the engine: he is on the line for this thread."""
         while not self.closed and dashboard is not None:
             await dashboard.presence(self.thread_id)
+            # ask_jarvis works on a sibling engine thread (brain.agent_thread_id);
+            # the engine's is_live() must be true there too or every result goes
+            # to WhatsApp as "he walked away".
+            await dashboard.presence(brain_mod.agent_thread_id(self.thread_id))
             await asyncio.sleep(3.0)
 
     async def _run(self) -> None:

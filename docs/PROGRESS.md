@@ -1,3 +1,33 @@
+## 2026-09-18 22:00 UTC (build-loop run) — backlog #8 CLOSED: `call_enrique` is real — agent CLI shipped + voice-brain tool LIVE in the restarted gateway
+
+- Gap found: #8's "WhatsApp/voice JARVIS call_enrique tool" existed only as a
+  doc recipe — no JARVIS surface could actually ring the phone. Two parts
+  shipped this run:
+  1. `scripts/call_enrique.py` — agent-facing CLI over the bridge (call /
+     schedule / list / cancel), self-signing HMAC, stdlib-only. Proven LIVE
+     against the production bridge: schedule → list shows entry → cancel-one
+     → list empty → call → `{pushed:false}` (no device registered yet, no
+     side effects; `_send_voip` degrades to False with an empty DEVICE_TOKEN).
+  2. `call_enrique` as a Pipecat function tool in the voice brain
+     (/opt/voice-gw/brain.py; action=now|schedule|list|cancel, reason /
+     at_iso / call_id; ISO-8601 validated;Miami-time echo on schedule;
+     pushed:false → guidance to install TestFlight instead of dead air).
+     Handler seam proven with all five paths against the live bridge before
+     restart; "call me at 10am about X" now works hands-free mid-call.
+- Deploy per ARCHITECTURE.md procedure: py_compile + venv import OK →
+  last-known-good snapshot (brain+session) → restart at 21:55 UTC during an
+  idle window (no offer/connect in prior 3 min; last call closed 21:45) →
+  /healthz ok, brain realtime, openai ok → full verify_all.sh ALL GREEN incl.
+  native WebRTC e2e against the NEW process.
+- Repo mirrors synced: server/voice_gateway/brain.py (NEW — /opt/voice-gw was
+  previously unmirrored in-repo) and session.py (picked up an unmirrored
+  live-only presence fix from 17:34; /opt tree and repo now identical).
+- docs/API.md: "Calling Enrique" section restructured — one-liner CLI,
+  voice-tool note, raw curl recipe.
+- NEEDS ENRIQUE (unchanged, phone-only): install TestFlight, accept invite,
+  open build 1 once → device_registered flips → every path above goes live
+  (pushed:true, CallKit screen with reason).
+
 ## 2026-09-18 21:50 UTC (build-loop run) — device-watch flip path PROVEN end-to-end + wiring contract pinned; real watch restored after test mishap
 
 - The one branch of the loop never actually exercised was the device-watch
