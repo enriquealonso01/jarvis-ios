@@ -1,5 +1,31 @@
 # PROGRESS
 
+## 2026-09-18 12:35 UTC (build-loop run) — bridge scheduler stale-token + cancel-all contract bugs fixed; sweep all green
+
+- Full re-audit of the server side (main.py, all 13 Swift files already
+  covered in prior runs) found TWO real defects on the scheduled-call path:
+- **Scheduler fired at a STALE/EMPTY device token** — `/schedule` snapshots
+  the device token into the entry, but `_run_scheduler_tick` pushed to that
+  snapshot forever. Empty when the call was scheduled before the device
+  registered (fresh install — the exact day-one case the app fixed at 11:20)
+  and stale after an app reinstall (new APNs token): "call me at 10am"
+  silently never rang. Fixed: the tick now always prefers the bridge's
+  CURRENT registered DEVICE_TOKEN, falling back to the snapshot only when
+  nothing is registered (pre-existing state keeps working).
+- **`/schedule/cancel` cancel-all was dead code** — the docstring and
+  `CancelReq` ("None/empty cancels all") promised it, but the filter
+  `if req.call_id and ...` kept every item when `call_id` was None.
+  Empty body now clears the whole schedule as documented.
+- check_scheduler_robust.py: two new pins (live-token preference, snapshot
+  fallback) — 7/7 pass; cancel contract verified in a live mirror. Full
+  scripts/verify_all.sh: exit 0 ALL GREEN (swift_sanity, bridge probe 15/15,
+  gateway bearer gate, live health bridge :9160 ok / apns_configured:false /
+  voice-gw :9150 realtime:true, public /bridge/health 200, prod parity +
+  crons armed, native WebRTC e2e PASS vs live gateway). Committed 8cfb98c,
+  pushed.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 12:05 UTC (build-loop run) — three audit catches: two compile blockers + dial-fail teardown; sweep all green
 
 - Line-by-line audit (all 13 Swift files) found THREE real defects:
