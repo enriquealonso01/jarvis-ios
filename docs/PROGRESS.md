@@ -1,5 +1,34 @@
 # PROGRESS
 
+## 2026-09-18 08:05 UTC (build-loop run) — app-phase 3: Home alerts card, ad-hoc project chats, call-log outcomes
+
+- Contract-audited the app against the live dashboard and closed three
+  feature gaps in the same pass (all wire shapes verified with a minted
+  Bearer against :9119 before writing code):
+  - **Home ATTENTION card**: `/api/control/attention` was never surfaced —
+    failed tasks / waiting sessions / failing automations only lived on the
+    web CC. New `Attention` model (alerts = {severity, title, msg, kind,
+    ref}; count, critical), card renders above SYSTEM only when count > 0,
+    red vs yellow by severity.
+  - **Chats: ad-hoc project tasks**: new "New project task…" flow → sheet →
+    POST /api/control/project/task {project, text} (verified live: server
+    derives conversation id `project-<slug>`); thread opens as
+    `project-<slug>` — WorkThreadView now strips both `work-`/`project-`
+    prefixes and the history resolver matches prefix/substring, so history
+    + follow-up chat both work. Dispatch-board rows also show their latest
+    item message as a subtitle (board payload re-audited: items carry
+    message/ago_seconds).
+  - **Call-log outcomes**: entries now carry outcome ("answered"/"ended"/
+    "missed"/"failed") + durationSeconds. CallManager tracks the open log
+    entry (including the outgoing entry written by the "Call me" button via
+    trackOutgoingLog) and stamps it on end: duration from wall-clock start,
+    decline/ring-out = missed. CallsView renders duration + outcome; store
+    bumped to key v2.
+- swift_sanity extended to pin every new symbol; full verify_all sweep:
+  exit 0 ALL GREEN (6/6 incl. native WebRTC e2e vs live gateway).
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 07:45 UTC (build-loop run) — persistent call log (incoming + outgoing, survives restarts)
 
 - Audited the Calls tab for silent-failure gaps and found one: the call log

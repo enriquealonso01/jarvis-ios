@@ -29,6 +29,16 @@ final class CallManager: NSObject, ObservableObject {
     private var webRTC: WebRTCClient?
     /// lastPayload of the call currently being answered (read before WebRTC connect)
     private(set) var pendingAnswerPayload: VoIPPayload?
+    /// Call-log bookkeeping for the live call (entry id + wall-clock start).
+    private var logEntryID: String?
+    private var callStart: Date?
+
+    /// "Call me" button: the outgoing log entry was already written by the
+    /// Calls tab — adopt it so endActiveCall stamps its outcome/duration.
+    func trackOutgoingLog(entryID: String) {
+        logEntryID = entryID
+        callStart = Date()
+    }
 
     struct VoIPPayload {
         let reason: String
@@ -64,7 +74,8 @@ final class CallManager: NSObject, ObservableObject {
         pendingAnswerPayload = p
         // Persistent log: record the incoming call even if it's never answered
         // (PushKit may wake us while killed; this is the only trace it happened).
-        CallLogStore.shared.add(reason: p.reason, outgoing: false)
+        // Outcome is stamped later: "answered" on connect, "missed" on decline.
+        logEntryID = CallLogStore.shared.add(reason: p.reason, outgoing: false)
 
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: "JARVIS")
@@ -94,6 +105,7 @@ final class CallManager: NSObject, ObservableObject {
     private func connectWebRTC() async throws {
         guard let payload = pendingAnswerPayload else { return }
         callState = "connecting"
+        callStart = Date()
         let base = ServerConfig.shared.config.voiceGWURL
             .trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         let offerURL = base + payload.gatewayWS + "/api/offer"
@@ -108,6 +120,7 @@ final class CallManager: NSObject, ObservableObject {
         }
         webRTC = client
         callState = "active"
+        CallLogStore.shared.finish(id: logEntryID, outcome: "answered")
         Haptics.success()
     }
 
@@ -133,6 +146,19 @@ final class CallManager: NSObject, ObservableObject {
     }
 
     func endActiveCall() {
+        // Stamp the log with outcome + duration before tearing down.
+        if callState.hasPrefix("failed") {
+            CallLogStore.shared.finish(id: logEntryID, outcome: "failed")
+        } else if let start = callStart, callState == "active" || callState.hasPrefix("active") {
+            CallLogStore.shared.finish(id: logEntryID, outcome: "ended",
+                                       durationSeconds: max(0, Int(Date().timeIntervalSince(start))))
+        } else if callState == "ringing" || callState == "connecting" {
+            // Never picked up (declined in CallKit, or push woke us and the
+            // user let it ring out).
+            CallLogStore.shared.finish(id: logEntryID, outcome: "missed")
+        }
+        logEntryID = nil
+        callStart = nil
         if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date()) }
         webRTC?.hangup()
         webRTC = nil

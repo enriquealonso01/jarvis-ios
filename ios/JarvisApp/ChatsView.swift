@@ -1,17 +1,22 @@
 import SwiftUI
 
-/// Chats tab: per-project threads (from the CC knowledge map / dispatch board),
+/// Chats tab: per-project threads (from the CC dispatch board / knowledge map),
 /// each backed by the dashboard agent conversation endpoints.
+/// Phase 3: ad-hoc "New chat" row → /api/control/project/task threads
+/// (project-<slug> conversations, server-side contract verified live), pull
+/// thread items into the subtitle, and a pinned "New task" composer.
 struct ProjectsView: View {
     @State private var threads: [ThreadRow] = []
     @State private var error: String?
     @State private var loading = false
+    @State private var showNewTask = false
 
     struct ThreadRow: Identifiable {
         let id: String
         let title: String
         let project: String
         let openCount: Int
+        let lastMessage: String
     }
 
     var body: some View {
@@ -20,6 +25,14 @@ struct ProjectsView: View {
                 if let error {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
+                Button {
+                    Haptics.tap()
+                    showNewTask = true
+                } label: {
+                    Label("New project task…", systemImage: "square.and.pencil")
+                        .foregroundStyle(Color.jarvisAccent)
+                }
+
                 ForEach(threads) { t in
                     NavigationLink {
                         WorkThreadView(workId: t.id, title: t.title)
@@ -38,6 +51,9 @@ struct ProjectsView: View {
                             }
                             if !t.project.isEmpty {
                                 Text(t.project).font(.caption2).foregroundStyle(.secondary)
+                            }
+                            if !t.lastMessage.isEmpty {
+                                Text(t.lastMessage).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
                             }
                         }
                     }
@@ -71,6 +87,11 @@ struct ProjectsView: View {
             .navigationTitle("Chats")
             .refreshable { await load() }
             .task { await load() }
+            .sheet(isPresented: $showNewTask) {
+                NewTaskSheet { project, text in
+                    await startTask(project: project, text: text)
+                }
+            }
         }
     }
 
@@ -85,22 +106,102 @@ struct ProjectsView: View {
                     let title: String
                     let project: String?
                     let open_count: Int?
+                    let items: [Item]?
+                }
+                struct Item: Decodable {
+                    let message: String?
+                    let ago_seconds: Int?
                 }
                 let threads: [Thread]?
             }
             let board: Board = try await CCClient.shared.get("/api/control/dispatch/board", as: Board.self)
-            threads = (board.threads ?? []).map {
-                ThreadRow(id: "work-\($0.slug)", title: $0.title, project: $0.project ?? "", openCount: $0.open_count ?? 0)
+            threads = (board.threads ?? []).map { t in
+                let last = (t.items ?? []).first
+                return ThreadRow(id: "work-\(t.slug)",
+                                 title: t.title,
+                                 project: t.project ?? "",
+                                 openCount: t.open_count ?? 0,
+                                 lastMessage: last?.message ?? "")
             }
             error = nil
         } catch {
             self.error = "Can't load threads."
         }
     }
+
+    /// POST /api/control/project/task — starts a per-project thread
+    /// (conversation id `project-<slug>` server-side). Opens the thread.
+    @MainActor
+    private func startTask(project: String, text: String) async {
+        do {
+            struct TaskReply: Decodable { let reply: String }
+            let _: TaskReply = try await CCClient.shared.post(
+                "/api/control/project/task",
+                body: ["project": project, "text": text],
+                as: TaskReply.self)
+            let slug = project.map { $0.components(separatedBy: CharacterSet.alphanumerics.inverted).joined(separator: "") } ?? ""
+            let id = "project-" + (slug.isEmpty ? "adhoc" : String(slug.prefix(48)))
+            Haptics.success()
+            showNewTask = false
+            threads.insert(ThreadRow(id: id, title: text, project: project, openCount: 1, lastMessage: ""), at: 0)
+        } catch {
+            Haptics.error()
+        }
+    }
+}
+
+/// Composer for the "New project task" flow: project name + instruction.
+struct NewTaskSheet: View {
+    var onStart: (String, String) async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var project = ""
+    @State private var text = ""
+    @State private var starting = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Project") {
+                    TextField("e.g. jarvis-ios", text: $project)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                Section("Task for JARVIS") {
+                    TextField("What should JARVIS do?", text: $text, axis: .vertical)
+                        .lineLimit(3...8)
+                }
+            }
+            .navigationTitle("New task")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if starting {
+                        ProgressView()
+                    } else {
+                        Button("Start") {
+                            starting = true
+                            Task {
+                                await onStart(project.trimmingCharacters(in: .whitespaces),
+                                              text.trimmingCharacters(in: .whitespaces))
+                                starting = false
+                            }
+                        }
+                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// A chat thread with JARVIS about a work item (or an ad-hoc conversation).
 /// Send → POST /api/control/work/{id}/chat (dashboard agent), optimistic UI.
+/// `workId` may be `work-<slug>` (dispatch board), `project-<slug>` (per-project
+/// task thread) — the server's history resolver matches by exact, prefix, then
+/// substring session id, and chat accepts any work id.
 struct WorkThreadView: View {
     let workId: String
     let title: String
@@ -162,9 +263,12 @@ struct WorkThreadView: View {
 
     @MainActor
     private func loadHistory() async {
-        // work-<slug> threads map to dispatch-board items; the dashboard
-        // exposes history per session/work id. Ad-hoc ids start empty.
-        let id = workId.hasPrefix("work-") ? String(workId.dropFirst(5)) : workId
+        // work-<slug> / project-<slug> map to session ids server-side; the
+        // dashboard resolves exact → prefix → substring. Ad-hoc ids start empty.
+        var id = workId
+        for prefix in ["work-", "project-"] where id.hasPrefix(prefix) {
+            id = String(id.dropFirst(prefix.count))
+        }
         do {
             let hist: WorkHistory = try await CCClient.shared.get(
                 "/api/control/work/\(id)/history", as: WorkHistory.self

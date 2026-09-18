@@ -171,6 +171,25 @@ struct WorkChatReply: Decodable {
     let reply: String
 }
 
+/// GET /api/control/attention — failed tasks, waiting sessions, failing
+/// automations (shape verified live: {alerts: [], count, critical};
+/// alert = {severity: "crit"|"info", title, msg, kind, ref}).
+struct Attention: Decodable {
+    struct Alert: Decodable, Identifiable {
+        let severity: String
+        let title: String
+        let msg: String?
+        let kind: String?
+        let ref: String?
+        var id: String { ref ?? title }
+        /// Stable ForEach identity even when ref is missing/empty.
+        var refKey: String { ref.flatMap { $0.isEmpty ? nil : $0 } ?? "\(kind ?? "")|\(title)" }
+    }
+    let alerts: [Alert]
+    let count: Int?
+    let critical: Int?
+}
+
 struct WorkHistory: Decodable {
     struct Message: Decodable {
         let role: String

@@ -62,11 +62,19 @@ struct CallsView: View {
                     ForEach(callLog.entries.reversed()) { c in
                         HStack {
                             Image(systemName: c.outgoing ? "arrow.up.right.phone" : "phone.fill")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(c.outcome == "missed" ? Color.red : Color.secondary)
                             VStack(alignment: .leading) {
                                 Text(c.reason).font(.callout)
-                                Text(c.at.formatted(date: .omitted, time: .shortened))
-                                    .font(.caption2).foregroundStyle(.secondary)
+                                HStack(spacing: 5) {
+                                    Text(c.at.formatted(date: .omitted, time: .shortened))
+                                    if let d = c.durationSeconds, d > 0 {
+                                        Text("· \(Self.dur(d))")
+                                    }
+                                    if let o = c.outcome, o != "ended" {
+                                        Text("· \(o)").foregroundStyle(o == "answered" ? Color.green : Color.secondary)
+                                    }
+                                }
+                                .font(.caption2).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -115,12 +123,18 @@ struct CallsView: View {
             status = resp.pushed
                 ? "VoIP push sent — answer via CallKit when it rings."
                 : "Bridge accepted the call (APNs not configured yet — push queued server-side)."
-            callLog.add(reason: "JARVIS call (from iOS app)", outgoing: true)
+            let entryID = callLog.add(reason: "JARVIS call (from iOS app)", outgoing: true)
+            CallManager.shared.trackOutgoingLog(entryID: entryID)
             Haptics.success()
         } catch {
             status = "Call failed: \(error.localizedDescription)"
             Haptics.error()
         }
+    }
+
+    /// 0:45 / 3:20 style duration label for the call log.
+    private static func dur(_ s: Int) -> String {
+        String(format: "%d:%02d", s / 60, s % 60)
     }
 
     @MainActor

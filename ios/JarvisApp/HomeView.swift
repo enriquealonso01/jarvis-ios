@@ -7,6 +7,7 @@ struct HomeView: View {
     @State private var zai: ZaiUsage?
     @State private var autos: Automations?
     @State private var activity: Activity?
+    @State private var attention: Attention?
     @State private var error: String?
 
     var body: some View {
@@ -27,6 +28,7 @@ struct HomeView: View {
                             }
                         }
                     }
+                    if hasAlerts { alertsCard }
                     statusCard
                     llmCard
                     cronsCard
@@ -44,6 +46,31 @@ struct HomeView: View {
             }
             .refreshable { await load() }
             .task { await load() }
+        }
+    }
+
+    /// Failed tasks, waiting sessions, failing automations — same feed the web
+    /// CC banner shows. Hidden entirely when nothing needs attention.
+    private var hasAlerts: Bool { (attention?.count ?? 0) > 0 }
+
+    private var alertsCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 10) {
+                cardHeader("ATTENTION", icon: "exclamationmark.triangle.fill")
+                ForEach(attention?.alerts ?? [], id: \.refKey) { a in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(a.severity == "crit" ? Color.red : Color.yellow)
+                                .frame(width: 7, height: 7)
+                            Text(a.title).font(.caption).lineLimit(1)
+                        }
+                        if !a.msg.isEmpty {
+                            Text(a.msg).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -202,8 +229,9 @@ struct HomeView: View {
             async let z: ZaiUsage = CCClient.shared.get("/api/control/zai_usage", as: ZaiUsage.self)
             async let a: Automations = CCClient.shared.get("/api/control/automations", as: Automations.self)
             async let w: Activity = CCClient.shared.get("/api/control/activity", as: Activity.self)
-            let (v2, z2, a2, w2) = try await (v, z, a, w)
-            vitals = v2; zai = z2; autos = a2; activity = w2
+            async let at: Attention = CCClient.shared.get("/api/control/attention", as: Attention.self)
+            let (v2, z2, a2, w2, at2) = try await (v, z, a, w, at)
+            vitals = v2; zai = z2; autos = a2; activity = w2; attention = at2
             error = nil
         } catch {
             self.error = "Can't reach the dashboard."
