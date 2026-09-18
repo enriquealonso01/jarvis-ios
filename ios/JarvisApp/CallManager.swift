@@ -91,14 +91,14 @@ final class CallManager: NSObject, ObservableObject {
             .trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         let offerURL = base + payload.gatewayWS + "/api/offer"
         let client = try await WebRTCClient.connect(offerURL: offerURL,
-                                                    tokenProvider: { try await AuthStore.shared.validAccessToken() })
+                                                    tokenProvider: { @Sendable in try await AuthStore.shared.validAccessToken() })
         webRTC = client
         callState = "active"
         Haptics.success()
     }
 
     func endActiveCall() {
-        if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded) }
+        if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date()) }
         webRTC?.hangup()
         webRTC = nil
         activeCallUUID = nil
@@ -131,8 +131,8 @@ extension CallManager: PKPushRegistryDelegate {
         // /register using the Bearer (bridge accepts dual auth after this commit).
         let cfg = ServerConfig.shared.config
         let url = URL(string: cfg.bridgeBaseURL + "/register")
-        guard let url,
-              var req = try? URLRequest(url: url, method: .post) else { return }
+        guard let url else { return }
+        var req = URLRequest(postTo: url)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["device_token": token, "bundle_id": Bundle.main.bundleIdentifier ?? ""])
         if let tok = AuthStore.shared.accessToken {
@@ -179,8 +179,10 @@ extension CallManager: CXProviderDelegate {
 }
 
 extension URLRequest {
-    init(url: URL, method: String) {
+    /// POST factory (avoids ambiguity with Foundation's availability-gated
+    /// init(url:method:) — that one is iOS 16+ on some SDK paths).
+    init(postTo url: URL) {
         self.init(url: url)
-        httpMethod = method
+        httpMethod = "POST"
     }
 }

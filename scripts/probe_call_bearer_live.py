@@ -6,12 +6,22 @@ Run against a throwaway instance:
   BRIDGE_NO_SCHEDULER=1 BRIDGE_STATE_DIR=$(mktemp -d) \
   BRIDGE_SHARED_SECRET=testsecret uvicorn main:app --port 9162 &
   python3 scripts/probe_call_bearer_live.py --port 9162 --secret testsecret
+
+The probe owns its listener: it spawns the uvicorn instance itself and ALWAYS
+kills it on exit (orphaned instances from crashed runs caused a bind-conflict
+incident — see PROGRESS 2026-09-19).
 """
 import argparse
+import atexit
 import base64
 import hashlib
 import hmac
 import json
+import os
+import signal
+import subprocess
+import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -69,11 +79,52 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=9162)
     ap.add_argument("--secret", default="testsecret")
+    ap.add_argument("--spawn", action="store_true",
+                    help="spawn (and always clean up) the throwaway uvicorn instance")
     a = ap.parse_args()
     base = f"http://127.0.0.1:{a.port}"
     token = mint_token()
     refresh = mint_token(kind="refresh")
     results = []
+
+    proc = None
+    if a.spawn:
+        # Spawn the throwaway instance; guarantee cleanup even on crash/abort.
+        state_dir = tempfile.mkdtemp(prefix="jarvis-probe-")
+        env = dict(os.environ,
+                   BRIDGE_NO_SCHEDULER="1",
+                   BRIDGE_STATE_DIR=state_dir,
+                   BRIDGE_SHARED_SECRET=a.secret)
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "main:app", "--port", str(a.port)],
+            cwd=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "server", "push_bridge"),
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def _kill():
+            if proc and proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+        atexit.register(_kill)
+        signal.signal(signal.SIGTERM, lambda *_: (_kill(), sys.exit(143)))
+        signal.signal(signal.SIGINT, lambda *_: (_kill(), sys.exit(130)))
+
+        # Wait for /health to answer (up to ~15s).
+        for _ in range(60):
+            try:
+                with urllib.request.urlopen(base + "/health", timeout=1) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                time.sleep(0.25)
+        else:
+            print("FAIL test instance never became healthy")
+            _kill()
+            raise SystemExit(1)
+        print(f"[probe] instance up on :{a.port} (state {state_dir})")
 
     def check(name, cond):
         results.append((name, bool(cond)))

@@ -8,7 +8,7 @@ import AVFoundation
 ///
 /// The gateway runs aiortc (SmallWebRTC). We use the Google WebRTC STS pod so
 /// SDP munging needs are zero: audio-only, STUN from the answer, done.
-final class WebRTCClient: NSObject, RTCPeerConnectionDelegate {
+final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     private var factory: RTCPeerConnectionFactory!
     private var pc: RTCPeerConnection?
     private var localAudioTrack: RTCAudioTrack?
@@ -17,17 +17,17 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate {
     private var baseURL: String = ""
     private(set) var connected = false
 
-    typealias TokenProvider = () async throws -> String
+    typealias TokenProvider = @Sendable () async throws -> String
     private var tokenProvider: TokenProvider!
 
-    static var sharedFactory: RTCPeerConnectionFactory = {
+    nonisolated(unsafe) static var sharedFactory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
         let enc = RTCDefaultVideoEncoderFactory()
         let dec = RTCDefaultVideoDecoderFactory()
         return RTCPeerConnectionFactory(encoderFactory: enc, decoderFactory: dec)
     }()
 
-    static var activeAudioSession: AVAudioSession?
+    nonisolated(unsafe) static var activeAudioSession: AVAudioSession?
 
     static func activateAudioSession(_ session: AVAudioSession) {
         activeAudioSession = session

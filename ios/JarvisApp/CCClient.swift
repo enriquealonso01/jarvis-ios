@@ -2,7 +2,7 @@ import Foundation
 
 /// Typed client for the dashboard Control Center API. Bearer-authed,
 /// auto-refreshes on 401, decodes the real CC payload shapes.
-final class CCClient {
+final class CCClient: @unchecked Sendable {
     static let shared = CCClient()
 
     struct Failure: Error { let message: String }
@@ -180,6 +180,6 @@ struct WorkHistory: Decodable {
     }
     let available: Bool
     let session_id: String?
-    let messages: [Message]
+    let messages: [Message]?
     let total: Int?
 }

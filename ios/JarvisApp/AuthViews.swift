@@ -25,7 +25,7 @@ struct SetupView: View {
                 }
             }
             Button {
-                ServerConfig.shared.config = ServerConfig(
+                ServerConfig.shared.config = ServerConfigValues(
                     baseURL: base, bridgeBaseURL: bridge, voiceGWURL: voice
                 )
             } label: {

@@ -68,6 +68,39 @@ for fn, syms in required.items():
         if sym not in src:
             failures.append(f"{fn}: missing symbol {sym}")
 
+# 2b. duplicate top-level type declarations across the whole target — Swift
+#     rejects a redeclared type at module scope, and a rename that misses one
+#     declaration would only surface as a hard Xcode build error.
+import re
+decl_re = re.compile(r"^(?:@\w+\s+)*(?:public |private |fileprivate |internal |final |open )*"
+                     r"(?:class|struct|enum|actor|protocol)\s+([A-Za-z_]\w*)", re.M)
+owners = {}
+for fn in sorted(os.listdir(APP)):
+    if not fn.endswith(".swift"):
+        continue
+    src = open(os.path.join(APP, fn)).read()
+    for m in decl_re.finditer(src):
+        owners.setdefault(m.group(1), []).append(fn)
+for name, fns in sorted(owners.items()):
+    if len(fns) > 1:
+        failures.append(f"duplicate top-level type '{name}' declared in: {', '.join(fns)}")
+
+# 2c. known-hazard patterns (each caused or risks a real Xcode build error).
+hazards = [
+    # CXProvider has no reportCall(with:endedAt:reason:) — reason-only variant
+    # is for remote reports; our local end uses endedAt only.
+    ("reportCall(with: endedAt: reason:", "nonexistent CXProvider API"),
+    # unavailable / availability-gated Foundation init shadowing risk
+    ("URLRequest(url: url, method:", "ambiguous/shadowed URLRequest init"),
+]
+for fn in sorted(os.listdir(APP)):
+    if not fn.endswith(".swift"):
+        continue
+    src = open(os.path.join(APP, fn)).read()
+    for needle, why in hazards:
+        if needle in src:
+            failures.append(f"{fn}: hazard pattern '{needle}' ({why})")
+
 # 3. asset catalog JSON validity + required entries.
 assets = os.path.join(APP, "Assets.xcassets")
 for root, _, files in os.walk(assets):

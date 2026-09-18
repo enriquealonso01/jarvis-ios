@@ -1,5 +1,36 @@
 # PROGRESS
 
+## 2026-09-19 (build-blocker audit run) — first-Xcode-build hardening
+
+- Full audit of all 12 Swift files for would-be Xcode build errors (Swift has
+  never been compiled on this box; Enrique's first build is the gate). Found
+  and fixed one certain breaker + several likely ones:
+  - **ServerConfig declared twice** (Codable struct AND ObservableObject class
+    in the same module) — instant "invalid redeclaration" build failure.
+    Struct renamed to `ServerConfigValues` (AuthViews initializer updated).
+  - `CXProvider.reportCall(with:endedAt:reason:)` doesn't exist → now
+    `reportCall(with:endedAt:)` (CallManager.endActiveCall).
+  - Local `URLRequest.init(url:method:)` shadowed an availability-gated
+    Foundation initializer → replaced with a `URLRequest(postTo:)` factory.
+  - Swift 6 strict-concurrency hardening: `@unchecked Sendable` on
+    WebRTCClient/CCClient, `nonisolated(unsafe)` on the WebRTC factory +
+    activeAudioSession statics, `@Sendable` token-provider closure,
+    `@MainActor` AppDelegate (fixes UIApplicationDelegate conformance in
+    Swift 6 mode).
+  - `WorkHistory.messages` made Optional (decoder crash-guard; ChatsView
+    already nil-coalesced).
+- swift_sanity.py upgraded to catch this class of bug going forward:
+  duplicate top-level type detection across all sources + hazard-pattern
+  checks (nonexistent CXProvider API, shadowed URLRequest init). OK.
+- probe_call_bearer_live.py now owns its listener: `--spawn` creates the
+  throwaway uvicorn instance itself with atexit/signal-guaranteed cleanup
+  (orphaned-instance incident class eliminated). Verified live: spawned on
+  :9167, **12/12 PASS**, instance gone after exit; prod bridge untouched
+  (/health ok, scheduled:0).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 (docs/BUILD.md, docs/FASTLANE.md). The compile
+  error above would have blocked the very first build — now cleared.
+
 ## 2026-09-19 (maintenance run) — all green; probe hardened
 
 - Full sweep, no drift:
