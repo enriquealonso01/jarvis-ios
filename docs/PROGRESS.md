@@ -1,5 +1,26 @@
 # PROGRESS
 
+## 2026-09-18 04:55 UTC — backlog #8: voice call_enrique + schedule_call tools — LIVE
+
+- Forged two voice tools via jarvis-voice-forge, both validated + enabled:
+  - `call_enrique(reason)` — HMAC-signs and POSTs to bridge /call; returns
+    call_id + spoken line. Live-verified against :9160 (pushed:false while APNs
+    p8 is pending — queue path works).
+  - `schedule_call(reason, at_iso)` — validates/parses ISO-8601, normalizes to
+    UTC, POSTs to bridge /schedule; live-verified (entry created then scrubbed
+    via /schedule/cancel-all; health shows scheduled:0).
+- Shared secret read from /opt/jarvis-ios-bridge/shared_secret (root-only);
+  no secret material in the tool files.
+- Scheduled-call cron support ('call me at 10am about X') is now possible from
+  any voice/WhatsApp turn via these tools; WhatsApp-side recipe stays in
+  docs/API.md (unchanged).
+- NEEDS ENRIQUE: nothing new — APNs p8 still pending (both tools queue fine
+  without it; real rings start once the key is installed).
+- Next: backlog #9 polish (icon spec, launch screen, Settings), then re-verify
+  full ladder when Enrique does the Xcode build + TestFlight upload.
+
+# PROGRESS
+
 ## 2026-09-18 04:25 UTC — backlog #7: fastlane Fastfile + one-command upload.sh
 
 - `ios/fastlane/Fastfile`: `testflight` (xcodegen → archive → upload, skips
