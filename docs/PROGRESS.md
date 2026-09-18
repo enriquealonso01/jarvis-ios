@@ -1,5 +1,26 @@
 # PROGRESS
 
+## 2026-09-18 10:50 UTC (build-loop run) — second compile-blocker fixed: undefined 'prov' on the incoming-call path; sweep all green
+
+- Line-by-line audit found another hard Xcode build error, this one on the
+  CORE mission path: `CallManager.handleVoIPPayload` called
+  `prov.reportNewIncomingCall(...)` — `prov` is a LOCAL inside
+  `setupCallUI()`; the property is `provider`. "Cannot find 'prov' in scope"
+  the moment a VoIP push arrives (the exact path this app exists for).
+  Likely a leftover from the fdebb6c/2df7cb9 refactors; nothing on this box
+  compiles Swift, so only the structural audit catches it.
+- Fixed to `provider?.reportNewIncomingCall`; swift_sanity now carries a
+  hazard pin (`prov.reportNewIncomingCall` = undefined identifier) so the
+  class can't regress.
+- Full `scripts/verify_all.sh` after the fix: exit 0 ALL GREEN (swift_sanity
+  OK incl. new pin, drop-detection + scheduler pins, bridge bearer probe
+  15/15, gateway bearer gate, live health bridge :9160 ok /
+  apns_configured:false / voice-gw :9150 realtime:true, public /bridge/health
+  200, prod parity + crons armed, native WebRTC e2e PASS vs live gateway).
+  Committed 0b415a9, pushed.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 10:37 UTC (build-loop run) — compile-blocker fixed: ChatLine Equatable (pollHistory would fail the first real Xcode build); sweep all green
 
 - Backlog 1–9 re-audited (git log + PROGRESS): complete, no functional drift.
