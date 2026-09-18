@@ -1,5 +1,20 @@
 # PROGRESS
 
+## 2026-09-18 07:09 UTC (build-loop run) — maintenance sweep, ALL GREEN
+
+- Backlog 1–9 remain complete; no drift found, nothing new actionable until
+  the Enrique-gated ladder.
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN — swift_sanity OK; bridge
+  probe 15/15 (throwaway :9162, prod untouched); gateway bearer gate correct
+  (valid 500 / bad 401); live health bridge :9160 ok + voice-gw :9150
+  realtime:true + public /bridge/health 200; prod parity (both services
+  active, gateway mirror identical); native WebRTC e2e probe PASS (offer →
+  answer → inbound track → app datachannel → hello → hangup) against the
+  live gateway. Reminder crons armed (build-loop, loop-sunset,
+  apple-setup-guide). Repo clean and synced with origin/main (b52a841).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 07:05 UTC (build-loop run) — native WebRTC path verified END-TO-END (real client, live gateway)
 
 - Previous runs had only auth-gate-verified the native offer (valid bearer →
