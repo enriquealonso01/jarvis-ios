@@ -1,5 +1,29 @@
 # PROGRESS
 
+## 2026-09-18 05:20 UTC — full-stack verification sweep — all green, awaiting Enrique
+
+- Backlog 1–9 confirmed complete (git log + entries below). No drift: bridge
+  service runs straight from the repo (server/push_bridge/main.py is the
+  deployed code; WorkingDirectory=server/push_bridge), and
+  server/voice_gateway/gateway.py is byte-identical to /opt/voice-gw/gateway.py.
+- Live health: bridge :9160 /health 200, public /bridge/health 200, voice-gw
+  :9150 /healthz 200.
+- Re-ran probe_call_bearer_live.py against a fresh throwaway instance (:9162,
+  real secret, isolated state): 12/12 PASS (bearer/HMAC auth ladders on
+  /call, /schedule, /schedule/list, /schedule/cancel, /secrets). Instance
+  killed after; prod state verified untouched (apns.env empty, scheduled_calls
+  [], secrets {}) — so the bridge still shows apns_configured:false and the
+  queue path only, exactly as before.
+- probe_gateway_bearer_live.py re-run: valid bearer reaches the SDP handler
+  (500 = no SDP sent, gate passed), invalid/no/refresh-kind all 401.
+- scripts/swift_sanity.py: OK (structure, assets, project.yml).
+- Reminder coverage confirmed: cron jarvis-ios-apple-setup-guide fires
+  2026-09-19 13:00 UTC; jarvis-ios-loop-sunset 23:00 UTC (backlog #8's
+  upload-reminder requirement is covered by these).
+- NEEDS ENRIQUE (unchanged, the whole remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md,
+  docs/API.md "Pending"). Nothing else actionable server-side.
+
 ## 2026-09-18 04:10 UTC — backlog #9: polish (app icon, launch screen, Settings, haptics, error/empty states) — DONE, backlog complete
 
 - App icon: generated 1024×1024 arc-reactor mark (dark #0A0B0F, gold rings +
