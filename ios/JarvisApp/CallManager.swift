@@ -85,14 +85,14 @@ final class CallManager: NSObject, ObservableObject {
 
         lastPayload = p
         // Post-end redelivery guard: a push for a call that JUST ended (in any
-        // direction) must not ring the phone again. Apple still requires every
-        // VoIP push to reach CallKit, so report + immediately end — logged as
-        // missed only if the original entry never got an outcome (a fresh log
-        // entry would double-count; the common case already has one).
+        // direction) must not ring the phone again — whether we're idle OR in
+        // the middle of another call. Apple still requires every VoIP push to
+        // reach CallKit, so report + immediately end; nothing is logged (the
+        // original entry exists and already has its outcome).
         recentlyEndedCallIDs = recentlyEndedCallIDs.filter {
             Date().timeIntervalSince($0.value) < Self.redeliveryWindow
         }
-        if activeCallUUID == nil, recentlyEndedCallIDs[p.callID] != nil {
+        if recentlyEndedCallIDs[p.callID] != nil {
             let dedupeID = UUID()
             provider?.reportNewIncomingCall(with: dedupeID, update: update) { [weak self] _ in
                 self?.provider?.reportCall(with: dedupeID, endedAt: Date())
@@ -129,6 +129,11 @@ final class CallManager: NSObject, ObservableObject {
             }
             let bumpEntry = CallLogStore.shared.add(reason: bumpReason, outgoing: false)
             CallLogStore.shared.finish(id: bumpEntry, outcome: "missed")
+            // Remember THIS push's call_id too: the bridge re-delivers VoIP
+            // pushes (at-least-once), so without this every retry of the
+            // bumped call rings/logs ANOTHER phantom "missed" entry while the
+            // live call continues (one per retry, 10-min window).
+            recentlyEndedCallIDs[p.callID] = Date()
             return
         }
         pendingAnswerPayload = p

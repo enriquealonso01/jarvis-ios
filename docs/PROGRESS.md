@@ -1,5 +1,53 @@
 # PROGRESS
 
+## 2026-09-18 14:15 UTC (build-loop run) — VoIP bump-path re-delivery loop, zombie log entries, two silent sheet failures fixed; sweep all green
+
+- All 9 backlog items remain built; this run was another defect-hunt audit
+  (CallManager/CallLogStore/Chats/Calls sheets). FOUR real defects, all in
+  the same "silent lie / duplicate log" classes fixed earlier elsewhere:
+- **Bumped-call re-delivery rang/logged a phantom "missed" EVERY retry.**
+  The different-call path (a push for call B while call A is live: report +
+  end + one "missed" entry) never recorded B's call_id in
+  `recentlyEndedCallIDs` — and the post-end guard was only consulted when
+  IDLE (`activeCallUUID == nil` is still true during a live call). So the
+  bridge's at-least-once re-deliveries of B kept producing a fresh
+  report + "missed" log entry per retry for the full 10-min window.
+  Fixed: guard now runs regardless of active call, and the bump path
+  records the call_id. State-machine walk verified: idle-replay, bump-then-
+  replay, dedupe-while-ringing all behave.
+- **Zombie open entries in the call log.** An entry with no outcome can stay
+  open forever: "Ring this phone" queues the push SERVER-SIDE while the
+  APNs p8 is uninstalled (no ring → no end → no stamp), a bridge failure
+  never wakes the app, a hard kill skips the end path. Each zombie is a
+  red "missed" row that never happened AND a target for `finish(id:nil)`'s
+  latest-open-entry fallback (mis-stamp vector). Fixed: 6h open-TTL —
+  load-time reap ("missed") + the id:nil fallback only considers entries
+  inside the TTL. Exact-id stamps are NEVER age-gated (a legit late
+  endActiveCall still lands).
+- **ChatsView "New project task" failure was silent.** The sheet's
+  `onStart` closure ends in `catch { Haptics.error() }` — no text, sheet
+  stayed up, looked exactly like Start did nothing (422/401/bridge-down).
+  Fixed: ProjectsView.startTask's catch now sets `NewTaskSheet.lastError`
+  (static: the closure can't reach the sheet's @State); the sheet mirrors
+  it into a red in-form line on appear and after each Start tap, clears it
+  on new tries/Cancel.
+- **Schedule sheet allowed the past.** DatePicker was unbounded (a sheet
+  opened 10:59 set 11:00 — reachable only by a fast user) and nothing
+  re-clamped a sheet left open past the chosen moment → a scheduled call
+  in the past (bridge fires immediately or rejects). Fixed: picker bound
+  to `Date()...`, onAppear re-clamps the default forward, and
+  scheduleCall clamps the actually-sent `at` to ≥ now+60s.
+- swift_sanity required-guard pins added for all four (bump-path memory,
+  reap + TTL-gated fallback, NewTaskSheet error line, past-time clamps) —
+  a revert to any buggy form now fails the sweep.
+- Full scripts/verify_all.sh: exit 0 ALL GREEN (doc pins, swift_sanity
+  incl. new pins, bridge probe 16/16, gateway bearer gate, live health,
+  prod parity + 3 crons, native WebRTC e2e PASS). App-side only; server
+  untouched.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md;
+  apple-setup guide cron fires 9AM Miami Sep 19).
+
 ## 2026-09-18 14:03 UTC (build-loop run) — post-end VoIP redelivery can no longer re-ring a dead call; cancel/delete no-op lies fixed; sweep all green
 
 - Live contract probe (scripts/probe_audit_live.py, new) + line-by-line audit

@@ -195,6 +195,27 @@ required_guard_pins = [
     # name that isn't stored — claiming "Deleted X." there is a lie.
     ("SecretsView.swift", ["resp.deleted == false",
                            "was already gone (removed elsewhere)"]),
+    # CallManager: the different-call bump path must remember the bumped
+    # call_id — the bridge re-delivers VoIP pushes, and without this memory
+    # every retry of a bump (arrived while another call was live) rings/logs
+    # ANOTHER phantom "missed" entry (PROGRESS 2026-09-18 14:20).
+    ("CallManager.swift", ["recentlyEndedCallIDs[p.callID] = Date()\n            return"]),
+    # CallLogStore: zombie open entries must be reaped + the id:nil fallback
+    # must not stamp entries older than the TTL (a queued "Ring this phone"
+    # push never rings until APNs is set up — its entry stays open forever
+    # and poisons later fallback stamps).
+    ("CallLogStore.swift", ["private static let openTTL",
+                            "Self.reapStale(&entries)",
+                            "$0.outcome == nil && $0.at > freshEnough"]),
+    # NewTaskSheet failure feedback: startTask's catch must SET the shared
+    # error (haptic-only catch = silent failure in the sheet), and the sheet
+    # must render it.
+    ("ChatsView.swift", ['NewTaskSheet.lastError = "Couldn\'t start the task: \\(error.localizedDescription)"',
+                         'if !startError.isEmpty {']),
+    # Schedule sheet: no past scheduling — picker bound to Date()... and the
+    # actually-sent time clamped forward.
+    ("CallsView.swift", ['DatePicker("Call at", selection: $when, in: Date()...)',
+                         "let at = max(at, Date().addingTimeInterval(60))"]),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):

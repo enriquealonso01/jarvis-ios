@@ -260,6 +260,9 @@ struct CallsView: View {
     private func scheduleCall(at: Date, reason: String) async {
         status = nil
         do {
+            // Clamp: a sheet left open past the chosen moment would schedule a
+            // call in the past (bridge fires immediately or rejects).
+            let at = max(at, Date().addingTimeInterval(60))
             let iso = ISO8601DateFormatter().string(from: at)
             struct SchedResp: Decodable { let call_id: String; let at: String }
             let resp = try await CCClient.shared.post(
@@ -289,7 +292,7 @@ struct ScheduleCallSheet: View {
         NavigationStack {
             Form {
                 Section("When") {
-                    DatePicker("Call at", selection: $when)
+                    DatePicker("Call at", selection: $when, in: Date()...)
                 }
                 Section("Reason") {
                     TextField("What should JARVIS call about?", text: $reason, axis: .vertical)
@@ -301,6 +304,11 @@ struct ScheduleCallSheet: View {
                         .font(.caption)
                 } footer: {
                     Text("The bridge rings this phone via VoIP push when the time comes. Requires the APNs key to be installed.")
+                }
+                .onAppear {
+                    // Default lands in the past if the sheet sits open a
+                    // while (or re-opens after time passed): clamp forward.
+                    if when < Date() { when = Date().addingTimeInterval(3600) }
                 }
             }
             .navigationTitle("Schedule call")

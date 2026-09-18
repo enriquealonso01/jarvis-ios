@@ -157,6 +157,9 @@ struct ProjectsView: View {
             showNewTask = false
             threads.insert(ThreadRow(id: id, title: text, project: project, openCount: 1, lastMessage: ""), at: 0)
         } catch {
+            // Silent failure (haptic only) left the sheet up with no clue.
+            // Surface the reason; the draft text stays so nothing is lost.
+            NewTaskSheet.lastError = "Couldn't start the task: \(error.localizedDescription)"
             Haptics.error()
         }
     }
@@ -169,7 +172,14 @@ struct NewTaskSheet: View {
     @State private var project = ""
     @State private var text = ""
     @State private var starting = false
-
+    /// Failure feedback — a bare `catch { Haptics.error() }` gave ZERO
+    /// indication in the sheet: no error text, sheet stayed open, looked
+    /// exactly like tapping Start did nothing (422/401/bridge-down all silent).
+    /// Static because ProjectsView.startTask (the async closure the sheet
+    /// hands its work to) can't reach a sheet's @State; the sheet mirrors it
+    /// into `startError` on appear/each Start tap and clears it on new tries.
+    @State private var startError = ""
+    static var lastError: String?
     var body: some View {
         NavigationStack {
             Form {
@@ -182,12 +192,18 @@ struct NewTaskSheet: View {
                     TextField("What should JARVIS do?", text: $text, axis: .vertical)
                         .lineLimit(3...8)
                 }
+                if !startError.isEmpty {
+                    Label(startError, systemImage: "xmark.octagon.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
             .navigationTitle("New task")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear { startError = Self.lastError ?? "" }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { Self.lastError = nil; dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if starting {
@@ -195,9 +211,14 @@ struct NewTaskSheet: View {
                     } else {
                         Button("Start") {
                             starting = true
+                            Self.lastError = nil
+                            startError = ""
                             Task {
                                 await onStart(project.trimmingCharacters(in: .whitespaces),
                                               text.trimmingCharacters(in: .whitespaces))
+                                // Success closed the sheet; on failure the
+                                // static error is set — mirror it in.
+                                startError = Self.lastError ?? ""
                                 starting = false
                             }
                         }
