@@ -70,17 +70,48 @@ final class CallManager: NSObject, ObservableObject {
             gatewayWS: payload["gateway_ws"] as? String ?? "/voice-gw",
             scheduledBy: payload["scheduled_by"] as? String
         )
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .generic, value: "JARVIS")
+        update.hasVideo = false
+        update.localizedCallerName = "JARVIS"
+
         lastPayload = p
+        // Re-delivery guard: APNs is at-least-once and the bridge retries, so
+        // the SAME call_id can wake us while that call is already ringing or
+        // active. Reporting it again under a NEW uuid stacks a second CallKit
+        // call on top of the live one and (worse) overwrites logEntryID, so
+        // the real entry never gets its outcome stamp.
+        if let existing = activeCallUUID, pendingAnswerPayload?.callID == p.callID {
+            // Same call re-delivered: re-report with the SAME uuid (CallKit
+            // treats it as a duplicate for an existing call) so the report
+            // handler still runs and PushKit's completion resolves — Apple
+            // requires every VoIP push to reach CallKit.
+            provider?.reportNewIncomingCall(with: existing, update: update) { [weak self] error in
+                if let error { print("[CallManager] duplicate report rejected: \(error)") }
+                onReported?()
+            }
+            return
+        }
+        if activeCallUUID != nil {
+            // A DIFFERENT call while one is live: one call at a time —
+            // acknowledge the report (Apple contract) and end it immediately;
+            // the user's live call stays untouched. Logged as missed.
+            let bumpedID = UUID()
+            let bumpUpdate = update
+            let bumpReason = p.reason
+            provider?.reportNewIncomingCall(with: bumpedID, update: bumpUpdate) { [weak self] _ in
+                self?.provider?.reportCall(with: bumpedID, endedAt: Date())
+                onReported?()
+            }
+            let bumpEntry = CallLogStore.shared.add(reason: bumpReason, outgoing: false)
+            CallLogStore.shared.finish(id: bumpEntry, outcome: "missed")
+            return
+        }
         pendingAnswerPayload = p
         // Persistent log: record the incoming call even if it's never answered
         // (PushKit may wake us while killed; this is the only trace it happened).
         // Outcome is stamped later: "answered" on connect, "missed" on decline.
         logEntryID = CallLogStore.shared.add(reason: p.reason, outgoing: false)
-
-        let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .generic, value: "JARVIS")
-        update.hasVideo = false
-        update.localizedCallerName = "JARVIS"
 
         let uuid = UUID()
         activeCallUUID = uuid

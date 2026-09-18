@@ -1,5 +1,30 @@
 # PROGRESS
 
+## 2026-09-18 11:00 UTC (build-loop run) — VoIP duplicate-push guard landed on the incoming-call path; sweep all green
+
+- Line-by-line audit (all 13 Swift files) found the next real defect on the
+  CORE path: `handleVoIPPayload` had NO re-delivery guard. APNs is
+  at-least-once and the bridge retries pushes — the same `call_id` waking the
+  app while that call is already ringing/active reported a SECOND CallKit
+  call under a new UUID and overwrote `logEntryID`, so the real entry never
+  got its outcome stamp (and the UI stacked two call cards).
+- Fix: same-`call_id` re-delivery re-reports under the EXISTING uuid (CallKit
+  dedupes; the report handler still runs so PushKit's completion resolves —
+  Apple's contract holds). A DIFFERENT call_id while one is live is
+  acknowledged + ended immediately (one-call-at-a-time), logged as "missed";
+  the live call is untouched.
+- swift_sanity gained a new mechanism: REQUIRED-guard pins
+  (`required_guard_pins` — needle must stay present or it's a failure), since
+  the existing hazard list only catches needles APPEARING. The dedupe guard
+  is the first pin of this kind.
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN (swift_sanity OK incl. new
+  pin, drop-detection + scheduler pins, bridge bearer probe 15/15, gateway
+  bearer gate, live health bridge :9160 ok / apns_configured:false /
+  voice-gw :9150 realtime:true, public /bridge/health 200, prod parity +
+  crons armed, native WebRTC e2e PASS vs live gateway).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 10:50 UTC (build-loop run) — second compile-blocker fixed: undefined 'prov' on the incoming-call path; sweep all green
 
 - Line-by-line audit found another hard Xcode build error, this one on the

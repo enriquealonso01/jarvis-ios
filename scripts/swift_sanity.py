@@ -111,6 +111,17 @@ hazards = [
     # Only the wiring inside setupCallUI() is legitimate — it assigns the
     # property right after, so pin on the assignment being present instead.
     ("prov.reportNewIncomingCall", "undefined 'prov' — use the 'provider' property"),
+    # CallManager: APNs is at-least-once + bridge retries — handleVoIPPayload
+    # MUST guard a re-delivered call_id (same-call dedupe) or a duplicate push
+    # stacks a second CallKit report and corrupts the call log (PROGRESS
+    # 2026-09-18 11:05). This is a MUST-CONTAIN pin (see required_guard_pins),
+    # not a hazard needle — the needle IS the guard.
+]
+# MUST-CONTAIN pins: needle must be PRESENT in the file or it's a failure
+# (the guard above protects against the needle appearing; these protect
+# against it disappearing).
+required_guard_pins = [
+    ("CallManager.swift", ["pendingAnswerPayload?.callID == p.callID"]),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):
@@ -119,6 +130,15 @@ for fn in sorted(os.listdir(APP)):
     for needle, why in hazards:
         if needle in src:
             failures.append(f"{fn}: hazard pattern '{needle}' ({why})")
+for fn, needles in required_guard_pins:
+    path = os.path.join(APP, fn)
+    if not os.path.exists(path):
+        failures.append(f"missing file: {fn}")
+        continue
+    src = open(path).read()
+    for needle in needles:
+        if needle not in src:
+            failures.append(f"{fn}: REQUIRED pin missing '{needle}' (guard was removed)")
 
 # 3. asset catalog JSON validity + required entries.
 assets = os.path.join(APP, "Assets.xcassets")
