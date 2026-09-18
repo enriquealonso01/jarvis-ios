@@ -100,8 +100,15 @@ carries `gateway_ws: "/voice-gw"` per the contract in docs/GATEWAY.md.
   (`scripts/probe_apns_delivery.py`). The key was created without the "Apple Push
   Notifications service (APNs)" capability. Fix (Enrique): developer.apple.com →
   Certificates, Identifiers & Profiles → Keys → create a new key WITH APNs checked
-  → download .p8, then tell JARVIS — install is agent-side after that (same paths
-  as above, apns.env gets the new kid). Until then VoIP pushes CANNOT be
-  delivered: /call will answer pushed:false with `[bridge] APNs push REJECTED`
-  in the journal. verify_all step 1b prints the probe verdict on every run.
+  → download .p8, then tell JARVIS — install is agent-side after that, ONE
+  COMMAND: `python3 scripts/swap_apns_key.py --p8 <file> --key-id <NEWKID>`.
+  The script refuses to stage anything until the candidate key passes three
+  gates (PEM format, ES256 sign, Apple's own `400 BadDeviceToken` verdict on a
+  dummy token — same shape as the probe), then installs 0600 + updates
+  apns.env atomically (rollback on failure). No bridge restart needed
+  (`_send_voip` re-reads env per push); afterwards `scripts/probe_apns_delivery.py`
+  must print `400 BadDeviceToken` on the live paths. Until then VoIP pushes
+  CANNOT be delivered: /call answers pushed:false with
+  `[bridge] APNs push REJECTED` in the journal. verify_all step 1b prints the
+  probe verdict on every run.
 - Device token: DONE — app POSTs to /register on launch; bridge persists it server-side.

@@ -1,3 +1,45 @@
+## 2026-09-18 22:55 UTC (build-loop run) — the one remaining agent-side gap closed: `swap_apns_key.py` turns the broken-key fix into ONE gated command; blocker verdict re-confirmed live
+
+- Backlog 1–9 re-verified complete; verify_all ALL GREEN after this run's
+  changes. Both open blockers remain Enrique-side (new APNs key, phone
+  install) — so this run closed the last agent-side gap around the first one.
+- Gap: when Enrique's replacement .p8 lands, installing it was a manual
+  multi-step procedure (stage key → chmod → edit apns.env kid → keep the repo
+  template in sync → re-probe). Each step is a chance to install a BAD key
+  (e.g. another ASC-only key) over a broken one and only find out later.
+  Fix: `scripts/swap_apns_key.py` — one command that refuses to touch the
+  live bridge until the candidate key passes three gates: (1) PEM EC-key
+  format, (2) actually signs an ES256 provider token, (3) **Apple's own
+  verdict** — a dummy-token POST signed with the candidate must answer
+  `400 BadDeviceToken` (same wire shape as probe_apns_delivery.py). 403
+  InvalidProviderToken / 429 churn / network errors → hard refusal, live
+  config untouched. On pass: installs 0600, updates the live apns.env kid
+  AND the new tracked template `server/push_bridge/apns.env.example`
+  together (repo↔prod kid can no longer silently disagree), with rollback
+  on any mid-stage failure. Zero downtime: the bridge's `_send_voip`
+  re-reads env per push, so NO restart is needed (`--restart` optional).
+  Also refuses same-kid "swaps" (a NEW key has a NEW kid) and offers
+  `--check` to gate the currently installed key anytime.
+- Proven this run, no real key needed: refusal path against Apple LIVE
+  (test EC key + correct kid-shape → gate 3 answered `403
+  InvalidProviderToken` → SWAP REFUSED, live dir untouched, no staging
+  debris); full happy path e2e against a local 400-BadDeviceToken stub
+  (gates pass → staged into a throwaway state dir: key 0600, env kid
+  rewritten, P8_PATH repointed; idempotence guard re-fires on a same-kid
+  re-run). The sandbox regression risks (run_gates making its own live call
+  beyond the stubbed one, pytest-free assert harness) were found and fixed
+  during testing.
+- Wire-up: doc-contract pins (check_doc_contracts.py step 6) now hold the
+  whole contract machine-checked: gates present, refusals present, same-kid
+  guard, rollback, BUILD.md naming the runbook. BUILD.md "APNs key status"
+  + API.md "Pending" now say ONE command instead of a manual procedure.
+- Re-verified live at 22:5x: the installed key STILL answers `403
+  InvalidProviderToken` (nothing changed on Apple's side); bridge/gateway
+  healthy, device_registered still false, schedule empty.
+- NEEDS ENRIQUE (unchanged, both open): (1) web ~2 min — create the
+  APNs-capable key (developer.apple.com → Keys → APNs checked) and send the
+  .p8; agent-side install is now literally one command. (2) phone-only —
+  install TestFlight, accept invite, open build 1 once → /register fires.
 ## 2026-09-18 22:35 UTC (build-loop run) — APNs delivery path PROBED for the first time: key is ASC-only, REJECTED by APNs (InvalidProviderToken) — new key = the one new NEEDS-ENRIQUE item
 
 - Gap found and closed: `_send_voip` had only ever been exercised in its

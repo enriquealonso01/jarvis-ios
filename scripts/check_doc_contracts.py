@@ -57,6 +57,23 @@ check("bridge /health returns device_registered",
 check("API.md documents device_registered in /health",
       "device_registered" in api[i:])
 
+# 6. APNs key-swap runbook contract (added 2026-09-18 23:xx): when Enrique's
+#    replacement key lands, scripts/swap_apns_key.py must keep enforcing the
+#    three gates (format / ES256 sign / Apple dummy-token verdict) BEFORE any
+#    live state is touched — a bad key must never be staged over a broken one.
+swap = open(os.path.join(ROOT, "scripts", "swap_apns_key.py")).read()
+check("swap script gates on Apple's BadDeviceToken verdict before staging",
+      'reason == "BadDeviceToken"' in swap)
+check("swap script gates on the InvalidProviderToken refusal",
+      '"InvalidProviderToken"' in swap and "SWAP REFUSED" in swap)
+check("swap script refuses same-kid 'swaps' (a new key has a new kid)",
+      "candidate kid == live kid" in swap)
+check("swap script stages with rollback (backup .key.bak + env restore)",
+      ".key.bak" in swap and "rolled back" in swap)
+check("BUILD.md names swap_apns_key.py as the install runbook",
+      "swap_apns_key.py" in build)
+
+
 print()
 if failures:
     print(f"{len(failures)} DOC CONTRACT FAILURE(S)")

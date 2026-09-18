@@ -77,9 +77,19 @@ You only ever do these steps. Everything else is agent-deployed.
 - NEEDS ENRIQUE (web, 2 min): developer.apple.com → Certificates, Identifiers
   & Profiles → Keys → + create a key with **Apple Push Notifications service
   (APNs)** checked → download the .p8 and send it (or drop it in a one-time
-  link). Everything else is agent-side: JARVIS installs it, updates apns.env
-  (new APNS_KEY_ID), restarts the bridge, and re-runs the probe until it
-  prints `400 BadDeviceToken` (= healthy, waiting only on the phone).
+  link). Everything else is agent-side, ONE COMMAND:
+  `python3 scripts/swap_apns_key.py --p8 <file> --key-id <NEWKID>` — the
+  script GATES the candidate key before touching anything live:
+  (1) PEM EC-key format check, (2) it must actually sign an ES256 provider
+  token, (3) Apple must answer `400 BadDeviceToken` to a dummy token signed
+  with it (same wire shape as probe_apns_delivery.py). Any other verdict
+  (403 InvalidProviderToken = another ASC-only key, 429 churn, network) →
+  hard refusal, live config untouched. On pass it installs the key 0600,
+  updates apns.env + the repo template kid atomically (with rollback), and
+  NO restart is needed — the bridge's `_send_voip` re-reads env per push.
+  After the swap: `scripts/probe_apns_delivery.py` (no args) must print
+  `400 BadDeviceToken` against the LIVE paths, then verify_all step 1b can
+  drop `--warn` and go gate-mode.
 - verify_all step 1b runs this probe every sweep (WARN mode) so the verdict
   stays visible until fixed. A second watcher,
   `jarvis-ios-device-watch` (15m, 192 repeats, script-mode, delivers to the
