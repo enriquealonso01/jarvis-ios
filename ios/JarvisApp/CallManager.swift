@@ -219,13 +219,18 @@ final class CallManager: NSObject, ObservableObject {
         // Gateway app messages ride the WebRTC data channel (same as the CC
         // voice page): hello carries brain/tts/stt, "state" drives the call
         // state label, transcripts show what JARVIS said.
+        // The callback fires on the WebRTC queue with a non-Sendable [String:
+        // Any] dict; re-box it as @Sendable before the MainActor hop.
         client.onAppMessage = { [weak self] msg in
-            Task { @MainActor in self?.handleAppMessage(msg) }
+            let sendableMsg = msg as NSDictionary as? [String: Any] ?? msg
+            nonisolated(unsafe) let boxedMsg = sendableMsg
+            Task { @MainActor in self?.handleAppMessage(boxedMsg) }
         }
         // Terminal ICE failure (never reached connected): fail the call state,
         // stamp the log, and drop the CallKit call instead of hanging.
         client.onConnectionFailed = { [weak self] why in
-            Task { @MainActor in self?.handleConnectionFailure(why) }
+            nonisolated(unsafe) let boxedWhy = why
+            Task { @MainActor in self?.handleConnectionFailure(boxedWhy) }
         }
         webRTC = client
         // Connect deadline: the call is only "active" once media actually
