@@ -309,8 +309,24 @@ async def voice_gw_offer(request: Request):
     body = await request.json()
     req = SmallWebRTCRequest.from_dict(body)
 
+    # Native clients (iOS) pass {surface, reason} via request_data; the web
+    # page sends none and stays "cc_pwa". The reason gives the voice session
+    # context for why the call was placed (VoIP push payload.reason).
+    rd = req.request_data if isinstance(req.request_data, dict) else {}
+    surface = str(rd.get("surface") or "cc_pwa")
+    reason = str(rd.get("reason") or "").strip()
+
     async def on_connection(connection: SmallWebRTCConnection):
-        await _sessions.start("cc_pwa", connection)
+        s = await _sessions.start(surface, connection)
+        if reason:
+            # Queue after start; the greeting fires on client-connected, so the
+            # reason lands as a follow-up line right after the greeting.
+            asyncio.get_running_loop().call_later(
+                6.0, lambda: asyncio.ensure_future(
+                    s.say(f"(Automatic notice: this is a JARVIS-initiated call. Reason: {reason}. "
+                          f"Mention it naturally in one short sentence, then ask how he's doing.)")
+                ) if not s.closed else None
+            )
 
     answer = await _handler.handle_web_request(request=req, webrtc_connection_callback=on_connection)
     return answer

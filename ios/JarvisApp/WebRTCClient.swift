@@ -8,7 +8,7 @@ import AVFoundation
 ///
 /// The gateway runs aiortc (SmallWebRTC). We use the Google WebRTC STS pod so
 /// SDP munging needs are zero: audio-only, STUN from the answer, done.
-final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
+final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate, @unchecked Sendable {
     private var factory: RTCPeerConnectionFactory!
     private var pc: RTCPeerConnection?
     private var localAudioTrack: RTCAudioTrack?
@@ -19,6 +19,14 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, @unchecked Sendab
 
     typealias TokenProvider = @Sendable () async throws -> String
     private var tokenProvider: TokenProvider!
+
+    /// App data channel (label "app") — the same channel the CC voice page
+    /// creates. The gateway's session pushes hello/state/transcript/metrics
+    /// JSON over it and expects a literal "ping" string every ~1s as liveness.
+    private var appChannel: RTCDataChannel?
+    private var pingTimer: DispatchSourceTimer?
+    /// Called (off-main) for every JSON app message the gateway sends.
+    var onAppMessage: (@Sendable ([String: Any]) -> Void)?
 
     nonisolated(unsafe) static var sharedFactory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
@@ -45,7 +53,8 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, @unchecked Sendab
     }
 
     /// Full connect: build PC, create offer, POST to the gateway, set answer.
-    static func connect(offerURL: String, tokenProvider: @escaping TokenProvider) async throws -> WebRTCClient {
+    static func connect(offerURL: String, tokenProvider: @escaping TokenProvider,
+                        requestData: [String: Any] = [:]) async throws -> WebRTCClient {
         let client = WebRTCClient()
         client.baseURL = offerURL
         client.tokenProvider = tokenProvider
@@ -84,10 +93,12 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, @unchecked Sendab
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.httpBody = try JSONSerialization.data(withJSONObject: [
+        var payload: [String: Any] = [
             "sdp": offerSDP.sdp,
             "type": "offer",
-        ])
+        ]
+        if !requestData.isEmpty { payload["request_data"] = requestData }
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw CallError.gateway("offer HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
@@ -101,7 +112,35 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, @unchecked Sendab
                 if let err { cont.resume(throwing: err) } else { cont.resume() }
             }
         }
+
+        // App data channel + liveness pings (mirror of voice_page.html):
+        // the gateway session only treats the client as on-the-line while
+        // literal "ping" strings arrive, and it pushes hello/state/transcript
+        // JSON back over this channel.
+        client.openAppChannel()
         return client
+    }
+
+    private func openAppChannel() {
+        let config = RTCDataChannelConfiguration()
+        config.isOrdered = true
+        guard let dc = pc?.dataChannel(forLabel: "app", configuration: config) else { return }
+        dc.delegate = self
+        appChannel = dc
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "jarvis.webrtc.ping"))
+        timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
+        timer.setEventHandler { [weak self] in
+            guard let self, let dc = self.appChannel, dc.readyState == .open else { return }
+            dc.sendData(RTCDataBuffer(data: Data("ping".utf8)))
+        }
+        timer.resume()
+        pingTimer = timer
+    }
+
+    private func handleAppMessageJSON(_ data: Data) {
+        guard let obj = try? JSONSerialization.jsonObject(with: data),
+              let dict = obj as? [String: Any] else { return }
+        onAppMessage?(dict)
     }
 
     enum CallError: LocalizedError {
@@ -123,6 +162,10 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, @unchecked Sendab
 
     /// End the voice session (gateway /api/hangup) and tear down.
     func hangup() {
+        pingTimer?.cancel()
+        pingTimer = nil
+        appChannel?.close()
+        appChannel = nil
         if let pcID {
             Task { _ = try? await self.post(path: "/api/hangup", body: ["pc_id": pcID]) }
         }
@@ -155,6 +198,15 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, @unchecked Sendab
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {}
+
+    // MARK: RTCDataChannelDelegate (the gateway's "app" channel)
+
+    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        // nothing to do; the ping timer checks readyState before each send
+    }
+
+    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        handleAppMessageJSON(buffer.data)
+    }
 }

@@ -19,6 +19,10 @@ final class CallManager: NSObject, ObservableObject {
     @Published var lastPayload: VoIPPayload?
     @Published var activeCallUUID: UUID?
     @Published var callState: String = "idle"
+    /// Latest gateway state pushed over the app data channel ("hello",
+    /// "state", "transcript", "metrics" messages) — surfaced on the Calls tab.
+    @Published var sessionInfo: String = ""
+    @Published var lastTranscript: String?
 
     private var callController: CXCallController?
     private var provider: CXProvider?
@@ -91,10 +95,38 @@ final class CallManager: NSObject, ObservableObject {
             .trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         let offerURL = base + payload.gatewayWS + "/api/offer"
         let client = try await WebRTCClient.connect(offerURL: offerURL,
-                                                    tokenProvider: { @Sendable in try await AuthStore.shared.validAccessToken() })
+                                                    tokenProvider: { @Sendable in try await AuthStore.shared.validAccessToken() },
+                                                    requestData: ["surface": "ios", "reason": payload.reason])
+        // Gateway app messages ride the WebRTC data channel (same as the CC
+        // voice page): hello carries brain/tts/stt, "state" drives the call
+        // state label, transcripts show what JARVIS said.
+        client.onAppMessage = { [weak self] msg in
+            Task { @MainActor in self?.handleAppMessage(msg) }
+        }
         webRTC = client
         callState = "active"
         Haptics.success()
+    }
+
+    private func handleAppMessage(_ msg: [String: Any]) {
+        switch msg["type"] as? String {
+        case "hello":
+            let brain = (msg["brain"] as? String ?? "").split(separator: ":").last.map(String.init) ?? ""
+            sessionInfo = brain.isEmpty ? "connected" : "connected · \(brain)"
+        case "state":
+            let st = msg["state"] as? String ?? ""
+            let label = msg["label"] as? String
+            if st == "speaking" { callState = "active · speaking" }
+            else if st == "working" { callState = label.map { "active · \($0)" } ?? "active · working" }
+            else if st == "error" { callState = "failed: \(label ?? "gateway error")" }
+            else { sessionInfo = label ?? st }
+        case "transcript":
+            if msg["role"] as? String == "assistant", let text = msg["text"] as? String {
+                lastTranscript = text
+            }
+        default:
+            break
+        }
     }
 
     func endActiveCall() {
@@ -103,6 +135,8 @@ final class CallManager: NSObject, ObservableObject {
         webRTC = nil
         activeCallUUID = nil
         callState = "idle"
+        sessionInfo = ""
+        lastTranscript = nil
     }
 }
 

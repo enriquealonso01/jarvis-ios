@@ -50,6 +50,13 @@ struct CallsView: View {
                             Text("JARVIS call — \(mgr.callState)").font(.callout)
                         }
                     }
+                    if !mgr.sessionInfo.isEmpty {
+                        Text(mgr.sessionInfo).font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if let said = mgr.lastTranscript {
+                        Text("“\(said)”").font(.caption.italic())
+                            .foregroundStyle(.secondary).lineLimit(3)
+                    }
                 } header: {
                     Text("Direct line")
                 }

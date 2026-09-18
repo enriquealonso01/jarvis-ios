@@ -1,5 +1,30 @@
 # PROGRESS
 
+## 2026-09-18 06:45 UTC (build-loop run) — native-call data channel + call-reason context (the gap the audit found)
+
+- Backlog 1-9 confirmed complete and sweep ALL GREEN again; audit of the live
+  gateway against the app surfaced a real functional gap: the SmallWebRTC
+  pipeline pushes ALL session UI (hello/state/transcript/metrics) over an
+  "app" data channel and expects literal "ping" strings as liveness — the
+  iOS WebRTCClient never created the channel, so native calls would have run
+  mute-ish: no live state, no transcript, session looking dead.
+- iOS: WebRTCClient now creates the ordered "app" channel post-answer, sends
+  1 Hz "ping" (DispatchSourceTimer), implements RTCDataChannelDelegate, and
+  exposes onAppMessage. CallManager maps hello/state/transcript into
+  published sessionInfo/callState/lastTranscript; CallsView shows them.
+- Gateway: /api/offer now reads request_data {surface, reason} — iOS offers
+  are labeled surface "ios" (no longer mislabeled cc_pwa in metrics) and the
+  call reason (from the VoIP push payload) is spoken naturally right after
+  the greeting, so JARVIS-initiated calls explain why they rang.
+- Deployed: py_compile gate → jarvis-voice-gateway restart → /healthz ok
+  (realtime:true); bearer gate re-verified (valid 500 / bad 401); bridge
+  probe 15/15 on throwaway; full verify_all.sh ALL GREEN (gateway mirror
+  parity now includes this change). Backup: gateway.py.bak-ios-dc-*.
+- Docs: GATEWAY.md + ARCHITECTURE.md document request_data + the data-
+  channel contract ("required — don't remove").
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 06:25 UTC (build-loop run) — CRITICAL FIX: /register now accepts the app's Bearer
 
 - Found a real mission-blocker during a code audit: `POST /register` was

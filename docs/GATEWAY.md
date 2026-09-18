@@ -43,6 +43,18 @@ Subsequent per-call controls (all accept the same Bearer):
 - `POST /voice-gw/api/hangup` `{pc_id}` — end the voice session (returns
   `{ok}`; hangs up if the session exists)
 
+Optional in the offer body: `"request_data": {"surface": "ios", "reason":
+"…"}`. The gateway then labels the voice session surface `ios` (instead of
+`cc_pwa`) and speaks the reason naturally right after the greeting — this is
+how a JARVIS-initiated call (VoIP push → answer) tells him why it rang.
+
+Data channel (required, mirror of the CC voice page): after the answer is
+set, the app creates an ordered data channel labeled `app` and sends a
+literal `ping` string once per second (session liveness). The gateway pushes
+JSON app messages back: `hello` (brain/tts/stt), `state`
+(listening/thinking/working/speaking + label), `transcript`
+(role user/assistant + text), `metrics`, `tool`, `reset`.
+
 Note: access tokens live ~1h (dashboard TTL). On 401 the app refreshes via
 `/auth/native/refresh` and retries once (same as CCClient already does).
 

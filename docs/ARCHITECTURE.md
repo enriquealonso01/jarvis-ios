@@ -56,6 +56,18 @@ public path prefixes to use. Repo copy `server/voice_gateway/gateway.py` is a
 synced mirror for traceability; edits go through py_compile gate + restart +
 healthz verify (last-known-good snapshot kept).
 
+Native-client specifics (added 2026-09-18, build-loop audit): the iOS app
+sends `request_data: {surface: "ios", reason}` in its offer body. The gateway
+labels the session surface `ios` (metrics/CC show it distinctly from
+`cc_pwa`) and, if a `reason` is present, injects it ~6s after connect as a
+spoken line so JARVIS opens the call with why he's calling. The app ALSO
+creates the SmallWebRTC "app" data channel (label `app`, ordered) and sends a
+literal `ping` string every second — same contract as voice_page.html. The
+gateway pushes `hello` / `state` / `transcript` / `metrics` JSON back over it;
+`WebRTCClient.onAppMessage` routes those into `CallManager` (call-state label
++ last transcript on the Calls tab). A native call without the data channel
+would look dead to the session monitor and get no live state — don't remove it.
+
 ### Dashboard (hermes-dashboard)
 Serves the CC web UI + the API the app mirrors (vitals, dispatch, auth/native
 PKCE endpoints). Agents never restart it unless a router file compiles AND
