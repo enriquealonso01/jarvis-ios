@@ -124,11 +124,16 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         let offerConstraints = RTCMediaConstraints(
             mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "false"],
             optionalConstraints: nil)
-        let offerSDP = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<RTCSessionDescription, Error>) in
+        let offerSDPString: String = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
             pc.offer(for: offerConstraints) { sdp, err in
-                if let sdp { cont.resume(returning: sdp) } else { cont.resume(throwing: err ?? CallError.sdp) }
+                if let sdp {
+                    // Resume with the SDP string (Sendable) — RTCSessionDescription
+                    // is a non-Sendable ObjC class and can't cross a continuation.
+                    cont.resume(returning: sdp.sdp)
+                } else { cont.resume(throwing: err ?? CallError.sdp) }
             }
         }
+        let offerSDP = RTCSessionDescription(type: .offer, sdp: offerSDPString)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             pc.setLocalDescription(offerSDP) { err in
                 if let err { cont.resume(throwing: err) } else { cont.resume() }
