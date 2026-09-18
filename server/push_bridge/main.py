@@ -14,7 +14,7 @@ APNs auth: .p8 key + key id + team id are read from the gateway secret scope
 at runtime (file /opt/jarvis-ios-bridge/apns.env, root-only). NEVER in git.
 """
 from __future__ import annotations
-import json, os, time, uuid, hmac, hashlib, threading
+import base64, json, os, time, uuid, hmac, hashlib, threading
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
@@ -22,6 +22,8 @@ from pydantic import BaseModel
 STATE_DIR = Path(os.environ.get("BRIDGE_STATE_DIR", "/opt/jarvis-ios-bridge"))
 ENV_PATH = STATE_DIR / "apns.env"
 SCHEDULE_PATH = STATE_DIR / "scheduled_calls.json"
+SECRETS_PATH = STATE_DIR / "secrets.json"          # values live here, root-only, never served back
+DASH_CONFIG_PATH = Path(os.environ.get("BRIDGE_DASH_CONFIG", "/root/.hermes/config.yaml"))
 
 
 def _save_env_key(key: str, value: str) -> None:
@@ -143,6 +145,135 @@ class RegisterReq(BaseModel):
 
 class CancelReq(BaseModel):
     call_id: str | None = None  # None/empty cancels all
+
+
+# ---------------------------------------------------------------- secrets ---
+# Named-secret store (backlog #3). Values persist server-side only
+# (secrets.json, 0600) and are NEVER returned by any endpoint — only names,
+# masked previews (first 2 chars + length) and timestamps. Auth is dual:
+#   - agents: x-bridge-sig HMAC (same as every other endpoint)
+#   - iOS app: `Authorization: Bearer <access>` where the token is the same
+#     stateless HMAC access token the dashboard `basic` provider mints
+#     (identical verify ladder to the voice gateway's bearer gate — sig +
+#     kind=access + exp — verified locally, no dashboard round-trip).
+
+def _dash_secret_bytes() -> bytes:
+    import yaml
+    try:
+        cfg = yaml.safe_load(open(DASH_CONFIG_PATH))
+    except Exception:
+        return b""
+    raw = (cfg.get("dashboard") or {}).get("basic_auth", {}).get("secret", "")
+    for decoder in (base64.b64decode, bytes.fromhex):
+        try:
+            cand = decoder(raw)
+            if len(cand) >= 16:
+                return cand
+        except Exception:
+            continue
+    return raw.encode() if raw else b""
+
+
+def _bearer_valid(token: str) -> bool:
+    secret = _dash_secret_bytes()
+    if not secret:
+        return False
+    try:
+        blob = base64.urlsafe_b64decode(token.encode())
+        payload, sig = blob[:-32], blob[-32:]
+        if not hmac.compare_digest(hmac.new(secret, payload, hashlib.sha256).digest(), sig):
+            return False
+        data = json.loads(payload)
+        return data.get("kind") == "access" and data.get("exp", 0) > int(time.time())
+    except Exception:
+        return False
+
+
+def _auth_dual(request: Request, x_bridge_sig: str, body: bytes) -> None:
+    """HMAC sig if present, else dashboard Bearer. Never both required."""
+    bearer = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    if bearer:
+        if _bearer_valid(bearer):
+            return
+        raise HTTPException(401, "bad bearer token")
+    _auth(x_bridge_sig, body)
+
+
+def _load_secrets() -> dict:
+    if SECRETS_PATH.exists():
+        try:
+            return json.loads(SECRETS_PATH.read_text() or "{}")
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_secrets(data: dict) -> None:
+    SECRETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SECRETS_PATH.write_text(json.dumps(data, indent=1))
+    os.chmod(SECRETS_PATH, 0o600)
+
+
+def _secret_meta(data: dict) -> list:
+    out = []
+    for name, entry in sorted(data.items()):
+        val = str(entry.get("value", ""))
+        out.append({
+            "name": name,
+            "masked": (val[:2] + "…" if len(val) > 6 else "••••••"),
+            "length": len(val),
+            "updated_at": entry.get("updated_at", ""),
+            "updated_by": entry.get("updated_by", ""),
+        })
+    return out
+
+
+class SecretReq(BaseModel):
+    name: str
+    value: str = "x"
+    updated_by: str | None = "ios-app"
+
+
+@app.get("/secrets")
+async def secrets_list(request: Request, x_bridge_sig: str = Header(default="")):
+    """List stored secret NAMES with masked previews. Values never leave the box."""
+    _auth_dual(request, x_bridge_sig, b"")
+    return {"secrets": _secret_meta(_load_secrets())}
+
+
+@app.post("/secrets/set")
+async def secrets_set(request: Request, x_bridge_sig: str = Header(default="")):
+    """Create/update a named secret. Stored 0600 server-side; never echoed back."""
+    raw = await request.body()
+    _auth_dual(request, x_bridge_sig, raw)
+    req = SecretReq(**json.loads(raw))
+    name = req.name.strip()
+    if not name or "=" in name or len(name) > 128:
+        raise HTTPException(422, "invalid secret name")
+    if not req.value:
+        raise HTTPException(422, "value required")
+    data = _load_secrets()
+    existed = name in data
+    data[name] = {"value": req.value,
+                  "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "updated_by": req.updated_by or "ios-app"}
+    _save_secrets(data)
+    return {"ok": True, "name": name, "created": not existed, "stored": True}
+
+
+@app.post("/secrets/delete")
+async def secrets_delete(request: Request, x_bridge_sig: str = Header(default="")):
+    raw = await request.body()
+    _auth_dual(request, x_bridge_sig, raw)
+    body = json.loads(raw or b"{}")
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise HTTPException(422, "name required")
+    data = _load_secrets()
+    existed = data.pop(name, None) is not None
+    if existed:
+        _save_secrets(data)
+    return {"ok": True, "deleted": existed}
 
 
 @app.post("/register")

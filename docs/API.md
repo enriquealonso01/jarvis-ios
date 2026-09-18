@@ -17,6 +17,33 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   with empty body `{}` cancels all pending.
 - `GET /health` -> `{ok, apns_configured, scheduled}`.
 
+## Named secrets (backlog #3, added 2026-09-18)
+
+Values persist server-side only (`/opt/jarvis-ios-bridge/secrets.json`, 0600) and
+are NEVER returned by any endpoint — only names + masked previews. Auth is dual:
+
+- agents: `x-bridge-sig` HMAC (same as every other endpoint), or
+- the iOS app: `Authorization: Bearer <access token>` — the same stateless HMAC
+  access token the dashboard `basic` provider mints (gateway-identical verify
+  ladder: sig + kind=access + exp, checked locally, no dashboard round-trip).
+
+Public path via Caddy: `https://jarvis.enriquecodes.com/bridge/secrets` (the
+`/bridge/*` route proxies to :9160, prefix stripped).
+
+- `GET /secrets` -> `{secrets: [{name, masked, length, updated_at, updated_by}]}`.
+  GETs authenticate via HMAC over empty body OR Bearer.
+- `POST /secrets/set` `{name, value, updated_by?}` -> `{ok, name, created, stored}`.
+  Upsert; rejects empty values and `=` in names (422).
+- `POST /secrets/delete` `{name}` -> `{ok, deleted}`.
+
+Agent recipe (e.g. store the APNs p8 fields without touching git):
+```
+secret=$(cat /opt/jarvis-ios-bridge/shared_secret)
+body='{"name":"APNS_KEY_ID","value":"ABC123","updated_by":"jarvis-agent"}'
+sig=$(printf %s "$body" | openssl dgst -sha256 -hmac "$secret" -hex | cut -d' ' -f2)
+curl -s -X POST http://127.0.0.1:9160/secrets/set -H "x-bridge-sig: $sig" -H "Content-Type: application/json" -d "$body"
+```
+
 ## Calling Enrique (for WhatsApp/voice JARVIS tools)
 1. `secret=$(cat /opt/jarvis-ios-bridge/shared_secret)`
 2. `body='{"reason":"Call about X","scheduled_by":"whatsapp-jarvis"}'`

@@ -1,5 +1,35 @@
 # PROGRESS
 
+## 2026-09-18 03:20 UTC — backlog #3: Secrets (server store + iOS UI) LIVE
+
+- Named-secret store deployed on the push bridge (`/secrets`, `/secrets/set`,
+  `/secrets/delete`): values persist in /opt/jarvis-ios-bridge/secrets.json
+  (0600) and are never returned by any endpoint — only names + masked previews
+  (first 2 chars, length, updated_by/at). Note: no HTTP "gateway secret scope"
+  endpoint exists in Hermes; the bridge store is the secret scope surface for
+  this project, so the backlog item landed there.
+- Dual auth: x-bridge-sig HMAC (agents) OR `Authorization: Bearer` dashboard
+  access token (iOS app) — same gateway-identical verify ladder (sig +
+  kind=access + exp, local verify). 18/18 functional checks passed on a
+  throwaway instance (:9161): both auth paths, expired/refresh-kind/bad-token
+  401s, 422 validation, upsert created flag, delete, no value leak in any
+  response. Live round-trip verified on :9160 after restart, probe entry scrubbed.
+- Caddy: `/bridge/*` route added (handle_path → 127.0.0.1:9160, prefix
+  stripped; backup /etc/caddy/Caddyfile.bak-iosbridge-20260918). Verified:
+  public `/bridge/health` 200, `/bridge/secrets` 401 without creds, 200 with
+  bearer; /voice-gw untouched.
+- iOS: SecretsView fully wired (list with masked metadata, add/update with
+  SecureField, swipe-free delete via confirmation dialog, haptics, pull-to-
+  refresh). CCClient.urlFor() now passes absolute bridge URLs through (Bearer
+  auth + auto-refresh reused). ServerConfig defaults fixed: bridge =
+  https://jarvis.enriquecodes.com/bridge, voice gateway = jarvis origin
+  (offer path /voice-gw/api/offer) — the old voice.enriquecodes.com /
+  bridge.enriquecodes.com hosts don't exist.
+- docs/API.md: secrets endpoints + agent recipe.
+- NEEDS ENRIQUE (unchanged): first Xcode build/upload (see docs/BUILD.md).
+- Next: backlog #4 CallKit + PushKit + WebRTC client in the app (server side
+  fully unblocked: bearer offer endpoint + VoIP push payload contract ready).
+
 ## 2026-09-18 03:00 UTC — backlog #6: gateway native-client WebRTC access LIVE
 
 - /opt/voice-gw/gateway.py auth gate now accepts `Authorization: Bearer <access

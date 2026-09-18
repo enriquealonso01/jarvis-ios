@@ -13,6 +13,15 @@ final class CCClient {
         ServerConfig.shared.config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
     }
 
+    private func urlFor(_ path: String) -> URL? {
+        // Absolute URLs (e.g. the push-bridge origin) pass through as-is;
+        // relative paths get the dashboard base prepended.
+        if path.lowercased().hasPrefix("http://") || path.lowercased().hasPrefix("https://") {
+            return URL(string: path)
+        }
+        return URL(string: base() + path)
+    }
+
     func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         var data = try await rawGet(path)
         do {
@@ -33,7 +42,7 @@ final class CCClient {
         guard let payload = try? JSONSerialization.data(withJSONObject: body) else {
             throw Failure(message: "bad request body")
         }
-        var req = URLRequest(url: URL(string: base() + path)!)
+        var req = URLRequest(url: urlFor(path)!)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = payload
@@ -42,7 +51,7 @@ final class CCClient {
     }
 
     private func rawGet(_ path: String) async throws -> Data {
-        var req = URLRequest(url: URL(string: base() + path)!)
+        var req = URLRequest(url: urlFor(path)!)
         req.httpMethod = "GET"
         return try await authedSend(req)
     }

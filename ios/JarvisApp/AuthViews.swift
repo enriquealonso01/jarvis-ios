@@ -21,7 +21,7 @@ struct SetupView: View {
                 VStack(spacing: 14) {
                     LabeledField("Dashboard URL", text: $base, placeholder: "https://jarvis.enriquecodes.com")
                     LabeledField("Bridge URL", text: $bridge, placeholder: "https://bridge.enriquecodes.com")
-                    LabeledField("Voice Gateway URL", text: $voice, placeholder: "https://voice.enriquecodes.com")
+                    LabeledField("Voice Gateway URL", text: $voice, placeholder: "https://jarvis.enriquecodes.com")
                 }
             }
             Button {
