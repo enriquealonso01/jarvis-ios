@@ -63,7 +63,7 @@ final class CallManager: NSObject, ObservableObject {
 
     // MARK: Incoming push (called from AppDelegate)
 
-    func handleVoIPPayload(_ payload: [AnyHashable: Any]) {
+    func handleVoIPPayload(_ payload: [AnyHashable: Any], onReported: (() -> Void)? = nil) {
         let p = VoIPPayload(
             reason: payload["reason"] as? String ?? "JARVIS call",
             callID: payload["call_id"] as? String ?? UUID().uuidString.prefix(8).description,
@@ -87,8 +87,11 @@ final class CallManager: NSObject, ObservableObject {
         setupCallUI()
         callState = "ringing"
         // Report BEFORE returning from the VoIP push callback (hard requirement).
+        // The PushKit completion fires only when CallKit ACCEPTS the report —
+        // resolving it earlier is the classic crash-and-wedge (killed-app wake).
         prov.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if let error { print("[CallManager] report incoming failed: \(error)") }
+            onReported?()
         }
     }
 
@@ -259,8 +262,10 @@ extension CallManager: PKPushRegistryDelegate {
     nonisolated func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
         guard type == .voIP else { completion(); return }
         Task { @MainActor in
-            self.handleVoIPPayload(payload.dictionaryPayload)
-            completion()
+            // completion() is deferred until CallKit accepts the incoming-call
+            // report (reportNewIncomingCall's own handler) — the Apple-required
+            // ordering that keeps killed/locked wakeups from being wedged out.
+            self.handleVoIPPayload(payload.dictionaryPayload, onReported: completion)
         }
     }
 

@@ -1,5 +1,23 @@
 # PROGRESS
 
+## 2026-09-18 10:30 UTC (build-loop run) — PushKit completion tied to CallKit report acceptance (wedge-hardening); sweep all green
+
+- Backlog 1–9 re-audited (git log + PROGRESS): complete, no functional drift.
+- Real fix found in the call path: `pushRegistry(didReceiveIncomingPushWith:)`
+  resolved PushKit's `completion()` immediately after CALLING
+  `reportNewIncomingCall`, not after CallKit ACCEPTED it. Apple requires the
+  completion fire only once the report's own handler runs — the old ordering
+  risks the killed-app crash/wedge exactly on the locked-phone incoming call
+  path this app exists for. `handleVoIPPayload` now takes an `onReported`
+  callback fired from the report handler; the PushKit delegate passes
+  `completion` through. (swift_sanity now pins the wiring so it can't regress.)
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN (swift_sanity OK incl. new
+  pins, bridge bearer probe, gateway bearer gate, live health bridge :9160 ok /
+  apns_configured:false / voice-gw :9150 realtime:true, public /bridge/health
+  200, prod parity + crons armed, native WebRTC e2e PASS vs live gateway).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 10:35 UTC (build-loop run) — maintenance sweep all green; last stale step label fixed
 
 - Backlog 1–9 re-audited (git log + PROGRESS): complete, no functional drift.

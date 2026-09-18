@@ -62,7 +62,10 @@ required = {
     "HomeView.swift": ["alertsCard", "Attention"],
     "WebRTCClient.swift": ["startDisconnectGrace", "cancelDisconnectGrace", "disconnectGraceSeconds", "no recovery within"],
     "ChatsView.swift": ["NewTaskSheet", "project/task", "lastMessage", "pollHistory", "decodedLines", "JARVIS is thinking"],
-    "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome", "placeDirectCall", "CXStartCallAction", "setupCallUI", "dialing", "handleConnectionFailure"],
+    "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome", "placeDirectCall", "CXStartCallAction", "setupCallUI", "dialing", "handleConnectionFailure",
+                          # PushKit contract: completion is resolved by the
+                          # incoming-call report handler, never inline.
+                          "onReported: completion", "onReported?()"],
     "CallsView.swift": ["durationSeconds", "outcome", "trackOutgoingLog", "Talk to JARVIS", "placeDirectCall", "ScheduleCallSheet", "scheduleCall(at:", "/schedule", "whenLabel"],
 }
 for fn, syms in required.items():
