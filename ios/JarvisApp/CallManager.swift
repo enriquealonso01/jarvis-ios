@@ -118,10 +118,33 @@ final class CallManager: NSObject, ObservableObject {
         client.onAppMessage = { [weak self] msg in
             Task { @MainActor in self?.handleAppMessage(msg) }
         }
+        // Terminal ICE failure (never reached connected): fail the call state,
+        // stamp the log, and drop the CallKit call instead of hanging.
+        client.onConnectionFailed = { [weak self] why in
+            Task { @MainActor in self?.handleConnectionFailure(why) }
+        }
         webRTC = client
         callState = "active"
         CallLogStore.shared.finish(id: logEntryID, outcome: "answered")
         Haptics.success()
+    }
+
+    /// ICE reached a terminal failed/closed/disconnected state without ever
+    /// connecting: surface the failure, stamp the log, tear the call down.
+    private func handleConnectionFailure(_ why: String) {
+        guard activeCallUUID != nil else { return } // already ended/hangup path
+        guard !callState.hasPrefix("failed") else { return }
+        callState = "failed: \(why)"
+        CallLogStore.shared.finish(id: logEntryID, outcome: "failed")
+        logEntryID = nil
+        callStart = nil
+        Haptics.error()
+        if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date()) }
+        webRTC?.hangup()
+        webRTC = nil
+        activeCallUUID = nil
+        sessionInfo = ""
+        lastTranscript = nil
     }
 
     private func handleAppMessage(_ msg: [String: Any]) {

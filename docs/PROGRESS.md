@@ -1,5 +1,30 @@
 # PROGRESS
 
+## 2026-09-18 08:20 UTC (build-loop run) — call-path hardening: ICE-failure detection + connect deadline, no more infinite "connecting"
+
+- Backlog items 1–9 confirmed complete (git log + docs audit). This run
+  hardened the one remaining silent-failure class in the core call path:
+  a gateway answer whose ICE never reaches connected (NAT mismatch, dead
+  gateway, network drop mid-negotiation) used to leave the call stuck in
+  "connecting" AND stamp the call log "answered".
+  - WebRTCClient: new `waitUntilConnected(timeout:)` — connect() now throws
+    `gateway("no media connection within 15s")` if ICE doesn't connect within
+    15 s, so the CXAnswerCallAction fails fast instead of hanging.
+  - WebRTCClient ICE delegate now distinguishes terminal states: `.failed`
+    always fatal; `.closed`/`.disconnected` fatal only if never connected
+    (normal hangup already owns the connected path). Fires new
+    `onConnectionFailed(why)` callback.
+  - CallManager: `handleConnectionFailure` sets callState "failed: …",
+    stamps the log entry "failed" (was "answered"), reports the CallKit call
+    ended, tears down the PC + haptic error. Idempotent (guards on
+    activeCallUUID + current state).
+  - Removed the two force-unwrapped `URL(string:)!` builds (offer + say/
+    hangup paths) — a malformed server URL now throws a clean gateway error.
+- scripts/swift_sanity OK; full verify_all sweep exit 0 ALL GREEN
+  (6/6 incl. native WebRTC e2e vs live gateway).
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 08:05 UTC (build-loop run) — app-phase 3: Home alerts card, ad-hoc project chats, call-log outcomes
 
 - Contract-audited the app against the live dashboard and closed three

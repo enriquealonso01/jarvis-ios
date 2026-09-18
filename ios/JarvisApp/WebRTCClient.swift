@@ -27,6 +27,14 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     private var pingTimer: DispatchSourceTimer?
     /// Called (off-main) for every JSON app message the gateway sends.
     var onAppMessage: (@Sendable ([String: Any]) -> Void)?
+    /// Called (off-main) when the peer connection reaches a terminal ICE
+    /// state (failed/disconnected/closed) after connect — CallManager turns
+    /// this into callState "failed: …" + a missed/failed log stamp instead of
+    /// sitting in "connecting" forever.
+    var onConnectionFailed: (@Sendable (String) -> Void)?
+    /// Fired once when ICE first reaches connected/completed.
+    var onConnected: (@Sendable () -> Void)?
+    private var connectedFired = false
 
     nonisolated(unsafe) static var sharedFactory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
@@ -121,7 +129,8 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
 
         // POST {sdp, type} → {sdp, type:"answer", pc_id}
         let token = try await tokenProvider()
-        var req = URLRequest(url: URL(string: offerURL)!)
+        guard let offerURL = URL(string: offerURL) else { throw CallError.gateway("bad offer URL") }
+        var req = URLRequest(url: offerURL)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -151,6 +160,18 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         // JSON back over this channel.
         client.openAppChannel()
         return client
+    }
+
+    /// Suspends until ICE reaches connected/completed, or throws after
+    /// `timeout` seconds. Polled at 100 ms — fine for one-shot call setup.
+    func waitUntilConnected(timeout: TimeInterval) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !connected {
+            if Date() > deadline {
+                throw CallError.gateway("no media connection within \(Int(timeout))s")
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
     }
 
     private func openAppChannel() {
@@ -209,7 +230,9 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     }
 
     private func post(path: String, body: [String: Any]) async throws -> Data {
-        var req = URLRequest(url: URL(string: baseURL.replacingOccurrences(of: "/api/offer", with: path))!)
+        let urlStr = baseURL.replacingOccurrences(of: "/api/offer", with: path)
+        guard let url = URL(string: urlStr) else { throw CallError.gateway("bad URL: \(path)") }
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token = try? await tokenProvider() {
@@ -227,7 +250,25 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        let wasConnected = connected
         connected = (newState == .connected || newState == .completed)
+        if connected && !wasConnected && !connectedFired {
+            connectedFired = true
+            onConnected?()
+        }
+        switch newState {
+        case .failed:
+            onConnectionFailed?("media connection failed")
+        case .closed:
+            // Only terminal if we never got connected (a normal hangup closes
+            // the PC deliberately and CallManager already handles that path).
+            if !connected { onConnectionFailed?("media connection closed before connecting") }
+        case .disconnected:
+            // Transient (network blip); only fatal if we never connected.
+            if !connected { onConnectionFailed?("media connection lost before connecting") }
+        default:
+            break
+        }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
