@@ -1,5 +1,29 @@
 # PROGRESS
 
+## 2026-09-18 09:55 UTC (build-loop run) — full contract re-audit vs live dashboard + live gateway: zero drift; maintenance sweep ALL GREEN
+
+- Backlog 1–9 re-audited (git log + PROGRESS): complete; no drift in the app.
+- Live end-to-end contract audit (fresh minted Bearer vs :9119): every Decodable
+  model in the app re-verified field-by-field against real payloads — vitals,
+  zai_usage (5h window shape), automations (items/active/failing), activity
+  sessions (active field), attention (alerts incl. severity/msg/kind/ref),
+  dispatch board (threads/items/ago_seconds). ALL MATCH. Routes
+  /api/control/project/task + work/{id}/chat + history confirmed present in the
+  live OpenAPI spec (Chats send/poll contract intact).
+- Prod bridge state audit: the one scheduled entry (2030-01-01 forge-validation
+  test) parses as far-future UTC → stays pending, no retry-spin; apns.env still
+  empty (apns_configured:false) as expected pre-p8; scheduler robustness fix
+  from 09:50 verified in the deployed file.
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN (swift_sanity OK, bridge probe
+  15/15 throwaway, gateway bearer gate, live health bridge :9160 + voice-gw
+  :9150 realtime:true + public /bridge/health 200, parity + crons armed, native
+  WebRTC e2e PASS).
+- Side check: the jarvis-frontend mirror of control_center.py (e539a49, dispatch
+  board null-created_at sort fix) is committed and synced with origin/main —
+  live dashboard already runs it, no drift.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build → TestFlight
+  upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 09:50 UTC (build-loop run) — scheduler robustness fix deployed: a dead loop can no longer silently drop every future scheduled call
 
 - Gap found during this run's audit: the bridge scheduler ran every entry
