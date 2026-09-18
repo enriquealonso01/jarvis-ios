@@ -1,5 +1,33 @@
 # PROGRESS
 
+## 2026-09-18 12:05 UTC (build-loop run) — three audit catches: two compile blockers + dial-fail teardown; sweep all green
+
+- Line-by-line audit (all 13 Swift files) found THREE real defects:
+- **HomeView ATTENTION card: optional compile blocker** — the card body ran
+  `if !a.msg.isEmpty` then `Text(a.msg)`, but `Attention.Alert.msg` is
+  `String?`. Both are guaranteed Xcode errors (member access on an optional;
+  no `Text(String?)` overload) — the FIRST alert to exist would have failed
+  the build. Fixed with `if let msg = a.msg, !msg.isEmpty`; pinned by
+  swift_sanity required-guard.
+- **ChatsView.startTask: `project.map` compiles against Character** —
+  `project` is a plain `String`, so `project.map { $0.components(...) }`
+  iterates its CHARACTERS (`Character` has no `components(separatedBy:)`) —
+  hard build error on the New-project-task path. Slug-ifies the whole string
+  directly now; pinned by swift_sanity.
+- **CallManager dial-fail teardown gap** — the `CXStartCallAction` catch path
+  did a PARTIAL teardown (same class as the 09:02 answer-fail fix): it never
+  reported the CallKit call ended (lingering system call UI after a failed
+  dial) and left `pendingAnswerPayload` set (a later push could be misread as
+  a re-delivery of the dead call). Routed through the idempotent
+  `handleConnectionFailure` + explicit payload clear.
+- Full scripts/verify_all.sh: exit 0 ALL GREEN (swift_sanity incl. new pins,
+  bridge probe, gateway bearer gate, live health bridge :9160 ok /
+  apns_configured:false / voice-gw :9150 realtime:true, public /bridge/health
+  200, prod parity + crons armed, native WebRTC e2e PASS vs live gateway).
+  Committed fc483b8, pushed.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 11:35 UTC (build-loop run) — last force-unwrapped URLs removed (AuthStore login/refresh); sweep all green
 
 - Line-by-line audit of the auth path found the LAST remaining force-unwrap
