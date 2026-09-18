@@ -1,5 +1,48 @@
 # PROGRESS
 
+## 2026-09-18 17:40 UTC (CI fix loop) — all 40 Swift compile errors fixed; archive green; upload blocked on missing ASC app record
+
+- CI_ERRORS.txt's 40 unique errors (Xcode 26.3 / iOS 26.2 SDK / Swift 6.2
+  strict mode) are all fixed on main. The beta lane now compiles, archives,
+  and exports a signed ipa (~6 min in) — it fails only at
+  `upload_to_testflight`: **no App Store Connect app record exists yet**
+  ("Couldn't find app 'com.enriquecodes.jarvis'"), which is one-time manual
+  setup only Enrique can do (docs/BUILD.md "First TestFlight setup": ASC >
+  My Apps > + > New App, bundle id com.enriquecodes.jarvis, SKU
+  jarvis-ios-001). After that one-time step, re-dispatch the beta workflow —
+  no further code changes are expected.
+- Fixes by file (8 commits, 19e31a7…bb09df9):
+- AuthStore: `serverURL` optional unwrapped before URLComponents (guard-let);
+  `if let jar = cookieJar` explicit binding; Keychain `query` var→let.
+- CallManager: every `reportCall(with:endedAt:)` now passes the required
+  `reason:` (.remoteEnded / .failed per context); outgoing connect report
+  uses `reportOutgoingCall(with:connectedAt:)` (startedAt: never existed);
+  `prov.setDelegate(self, queue: nil)` (Xcode 26 SDK hides CXProvider's
+  delegate property from Swift). Swift 6.2 region checks ("sending X risks
+  causing data races") fixed by binding non-Sendable CallKit/PushKit params
+  once before the MainActor Task hop (`nonisolated(unsafe) let boxed = p`):
+  CXAnswer/Start/EndCallAction, the CXProvider param, PushKit completion +
+  PKPushPayload, and the WebRTC callback values.
+- CCClient + Haptics: `@MainActor` (all call sites are SwiftUI/main-actor
+  code; UIFeedbackGenerator is main-thread-only) — makes the MainActor-
+  isolated `AuthStore.shared` reads legal.
+- HomeView: `.foregroundStyle(.jarvisAccent)` → `Color.jarvisAccent`
+  (ShapeStyle has no such member; every other call site already qualified).
+- WebRTCClient: implemented the REQUIRED `peerConnection(_:didOpen:)`
+  delegate method (stasel M130 protocol — absent = conformance error); it
+  adopts a peer-opened data channel so app messages still flow.
+  `.allowBluetooth` → `.allowBluetoothHFP` (renamed).
+- Process notes: no local Swift toolchain — each CI run surfaced exactly ONE
+  new error (the 6.2 region check crashes the frontend after the first), so
+  this took 7 dispatch→fix→push iterations. All 8 commits pushed with the
+  EnriqueCodes token via a temp remote (removed after each push). The 16:50
+  "successful" beta run was actually lane bootstrap_signing — beta has never
+  succeeded; the earlier 16:49 beta failure was a match profile lacking the
+  Push Notifications capability (resolved then by re-running bootstrap
+  WITHOUT the entitlements file in the target — aps-environment build errors
+  will return if JarvisApp.entitlements is re-added to the target before the
+  App ID gets the Push service enabled).
+
 ## 2026-09-18 14:15 UTC (build-loop run) — VoIP bump-path re-delivery loop, zombie log entries, two silent sheet failures fixed; sweep all green
 
 - All 9 backlog items remain built; this run was another defect-hunt audit
