@@ -1,3 +1,36 @@
+## 2026-09-18 23:20 UTC (build-loop run) — device-watch upgraded to DUAL-FLIP: now announces the APNs key flip the moment it lands, not just the phone flip
+
+- Gap found: the watch only monitored `device_registered`. When Enrique's
+  replacement .p8 lands and `swap_apns_key.py` installs it, NOTHING would
+  announce it until the next manual probe or sweep — the single most
+  anticipated event of the mission was silent. The watch now detects BOTH
+  remaining flips, announces each once (state-file bits), and self-removes
+  ONLY when both are set (either order): a phone that registers while the
+  key is still rejected (pushes would 403) keeps the watch alive.
+  - flip 1 (KEY LIVE): runs scripts/probe_apns_delivery.py per tick; exit 0
+    (verdict 400 BadDeviceToken) == Apple accepts the installed key.
+  - flip 2 (REGISTERED): /health device_registered, now whitespace-tolerant
+    (REAL BUG found by the stub test: spaced JSON would have been missed).
+- Flip paths PROVEN e2e this run: stub probe (verdict PROVEN) -> KEY LIVE +
+  bit; stub :8799 health registered -> REGISTERED + bit; next tick ->
+  MISSION COMPLETE + self-remove EXECUTED — using a SACRIFICIAL job name
+  (jarvis-device-watch-selfremove-test) so the 21:50 mishap class (test
+  copy deleting the real watch) is structurally impossible now. Real job
+  verified untouched after the test; real state file untouched; leftover
+  squatter stub on :8799 (from the 21:50 run, answering 501) found + killed.
+- Deployed per the mirror workflow (repo -> cp -> pins): check_watch_wiring
+  14/14 OK incl. byte-identical mirror; live tick verified (both WAIT lines
+  once, then silent); doc contracts OK; verify_all ALL GREEN incl. native
+  WebRTC e2e against the live gateway.
+- Live state unchanged: probe still 403 InvalidProviderToken (key verdict
+  re-confirmed live this run), build 1 VALID + IN_BETA_TESTING,
+  device_registered false, last_push_error empty.
+- NEEDS ENRIQUE (both unchanged): (1) web ~2 min — create the APNs-capable
+  key (developer.apple.com -> Keys -> APNs CHECKED) and send the .p8; one
+  command installs it (scripts/swap_apns_key.py) and the watch will
+  announce KEY LIVE within 15 min. (2) phone — install TestFlight, accept
+  invite, open build 1 once -> REGISTERED announced -> mission complete.
+
 ## 2026-09-18 22:55 UTC (build-loop run) — bad APNs key can no longer hide between sweeps: bridge remembers push rejections (`last_push_error` on /health), app + verify_all surface it
 
 - Gap found: `_send_voip` logs a rejection once (journal line) and forgets.
