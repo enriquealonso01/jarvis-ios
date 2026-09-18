@@ -24,6 +24,10 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   scheduled}`.
   `device_registered` = the phone has completed POST /register (boolean
   presence signal only — the token itself is never exposed here).
+  `last_push_error` records every APNs non-200 (`"<code> <reason> at <ts>"`)
+  AND transport failures (`"transport <ErrorName> at <ts>"` — h2 handshake,
+  timeout, connection reset are caught inside `_send_voip` and never escape
+  into POST /call; empty string = healthy).
 
 ## Named secrets (backlog #3, added 2026-09-18)
 
@@ -108,7 +112,10 @@ carries `gateway_ws: "/voice-gw"` per the contract in docs/GATEWAY.md.
   dummy token — same shape as the probe), then installs 0600 + updates
   apns.env atomically (rollback on failure). No bridge restart needed
   (`_send_voip` re-reads env per push); afterwards `scripts/probe_apns_delivery.py`
-  must print `400 BadDeviceToken` on the live paths. Until then VoIP pushes
+  must print `400 BadDeviceToken` on the live paths — the probe runs TWO legs
+  per verdict (curl AND the bridge's exact httpx+h2 production client,
+  "BRIDGE-STACK"), so a bridge-transport regression can never hide behind a
+  curl-only green. Until then VoIP pushes
   CANNOT be delivered: /call answers pushed:false with
   `[bridge] APNs push REJECTED` in the journal. verify_all step 1b prints the
   probe verdict on every run.

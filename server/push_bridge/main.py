@@ -69,14 +69,18 @@ def _auth(x_bridge_sig: str, body: bytes) -> None:
 
 
 def _send_voip(device_token: str, payload: dict) -> bool:
-    """Send a VoIP push via APNs HTTP/2. Uses apswift-compatible raw HTTP2 via
-    httpx + h2 if available; falls back to `apns2`-style JWT auth.
+    """Send a VoIP push via APNs over HTTP/2 (httpx + h2) with provider-token
+    JWT auth (pyjwt ES256, kid header). Config/token read per call.
 
     Failure must be LOUD: a silent False here is indistinguishable from "no
     phone registered" for every caller (scheduler, /call, call_enrique.py).
     On any non-200, log status + Apple's `reason` string. Found the first
     InvalidProviderToken (p8 without APNs capability) exactly this way —
     see scripts/probe_apns_delivery.py + PROGRESS 2026-09-18 22:20.
+    TRANSPORT failures (h2 handshake, timeout, connection reset) are caught
+    and recorded the same way (LAST_PUSH_ERROR=`transport <Error>`, loud log)
+    — never raised into POST /call, which has no handler of its own
+    (transport-guard contract, PROGRESS 2026-09-18 23:40).
     """
     cfg = _load_env()
     key_id, team_id = cfg.get("APNS_KEY_ID"), cfg.get("APNS_TEAM_ID")
@@ -101,19 +105,31 @@ def _send_voip(device_token: str, payload: dict) -> bool:
         "apns-priority": "10",
     }
     url = f"https://api.sandbox.push.apple.com/3/device/{device_token}" if cfg.get("APNS_SANDBOX", "1") == "1" else f"https://api.push.apple.com/3/device/{device_token}"
-    with Client(http2=True, timeout=10) as c:
-        r = c.post(url, headers=headers, json={"aps": {}, **payload})
-        if r.status_code == 200:
-            _save_env_key("LAST_PUSH_ERROR", "")
-            return True
-        try:
-            reason = r.json().get("reason", "")
-        except Exception:
-            reason = (r.text or "")[:120]
-        print(f"[bridge] APNs push REJECTED: HTTP {r.status_code} {reason} "
-              f"(topic={headers['apns-topic']}, host={'sandbox' if cfg.get('APNS_SANDBOX') == '1' else 'production'})")
-        _save_env_key("LAST_PUSH_ERROR", f"{r.status_code} {reason} at {int(time.time())}")
+    # Transport guard: the POST itself is wrapped — an h2 handshake failure /
+    # timeout / connection reset must surface as a LOUD, recorded False, never
+    # as an unhandled exception escaping into POST /call. (httpx+h2 to Apple
+    # re-proven live 2026-09-18 23:40: proto=HTTP/2 on BOTH hosts — the old
+    # "egress mangles python h2" note was a urllib-era artifact; see the
+    # probe's BRIDGE-STACK leg, which exercises this exact stack.)
+    try:
+        with Client(http2=True, timeout=10) as c:
+            r = c.post(url, headers=headers, json={"aps": {}, **payload})
+    except Exception as e:
+        print(f"[bridge] APNs push TRANSPORT ERROR: {type(e).__name__}: {e} "
+              f"(host={'sandbox' if cfg.get('APNS_SANDBOX') == '1' else 'production'})")
+        _save_env_key("LAST_PUSH_ERROR", f"transport {type(e).__name__} at {int(time.time())}")
         return False
+    if r.status_code == 200:
+        _save_env_key("LAST_PUSH_ERROR", "")
+        return True
+    try:
+        reason = r.json().get("reason", "")
+    except Exception:
+        reason = (r.text or "")[:120]
+    print(f"[bridge] APNs push REJECTED: HTTP {r.status_code} {reason} "
+          f"(topic={headers['apns-topic']}, host={'sandbox' if cfg.get('APNS_SANDBOX') == '1' else 'production'})")
+    _save_env_key("LAST_PUSH_ERROR", f"{r.status_code} {reason} at {int(time.time())}")
+    return False
 
 
 class CallReq(BaseModel):

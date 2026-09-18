@@ -73,6 +73,25 @@ check("swap script stages with rollback (backup .key.bak + env restore)",
 check("BUILD.md names swap_apns_key.py as the install runbook",
       "swap_apns_key.py" in build)
 
+# 7. Two-leg delivery-probe contract (added 2026-09-18 23:40): the probe's
+#    verdict must cover the bridge's PRODUCTION transport (httpx + h2), not
+#    just curl — a bridge-side transport regression can never hide behind a
+#    curl-only green. Pins the BRIDGE-STACK leg, the both-legs verdict rule,
+#    and the _send_voip transport guard it protects.
+probe = open(os.path.join(ROOT, "scripts", "probe_apns_delivery.py")).read()
+check("probe runs the BRIDGE-STACK leg (bridge venv httpx+h2)",
+      "BRIDGE_STACK_LEG" in probe and "BRIDGE_PY" in probe)
+check("probe passes the provider token via env, never argv",
+      'APNS_LEG_TOKEN' in probe and '"-c", BRIDGE_STACK_LEG' in probe)
+check("probe verdict requires both legs to agree",
+      "legs_agree" in probe and "transport_broken" in probe)
+check("probe names a distinct BRIDGE TRANSPORT BROKEN diagnosis",
+      "BRIDGE TRANSPORT BROKEN" in probe)
+check("_send_voip wraps the POST in a transport guard (LOUD, recorded False)",
+      'TRANSPORT ERROR' in bridge and 'transport-guard contract' in bridge)
+check("probe doc names the both-leg design",
+      "Both legs" in probe or "BOTH legs" in probe)
+
 
 print()
 if failures:

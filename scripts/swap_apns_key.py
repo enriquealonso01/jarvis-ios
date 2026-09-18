@@ -122,8 +122,11 @@ def gate3_apple(p8_path: Path, kid: str, team: str, bundle: str, host_kind: str)
     url = f"https://{host}/3/device/{DUMMY_TOKEN}"
     payload = json.dumps({"aps": {}, "reason": "[key-swap probe] candidate-key check",
                           "call_id": "probe0000", "gateway_ws": "/voice-gw"}).encode()
-    # curl (own HTTP/2 stack): this box's egress mangles python h2 to Apple;
-    # the probe (probe_apns_delivery.py) proved curl works where urllib can't.
+    # curl (own HTTP/2 stack) for the candidate-key gate — portable, no deps.
+    # (An old note here blamed the box's egress for "mangling python h2" — a
+    # urllib-era artifact, disproven live 2026-09-18 23:40; the probe's
+    # BRIDGE-STACK leg now proves the production httpx+h2 transport, and it
+    # re-verifies the INSTALLED key after this swap completes.)
     p = subprocess.run(
         ["curl", "-s", "--http2", "-o", "-", "-w", "\n%{http_code}", "--max-time", "15",
          "-X", "POST", url,

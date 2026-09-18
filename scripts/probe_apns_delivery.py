@@ -30,6 +30,12 @@ Verdicts (HTTP status + Apple's JSON `reason`):
   200                 -> would mean Apple accepted a bogus token (impossible;
                          report loudly).
 
+Two legs, on purpose: leg 1 is curl (portable, works on any box). Leg 2
+(BRIDGE-STACK) runs the SAME dummy-token POST through the bridge venv's
+httpx + h2 client — the exact transport `_send_voip` uses in production —
+so a bridge-side transport regression can never hide behind a curl-only
+green. The verdict requires BOTH legs to agree.
+
 Safety: the dummy token is 64 hex chars no device owns; even on a freak 200 no
 phone rings. Touches no bridge state. Never prints or writes secret material
 (the p8 is read only to sign; the JWT is cached 0600 in the state dir).
@@ -58,6 +64,33 @@ TOKEN_TTL = 45 * 60  # Apple asks for ~1 token/hour; stay under with margin.
 # Syntactically valid, guaranteed-unregistered 64-hex token. No device owns
 # this; APNs will answer BadDeviceToken if everything else is healthy.
 DUMMY_TOKEN = "DEADBEEF" + "0" * 52 + "9999"
+
+# The bridge's exact production transport (main.py `_send_voip`): httpx with
+# http2=True from /opt/jarvis-ios-bridge/venv. The BRIDGE-STACK leg runs the
+# same dummy-token POST through THIS client; the provider token reaches it
+# via environment variable (never argv — argv is world-readable in ps).
+BRIDGE_PY = "/opt/jarvis-ios-bridge/venv/bin/python"
+BRIDGE_STACK_LEG = r'''
+import os, json
+from httpx import Client
+token, url, topic = os.environ["APNS_LEG_TOKEN"], os.environ["APNS_LEG_URL"], os.environ["APNS_LEG_TOPIC"]
+payload = json.dumps({"aps": {}, "reason": "[probe] bridge-stack h2 check",
+                      "call_id": "probe0000", "gateway_ws": "/voice-gw"}).encode()
+try:
+    with Client(http2=True, timeout=10) as c:
+        r = c.post(url, headers={"authorization": f"bearer {token}",
+                                 "apns-topic": topic,
+                                 "apns-push-type": "voip",
+                                 "apns-priority": "10"}, content=payload)
+    reason = ""
+    try:
+        reason = r.json().get("reason", "")
+    except Exception:
+        pass
+    print(f"{r.status_code} {reason} {r.http_version}")
+except Exception as e:
+    print(f"TRANSPORT-ERROR {type(e).__name__}: {e}")
+'''
 
 
 def load_env(path: Path) -> dict:
@@ -131,18 +164,13 @@ def main() -> int:
 
     host = "api.sandbox.push.apple.com" if sandbox else "api.push.apple.com"
     url = f"https://{host}/3/device/{DUMMY_TOKEN}"
-    headers = {
-        "authorization": f"bearer {token}",
-        "apns-topic": bundle,
-        "apns-push-type": "voip",
-        "apns-priority": "10",
-    }
     payload = json.dumps({"aps": {}, "reason": "[probe] delivery-path check",
                           "call_id": "probe0000", "gateway_ws": "/voice-gw"}).encode()
-    # curl (its own HTTP/2 stack) instead of urllib: this box's egress mangles
-    # HTTP/2 to Apple (double-GET quirk) and urllib would speak HTTP/1.1 into
-    # an h2-only listener (BadStatusLine with binary preface). curl -w gives
-    # status; body carries Apple's JSON `reason`.
+    # curl (its own HTTP/2 stack) for leg 1: portable and dependency-free.
+    # (An old note here claimed this box's egress "mangles python h2 to Apple"
+    # — that was a urllib-era artifact. DISPROVEN live 2026-09-18 23:40: the
+    # bridge's httpx+h2 client answers HTTP/2 on both APNs hosts. Leg 2 below
+    # now proves the production transport on every probe run.)
     p = subprocess.run(
         ["curl", "-s", "--http2", "-o", "-", "-w", "\n%{http_code}", "--max-time", "15",
         "-X", "POST", url,
@@ -168,14 +196,57 @@ def main() -> int:
     except Exception:
         pass
 
-    print(f"APNs {host}: HTTP {status} {reason}".rstrip())
+    print(f"APNs {host} [curl]: HTTP {status} {reason}".rstrip())
 
-    if status == 400 and reason == "BadDeviceToken":
+    # ---- leg 2: the bridge's EXACT production transport (httpx + h2) ----
+    # Same provider token (no second mint — Apple rate-limits token churn),
+    # same dummy token, passed by env (never argv/stdin: argv is readable in
+    # ps). A bridge-side transport regression must fail the probe even when
+    # curl answers fine — curl is leg 1, the bridge is what actually pushes.
+    leg2_status, leg2_reason, leg2_proto = None, "", "?"
+    if os.path.isfile(BRIDGE_PY):
+        env2 = dict(os.environ, APNS_LEG_TOKEN=token, APNS_LEG_URL=url,
+                    APNS_LEG_TOPIC=bundle)
+        try:
+            p2 = subprocess.run([BRIDGE_PY, "-c", BRIDGE_STACK_LEG],
+                                env=env2, capture_output=True, timeout=25)
+            out2 = p2.stdout.decode(errors="replace").strip().splitlines()
+            line2 = out2[-1] if out2 else ""
+            if line2.startswith("TRANSPORT-ERROR"):
+                leg2_status, leg2_reason = 0, line2
+            else:
+                parts = line2.split(None, 2)
+                leg2_status = int(parts[0]) if parts and parts[0].isdigit() else None
+                leg2_reason = parts[1] if len(parts) > 1 else ""
+                leg2_proto = parts[2] if len(parts) > 2 else "?"
+        except Exception as e:
+            leg2_status, leg2_reason = 0, f"TRANSPORT-ERROR {type(e).__name__}: {e}"
+        print(f"APNs {host} [BRIDGE-STACK httpx h2]: "
+              + (f"HTTP {leg2_status} {leg2_reason} {leg2_proto}".rstrip()
+                 if leg2_status else leg2_reason))
+    else:
+        # Bridge venv absent (foreign box): leg 1 alone decides, loudly noted.
+        leg2_status = status
+        print("BRIDGE-STACK leg SKIPPED (bridge venv not found) — verdict from curl leg only")
+
+    transport_broken = leg2_status == 0
+    legs_agree = leg2_status == status and leg2_reason == reason
+
+    if transport_broken:
+        return fail(["VERDICT: BRIDGE TRANSPORT BROKEN — the production httpx+h2 "
+                     "client cannot reach APNs (curl leg above answered fine). "
+                     "Fix the bridge venv (httpx/h2 packages, egress) BEFORE any "
+                     "real call; /call would 500 at the transport layer."])
+    if status == 400 and reason == "BadDeviceToken" and legs_agree:
         print("VERDICT: delivery path PROVEN — provider token accepted, topic "
-              "accepted, key valid for APNs; only the (dummy) device token is "
-              "unknown. First real push goes through the moment a device "
-              "registers.")
+              "accepted, key valid for APNs, bridge transport healthy; only "
+              "the (dummy) device token is unknown. First real push goes "
+              "through the moment a device registers.")
         return 0
+    if not legs_agree and status == 400 and reason == "BadDeviceToken":
+        return fail([f"VERDICT: legs DISAGREE (curl 400 BadDeviceToken vs "
+                     f"bridge-stack {leg2_status} {leg2_reason}) — investigate "
+                     "before trusting the delivery path."])
     if status == 429 and "TokenUpdates" in reason:
         return fail(["VERDICT: token churn — cached token still too fresh on "
                      "Apple's side; wait a few minutes and re-run."])

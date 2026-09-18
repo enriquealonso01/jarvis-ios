@@ -89,12 +89,18 @@ You only ever do these steps. Everything else is agent-deployed.
   NO restart is needed — the bridge's `_send_voip` re-reads env per push.
   After the swap: `scripts/probe_apns_delivery.py` (no args) must print
   `400 BadDeviceToken` against the LIVE paths, then verify_all step 1b can
-  drop `--warn` and go gate-mode.
+  drop `--warn` and go gate-mode. The probe's verdict covers TWO legs: curl
+  AND the bridge's exact production client (httpx + h2 from the bridge venv,
+  the "BRIDGE-STACK" leg) — a bridge-transport regression fails the probe
+  even when curl answers fine.
 - Live rejection surfacing: the bridge records every APNs non-200 in
   apns.env (`LAST_PUSH_ERROR=403 InvalidProviderToken at <ts>`, cleared on
   the first 200) and `/health` exposes it as `last_push_error` — the app's
   Home card prints it and verify_all's live-health step fails loudly if it
   names InvalidProviderToken. A bad key can no longer hide between sweeps.
+  TRANSPORT failures are recorded the same way (`transport <Error> at <ts>`):
+  `_send_voip` wraps the POST itself, so an h2 handshake failure or timeout
+  returns a LOUD recorded False instead of 500-ing POST /call.
 - verify_all step 1b runs this probe every sweep (WARN mode) so the verdict
   stays visible until fixed. The watch,
   `jarvis-ios-device-watch` (15m, 192 repeats, script-mode, delivers to the

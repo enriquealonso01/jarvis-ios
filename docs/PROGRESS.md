@@ -1,3 +1,56 @@
+## 2026-09-18 23:55 UTC (build-loop run) — the push path's last unexercised link closed: transport guard in `_send_voip` + the probe now proves the BRIDGE'S OWN httpx+h2 stack (both-legs verdict), stale "egress mangles python h2" claim disproven and corrected
+
+- Audit found the delivery chain had one link never exercised AND one
+  fragile seam: (1) every probe/swap verdict was proven with **curl**, while
+  the bridge's production push uses **httpx+h2 from its own venv** — which
+  had never sent a single packet to Apple (every push so far early-exited on
+  the empty DEVICE_TOKEN); a bridge-transport regression (missing h2
+  package, egress change, venv breakage) would have hidden behind a
+  curl-only green until the first real "call me". (2) `_send_voip`'s POST
+  had **no try/except** — a transport exception would escape `/call` (which
+  has no handler) as an unhandled 500 with NO `LAST_PUSH_ERROR` recorded;
+  the scheduler path wrapped the same call, /call did not.
+- LIVE EXPERIMENT first: the bridge venv's exact stack answered
+  `HTTP 403 InvalidProviderToken, proto=HTTP/2` on BOTH APNs hosts — the
+  production transport is healthy today, AND the old comments claiming
+  "this box's egress mangles python h2 to Apple" (urllib-era artifact in
+  probe + swap) are FALSE. Both comments corrected with the disproof date.
+- Bridge hardening (deployed LIVE this run, repo main.py is the systemd
+  ExecStart cwd): the POST is wrapped — transport failures now print
+  `[bridge] APNs push TRANSPORT ERROR: <type>…`, record
+  `LAST_PUSH_ERROR=transport <Type> at <ts>`, and return False; /call can
+  never 500 at the transport layer again. Shadow-tested on the real module
+  (stubbed Client raising ConnectError → False + recorded; empty-token
+  early-exit unchanged; real 403 path still recorded; /health shape
+  intact), py_compile OK, deployed per the safe path: LKG snapshot →
+  idle-window restart 23:5x UTC (gateway quiet ≥5 min) → /health ok →
+  real /call probe → journal line shape unchanged.
+- Probe upgraded to a TWO-LEG verdict: leg 1 curl (portable), leg 2
+  "BRIDGE-STACK" — the SAME dummy-token POST through
+  /opt/jarvis-ios-bridge/venv's httpx+h2 client (the exact `_send_voip`
+  transport). Provider token reaches the leg via environment variable
+  (never argv — ps-readable); no second mint (Apple's token-churn rule).
+  `400 BadDeviceToken` now requires BOTH legs to agree; a bridge-transport
+  failure gets a distinct `BRIDGE TRANSPORT BROKEN` verdict (never a
+  curl-only green pass; under --warn it still exits 0 so the cron sweep
+  stays green until the key lands).
+- Wire-up: check_doc_contracts step 7 pins the whole contract (leg present,
+  token-via-env, both-legs verdict rule, transport-broken diagnosis,
+  `_send_voip` guard); API.md documents the `transport …` error shape;
+  BUILD.md documents the two-leg probe + guard. verify_all step 1b now
+  runs the bridge-stack leg on every sweep.
+- verify_all.sh ALL GREEN end-to-end after the restart (doc contracts incl.
+  new step 7, swift_sanity, bearer probes, gateway gate, live health,
+  prod parity, watch wiring, native WebRTC e2e PASS). Bridge /health
+  `last_push_error:""`, device_registered:false, scheduled:0 — live key
+  verdict re-confirmed unchanged (403 InvalidProviderToken, both legs).
+- NEEDS ENRIQUE (both unchanged): (1) web ~2 min — create the APNs-capable
+  key (developer.apple.com → Keys → APNs CHECKED) and send the .p8 (one
+  command installs it; the swap's gate 3 + the probe's both-legs verdict
+  now cover the production transport too). (2) phone — install TestFlight,
+  accept invite, open build 1 once → REGISTERED. First real ring = key
+  swap + phone flip, both announced by the device-watch.
+
 ## 2026-09-18 23:20 UTC (build-loop run) — device-watch upgraded to DUAL-FLIP: now announces the APNs key flip the moment it lands, not just the phone flip
 
 - Gap found: the watch only monitored `device_registered`. When Enrique's
