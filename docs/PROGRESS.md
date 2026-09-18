@@ -1,5 +1,32 @@
 # PROGRESS
 
+## 2026-09-18 11:35 UTC (build-loop run) — last force-unwrapped URLs removed (AuthStore login/refresh); sweep all green
+
+- Line-by-line audit of the auth path found the LAST remaining force-unwrap
+  crash class in the app: `AuthStore` built all four request URLs with `!` —
+  `URLComponents(string: "\(base)/auth/native/authorize")!`, `comps.url!`,
+  and the literal `URL(string:)!` for /auth/password-login, /auth/native/token
+  and /auth/native/refresh. `base` is the USER-TYPED Dashboard URL from
+  Setup/Settings — a malformed value crashed the app on "Sign In". Worst of
+  the four: `/auth/native/refresh` runs from CCClient's auto-refresh on any
+  401, so a bad saved URL crashed the app in the BACKGROUND, unprompted (same
+  crash class already fixed in WebRTCClient 08:20 and CCClient 08:40; the
+  auth layer was the last holdout).
+- Fix: new `AuthStore.serverURL(_:_)` helper (trims, repairs a missing
+  scheme to https, returns nil on garbage). All four sites now guard-unwrap:
+  login fails with "Unexpected server response (bad server URL)" and shows
+  the red error line; refresh returns false (→ login screen). No force
+  unwrap of a URL remains anywhere in the app.
+- swift_sanity: new REQUIRED-guard pin on `serverURL(_:_)` so a revert to
+  string-interpolated URL building can't land silently.
+- Join logic verified in a Python mirror (scheme repair, trim, empty→nil);
+  swift_sanity OK incl. new pin. Full scripts/verify_all.sh: exit 0 ALL
+  GREEN (sanity, bridge 15/15, gateway bearer gate, live health bridge
+  :9160 / voice-gw :9150 realtime:true, public /bridge/health 200, prod
+  parity + crons armed, native WebRTC e2e PASS vs live gateway).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 11:30 UTC (build-loop run) — Chats poll identity churn + Home gateway dot now real; sweep all green
 
 - Line-by-line audit of the remaining hot paths found two real defects:

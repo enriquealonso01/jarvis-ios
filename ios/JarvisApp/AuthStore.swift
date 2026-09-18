@@ -50,11 +50,17 @@ final class AuthStore: ObservableObject {
             let base = cfg.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
 
             // 1. Native authorize (S256 PKCE, loopback redirect).
+            // All URLs are built through serverURL() — never force-unwrapped:
+            // `base` comes from Setup/Settings (user-typed), and a malformed
+            // value must fail login with an error, not crash the app.
             let verifier = Self.randomURLSafe(length: 48)
             let challenge = Self.s256(verifier)
             let state = Self.randomURLSafe(length: 16)
             let redirect = "http://127.0.0.1:8619/cb"
-            var comps = URLComponents(string: "\(base)/auth/native/authorize")!
+            guard var comps = URLComponents(url: Self.serverURL(base, "/auth/native/authorize"),
+                                            resolvingAgainstBaseURL: false) else {
+                throw AuthError.badResponse("bad server URL")
+            }
             comps.queryItems = [
                 .init(name: "provider", value: "basic"),
                 .init(name: "code_challenge", value: challenge),
@@ -62,13 +68,19 @@ final class AuthStore: ObservableObject {
                 .init(name: "redirect_uri", value: redirect),
                 .init(name: "state", value: state),
             ]
-            var req = URLRequest(url: comps.url!)
+            guard let authorizeURL = comps.url else {
+                throw AuthError.badResponse("bad server URL")
+            }
+            var req = URLRequest(url: authorizeURL)
             req.httpShouldHandleCookies = true
             let jar = HTTPCookieStorage()
             _ = try await Self.send(req, cookieJar: jar)   // 302 → /login, sets PKCE cookie
 
             // 2. Complete the password form (broker state rides the cookie).
-            var loginReq = URLRequest(url: URL(string: "\(base)/auth/password-login")!)
+            guard let loginURL = Self.serverURL(base, "/auth/password-login") else {
+                throw AuthError.badResponse("bad server URL")
+            }
+            var loginReq = URLRequest(url: loginURL)
             loginReq.httpMethod = "POST"
             loginReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
             loginReq.httpBody = try JSONEncoder().encode(
@@ -84,7 +96,10 @@ final class AuthStore: ObservableObject {
             }
 
             // 3. Redeem code → bearer tokens.
-            var tokenReq = URLRequest(url: URL(string: "\(base)/auth/native/token")!)
+            guard let tokenURL = Self.serverURL(base, "/auth/native/token") else {
+                throw AuthError.badResponse("bad server URL")
+            }
+            var tokenReq = URLRequest(url: tokenURL)
             tokenReq.httpMethod = "POST"
             tokenReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
             tokenReq.httpBody = try JSONEncoder().encode(NativeTokenBody(code: code, code_verifier: verifier))
@@ -111,7 +126,11 @@ final class AuthStore: ObservableObject {
     func refresh() async -> Bool {
         guard let rt = refreshToken else { return false }
         let base = ServerConfig.shared.config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
-        var req = URLRequest(url: URL(string: "\(base)/auth/native/refresh")!)
+        // Never force-unwrap: refresh() runs from CCClient's auto-refresh on
+        // any 401, so a malformed saved server URL must fail the refresh (→
+        // login screen), not crash the app in the background.
+        guard let url = Self.serverURL(base, "/auth/native/refresh") else { return false }
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONEncoder().encode(NativeRefreshBody(refresh_token: rt, provider: "basic"))
@@ -193,6 +212,20 @@ final class AuthStore: ObservableObject {
     }
 
     // MARK: HTTP helpers
+
+    /// Safely joins a (user-typed) server base with a path. Returns nil when
+    /// the base is malformed — callers fail the request/login gracefully
+    /// instead of force-unwrapping into a crash. Empty/absent scheme is
+    /// repaired to https so "jarvis.enriquecodes.com" also works.
+    static func serverURL(_ base: String, _ path: String) -> URL? {
+        var trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if !trimmed.lowercased().hasPrefix("http://") && !trimmed.lowercased().hasPrefix("https://") {
+            trimmed = "https://" + trimmed
+        }
+        // path starts with "/" by convention at every call site.
+        return URL(string: trimmed + path)
+    }
 
     /// URLSession.data with a one-off cookie jar (for the login round trip).
     static func send(_ req: URLRequest, cookieJar: HTTPCookieStorage?) async throws -> (Data, URLResponse) {

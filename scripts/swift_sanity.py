@@ -121,6 +121,13 @@ hazards = [
 # (the guard above protects against the needle appearing; these protect
 # against it disappearing).
 required_guard_pins = [
+    # AuthStore: no force-unwrapped URL(string:) anywhere — every request URL
+    # (login round trip, token/refresh) is built through serverURL() with a
+    # graceful nil path. A malformed server URL typed in Setup/Settings must
+    # fail login/refresh with an error, not crash the app (refresh() runs
+    # from CCClient's auto-refresh on any 401 — a crash there is in the
+    # background, unprompted). Same class as CCClient/WebRTCClient fixes.
+    ("AuthStore.swift", ["static func serverURL(_ base: String, _ path: String) -> URL?"]),
     ("CallManager.swift", ["pendingAnswerPayload?.callID == p.callID"]),
     # Device-token /register must retry (fresh install: push token arrives
     # before login, so the first attempt 401s) — a revert to the fire-and-
