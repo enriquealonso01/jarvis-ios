@@ -407,7 +407,7 @@ extension CallManager: CXProviderDelegate {
             do {
                 // CallKit contract: report the call as outgoing-connected so
                 // the system audio UI engages, then connect media.
-                provider.reportCall(with: action.callUUID, connectedAt: Date())
+                provider.reportOutgoingCall(with: action.callUUID, connectedAt: Date())
                 try await self.connectWebRTC()
                 action.fulfill()
             } catch {
