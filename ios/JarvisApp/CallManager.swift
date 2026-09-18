@@ -89,7 +89,7 @@ final class CallManager: NSObject, ObservableObject {
         // Report BEFORE returning from the VoIP push callback (hard requirement).
         // The PushKit completion fires only when CallKit ACCEPTS the report —
         // resolving it earlier is the classic crash-and-wedge (killed-app wake).
-        prov.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+        provider?.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if let error { print("[CallManager] report incoming failed: \(error)") }
             onReported?()
         }
@@ -138,7 +138,7 @@ final class CallManager: NSObject, ObservableObject {
         config.supportedHandleTypes = [.generic]
         let prov = CXProvider(configuration: config)
         prov.delegate = self
-        provider = prov
+        provider = prov   // swift_sanity-safe: 'prov' is local here; scope-level uses must go through `provider`
         callController = CXCallController()
     }
 

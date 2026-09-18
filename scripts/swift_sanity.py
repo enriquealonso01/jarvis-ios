@@ -105,6 +105,12 @@ hazards = [
     ("reportCall(with: endedAt: reason:", "nonexistent CXProvider API"),
     # unavailable / availability-gated Foundation init shadowing risk
     ("URLRequest(url: url, method:", "ambiguous/shadowed URLRequest init"),
+    # CallManager: the CXProvider property is `provider`; a bare `prov.` at
+    # class scope (leftover local rename from setupCallUI) is a hard
+    # "cannot find 'prov' in scope" Xcode error on the incoming-call path.
+    # Only the wiring inside setupCallUI() is legitimate — it assigns the
+    # property right after, so pin on the assignment being present instead.
+    ("prov.reportNewIncomingCall", "undefined 'prov' — use the 'provider' property"),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):
