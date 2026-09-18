@@ -128,7 +128,13 @@ required_guard_pins = [
     # from CCClient's auto-refresh on any 401 — a crash there is in the
     # background, unprompted). Same class as CCClient/WebRTCClient fixes.
     ("AuthStore.swift", ["static func serverURL(_ base: String, _ path: String) -> URL?"]),
-    ("CallManager.swift", ["pendingAnswerPayload?.callID == p.callID"]),
+    ("CallManager.swift", ["pendingAnswerPayload?.callID == p.callID",
+                           # endActiveCall's failed-branch must NOT re-stamp via
+                           # the id:nil fallback — handleConnectionFailure already
+                           # stamped the entry and cleared logEntryID; an id:nil
+                           # finish("failed") after that mis-stamps the NEXT
+                           # call's open entry (PROGRESS 2026-09-18 13:50).
+                           'if let id = logEntryID { CallLogStore.shared.finish(id: id, outcome: "failed") }']),
     # Device-token /register must retry (fresh install: push token arrives
     # before login, so the first attempt 401s) — a revert to the fire-and-
     # forget single POST leaves "ring this phone" dead until next launch.
@@ -159,7 +165,15 @@ required_guard_pins = [
     # list and surface the error — the old `secrets = []` catch turned a
     # transient bridge outage into the lie "No secrets stored".
     ("SecretsView.swift", ["loadFailed = true",
-                           "secrets.isEmpty && !loading && !loadFailed"]),
+                           "secrets.isEmpty && !loading && !loadFailed",
+                           # save/delete failures must render a RED error line
+                           # (StatusLine ok:false) — the old code set
+                           # `status = nil` on failure, so a rejected save was
+                           # visually identical to no action at all.
+                           "struct StatusLine { let ok: Bool; let text: String }",
+                           'status.ok ? Color.green : Color.red',
+                           "Save failed: \\(error.localizedDescription)",
+                           "Delete failed: \\(error.localizedDescription)"]),
     # CallsView scheduled list: same contract — a failed /schedule/list fetch
     # must KEEP last-known-good entries + show the error, never render the
     # lie "Nothing scheduled." (bare `scheduled = []` in catch is the bug).

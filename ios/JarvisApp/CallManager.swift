@@ -260,7 +260,12 @@ final class CallManager: NSObject, ObservableObject {
     func endActiveCall() {
         // Stamp the log with outcome + duration before tearing down.
         if callState.hasPrefix("failed") {
-            CallLogStore.shared.finish(id: logEntryID, outcome: "failed")
+            // handleConnectionFailure ALREADY stamped this entry "failed" and
+            // cleared logEntryID. Stamping again with id:nil hits CallLogStore's
+            // "latest open entry" fallback — which, if a new call started after
+            // the failure (or one is ringing now), mis-stamps THAT entry as
+            // "failed". Only stamp when we still own the entry.
+            if let id = logEntryID { CallLogStore.shared.finish(id: id, outcome: "failed") }
         } else if let start = callStart, callState == "active" || callState.hasPrefix("active") {
             CallLogStore.shared.finish(id: logEntryID, outcome: "ended",
                                        durationSeconds: max(0, Int(Date().timeIntervalSince(start))))

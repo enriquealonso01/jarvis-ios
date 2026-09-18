@@ -1,5 +1,33 @@
 # PROGRESS
 
+## 2026-09-18 13:55 UTC (build-loop run) — call-log mis-stamp on failed calls fixed; SecretsView save/delete failures no longer silent; sweep all green
+
+- Line-by-line audit found TWO real defects:
+- **CallManager.endActiveCall mis-stamped the call log after a failed call.**
+  The `failed` branch called `CallLogStore.finish(id: logEntryID, outcome:
+  "failed")` — but by then `handleConnectionFailure` had ALREADY stamped that
+  entry and set `logEntryID = nil`. So every endActiveCall on a failed state
+  passed `id: nil`, which hits CallLogStore's "latest OPEN entry" fallback —
+  if any newer call existed (or was ringing at that moment) THAT entry got
+  stamped "failed" instead. Fixed: only stamp when we still own the entry
+  (`if let id = logEntryID`). Pinned in swift_sanity required-guards.
+- **SecretsView save/delete failures were SILENT.** `status` was a `String?`
+  and every render path was hard-green ("checkmark.shield"); on error the
+  code set `status = nil` (save) or only buzzed haptics (delete) — a rejected
+  secret write (422 name rule, 401, bridge down) looked exactly like pressing
+  the button did nothing, and a failed delete left the row visible forever
+  with zero explanation. Fixed: `status` is now a `StatusLine{ok, text}`;
+  failures render a RED line with `xmark.shield` and the actual error
+  ("Save failed: HTTP 422" etc.), delete shows "Deleted <name>." on success.
+  swift_sanity pins all four needles.
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN (doc pins 6/6, swift_sanity
+  incl. new pins, drop-detection + scheduler pins, bridge probe 16/16,
+  gateway bearer gate, live health, prod parity + 3 crons, native WebRTC e2e
+  PASS vs live gateway). App-side only — server untouched.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md;
+  apple-setup guide cron fires 9AM Miami Sep 19).
+
 ## 2026-09-18 13:35 UTC (build-loop run) — ChatsView new-task slug now mirrors the server's slug rule exactly
 
 - Contract-audit of the Chats "New project task" flow found ONE real defect:

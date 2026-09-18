@@ -23,7 +23,11 @@ struct SecretsView: View {
     @State private var newName = ""
     @State private var newValue = ""
     @State private var loading = false
-    @State private var status: String?
+    /// Outcome line for save/delete — ok=false renders RED with an error icon.
+    /// A plain String? defaulting green lied: a failed save showed the same
+    /// green shield as a success (and old code rendered nil text on failure).
+    struct StatusLine { let ok: Bool; let text: String }
+    @State private var status: StatusLine?
     @State private var loadFailed = false
     @State private var confirmDelete: SecretMeta?
     @State private var unlocked = false
@@ -128,8 +132,9 @@ struct SecretsView: View {
                     }
                     .disabled(newName.isEmpty || newValue.isEmpty || loading)
                     if let status {
-                        Label(status, systemImage: "checkmark.shield")
-                            .font(.caption).foregroundStyle(.green)
+                        Label(status.text, systemImage: status.ok ? "checkmark.shield" : "xmark.shield")
+                            .font(.caption)
+                            .foregroundStyle(status.ok ? Color.green : Color.red)
                     }
                 }
             }
@@ -170,7 +175,6 @@ struct SecretsView: View {
             secrets = resp.secrets
             loadFailed = false
         } catch {
-            status = nil
             // Keep last-known-good entries; a transient outage must not look
             // like an empty server (the list view now shows the load error).
             loadFailed = true
@@ -190,11 +194,14 @@ struct SecretsView: View {
                 as: SecretWriteResp.self)
             newValue = ""
             newName = ""
-            status = (resp.created ?? true) ? "Saved — masked on server, never stored here." : "Updated — value rotated."
+            status = StatusLine(ok: true,
+                                text: (resp.created ?? true) ? "Saved — masked on server, never stored here." : "Updated — value rotated.")
             Haptics.success()
             await load()
         } catch {
-            status = nil
+            // A failed save must say so (red, with the reason) — never silently
+            // look like a success or vanish without feedback.
+            status = StatusLine(ok: false, text: "Save failed: \(error.localizedDescription)")
             Haptics.error()
         }
     }
@@ -208,9 +215,13 @@ struct SecretsView: View {
                 "\(bridgeBase())/secrets/delete",
                 body: ["name": s.name],
                 as: SecretWriteResp.self)
+            status = StatusLine(ok: true, text: "Deleted \(s.name).")
             Haptics.success()
             await load()
         } catch {
+            // Silent delete failure left the row visible forever with zero
+            // explanation — surface it.
+            status = StatusLine(ok: false, text: "Delete failed: \(error.localizedDescription)")
             Haptics.error()
         }
     }
