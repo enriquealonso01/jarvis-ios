@@ -1,0 +1,66 @@
+name: iOS Release
+
+# Headless iOS build + sign + upload for jarvis-ios (XcodeGen project).
+# No local Mac required — mirrors HeRoseFromDeath_App's ios-release pipeline.
+#   - Push a tag like `ios-v1.0.0`  -> builds and ships to TestFlight (beta lane).
+#   - Manual run (Actions tab)      -> pick bootstrap_signing / beta.
+
+on:
+  push:
+    tags:
+      - "ios-v*"
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "Fastlane lane to run"
+        type: choice
+        default: beta
+        options:
+          - beta
+          - bootstrap_signing
+
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Apple requires Xcode 26 / iOS 26 SDK for any App Store Connect upload
+    # (TestFlight included). macos-15 runners bundle it.
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26"
+
+      - name: Show selected Xcode + SDK (diagnostic)
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Setup Ruby + Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: ios/fastlane
+
+      - name: Run Fastlane (${{ github.event.inputs.lane || 'beta' }})
+        working-directory: ios/fastlane
+        env:
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bundle exec fastlane ${{ github.event.inputs.lane || 'beta' }}
