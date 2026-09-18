@@ -32,6 +32,14 @@ final class CallManager: NSObject, ObservableObject {
     /// Call-log bookkeeping for the live call (entry id + wall-clock start).
     private var logEntryID: String?
     private var callStart: Date?
+    /// call_id -> end time for calls that JUST finished. APNs re-delivers
+    /// pushes (at-least-once) and those retries can arrive AFTER the call was
+    /// answered/ended — the active-call dedupe guard no longer matches then
+    /// (activeCallUUID is nil) and the phone RANG AGAIN for a dead call.
+    /// A call_id seen here within the window is acknowledged + ended without
+    /// ringing (no second log entry either — the original entry exists).
+    private var recentlyEndedCallIDs: [String: Date] = [:]
+    private static let redeliveryWindow: TimeInterval = 10 * 60
 
     /// "Call me" button: the outgoing log entry was already written by the
     /// Calls tab — adopt it so endActiveCall stamps its outcome/duration.
@@ -76,6 +84,22 @@ final class CallManager: NSObject, ObservableObject {
         update.localizedCallerName = "JARVIS"
 
         lastPayload = p
+        // Post-end redelivery guard: a push for a call that JUST ended (in any
+        // direction) must not ring the phone again. Apple still requires every
+        // VoIP push to reach CallKit, so report + immediately end — logged as
+        // missed only if the original entry never got an outcome (a fresh log
+        // entry would double-count; the common case already has one).
+        recentlyEndedCallIDs = recentlyEndedCallIDs.filter {
+            Date().timeIntervalSince($0.value) < Self.redeliveryWindow
+        }
+        if activeCallUUID == nil, recentlyEndedCallIDs[p.callID] != nil {
+            let dedupeID = UUID()
+            provider?.reportNewIncomingCall(with: dedupeID, update: update) { [weak self] _ in
+                self?.provider?.reportCall(with: dedupeID, endedAt: Date())
+                onReported?()
+            }
+            return
+        }
         // Re-delivery guard: APNs is at-least-once and the bridge retries, so
         // the SAME call_id can wake us while that call is already ringing or
         // active. Reporting it again under a NEW uuid stacks a second CallKit
@@ -226,6 +250,9 @@ final class CallManager: NSObject, ObservableObject {
         if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date()) }
         webRTC?.hangup()
         webRTC = nil
+        // Same post-end redelivery memory for the failure path.
+        if let p = pendingAnswerPayload { recentlyEndedCallIDs[p.callID] = Date() }
+        pendingAnswerPayload = nil
         activeCallUUID = nil
         sessionInfo = ""
         lastTranscript = nil
@@ -279,6 +306,9 @@ final class CallManager: NSObject, ObservableObject {
         if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date()) }
         webRTC?.hangup()
         webRTC = nil
+        // Remember this call_id so a late APNs re-delivery can't ring again.
+        if let p = pendingAnswerPayload { recentlyEndedCallIDs[p.callID] = Date() }
+        pendingAnswerPayload = nil
         activeCallUUID = nil
         callState = "idle"
         sessionInfo = ""

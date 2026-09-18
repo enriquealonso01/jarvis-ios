@@ -230,9 +230,24 @@ struct CallsView: View {
                 as: CancelResp.self)
             if resp.cancelled ?? 0 > 0 {
                 scheduled.removeAll { $0.call_id == id }
+                status = "Scheduled call cancelled."
                 Haptics.success()
+            } else {
+                // cancelled:0 = the call was already cancelled/fired elsewhere
+                // (another device, the scheduler itself). Not an error, but a
+                // silent no-op left the stale row visible forever — reconcile
+                // with the server list and say what happened.
+                await loadScheduled()
+                if scheduled.contains(where: { $0.call_id == id }) {
+                    status = "Bridge didn't cancel that call — try again."
+                    Haptics.error()
+                } else {
+                    status = "Already cancelled (or already fired) — list refreshed."
+                    Haptics.tap()
+                }
             }
         } catch {
+            status = "Cancel failed: \(error.localizedDescription)"
             Haptics.error()
         }
     }

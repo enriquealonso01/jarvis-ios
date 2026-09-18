@@ -211,12 +211,20 @@ struct SecretsView: View {
         loading = true
         defer { loading = false }
         do {
-            let _: SecretWriteResp = try await CCClient.shared.post(
+            let resp: SecretWriteResp = try await CCClient.shared.post(
                 "\(bridgeBase())/secrets/delete",
                 body: ["name": s.name],
                 as: SecretWriteResp.self)
-            status = StatusLine(ok: true, text: "Deleted \(s.name).")
-            Haptics.success()
+            // The bridge answers {ok:True, deleted:False} when the name wasn't
+            // stored (stale row: deleted on another device / already removed).
+            // Claiming "Deleted" there was a lie — distinguish the two cases.
+            if resp.deleted == false {
+                status = StatusLine(ok: false, text: "\(s.name) was already gone (removed elsewhere) — list refreshed.")
+                Haptics.tap()
+            } else {
+                status = StatusLine(ok: true, text: "Deleted \(s.name).")
+                Haptics.success()
+            }
             await load()
         } catch {
             // Silent delete failure left the row visible forever with zero

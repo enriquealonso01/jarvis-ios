@@ -129,6 +129,12 @@ required_guard_pins = [
     # background, unprompted). Same class as CCClient/WebRTCClient fixes.
     ("AuthStore.swift", ["static func serverURL(_ base: String, _ path: String) -> URL?"]),
     ("CallManager.swift", ["pendingAnswerPayload?.callID == p.callID",
+                           # Post-end redelivery guard: a push for a call that
+                           # JUST ended must report+end WITHOUT ringing again
+                           # (activeCallUUID is nil then; without this memory a
+                           # late APNs retry rings the dead call a second time).
+                           "recentlyEndedCallIDs",
+                           "private static let redeliveryWindow",
                            # endActiveCall's failed-branch must NOT re-stamp via
                            # the id:nil fallback — handleConnectionFailure already
                            # stamped the entry and cleared logEntryID; an id:nil
@@ -179,7 +185,16 @@ required_guard_pins = [
     # lie "Nothing scheduled." (bare `scheduled = []` in catch is the bug).
     ("CallsView.swift", ["loadFailed = true",
                          "scheduled.isEmpty && !loadFailed",
-                         "scheduled calls NOT loaded"]),
+                         "scheduled calls NOT loaded",
+                         # cancelled:0 must be surfaced + reconciled with the
+                         # server list — the old bare no-op left a stale row
+                         # visible forever with zero feedback.
+                         "Already cancelled (or already fired) — list refreshed.",
+                         "Cancel failed: \\(error.localizedDescription)"]),
+    # SecretsView delete: the bridge returns {ok:True, deleted:False} for a
+    # name that isn't stored — claiming "Deleted X." there is a lie.
+    ("SecretsView.swift", ["resp.deleted == false",
+                           "was already gone (removed elsewhere)"]),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):

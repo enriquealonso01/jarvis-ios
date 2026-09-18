@@ -1,5 +1,38 @@
 # PROGRESS
 
+## 2026-09-18 14:03 UTC (build-loop run) — post-end VoIP redelivery can no longer re-ring a dead call; cancel/delete no-op lies fixed; sweep all green
+
+- Live contract probe (scripts/probe_audit_live.py, new) + line-by-line audit
+  found THREE real defects:
+- **A late APNs re-delivery RANG THE PHONE AGAIN for a call that had just
+  ended.** The 11:00 dedupe guard only covers pushes arriving WHILE the call
+  is ringing/active (activeCallUUID non-nil). APNs is at-least-once and its
+  retries can land minutes later — by then activeCallUUID is nil, the guard
+  misses, and the phone rings for a dead call_id. Fixed: CallManager now
+  keeps `recentlyEndedCallIDs` (call_id → end time, 10-min window, pruned on
+  every push); endActiveCall AND handleConnectionFailure record the call_id.
+  A push for a recently-ended call while idle is reported + immediately ended
+  (Apple's every-push-must-reach-CallKit contract holds) and does NOT ring or
+  create a second log entry. State-machine mirror verified: ring → suppress →
+  window-expiry → new-call → dedupe-while-ringing all behave as designed.
+  swift_sanity required-guard pins added.
+- **CallsView.cancel of an already-cancelled call was a SILENT no-op** —
+  bridge answers {cancelled:0} (verified live), the old code showed nothing
+  and left the stale row visible forever. Fixed: cancelled:0 now reconciles
+  with a fresh /schedule/list (row disappears if genuinely gone) and says
+  which of the three cases happened; cancel failures now show
+  "Cancel failed: <reason>" instead of only a haptic.
+- **SecretsView.delete claimed "Deleted X." even when nothing was deleted** —
+  the bridge returns {ok:True, deleted:False} for a name that isn't stored
+  (verified live probe). Fixed: deleted:false renders the honest "already
+  gone (removed elsewhere) — list refreshed." line + tap haptic.
+- Full scripts/verify_all.sh: exit 0 ALL GREEN (doc pins 6/6, swift_sanity
+  incl. new pins, scheduler pins, bridge probe 16/16, gateway bearer gate,
+  live health, prod parity + 3 crons, native WebRTC e2e PASS). App-side only;
+  server untouched.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 13:55 UTC (build-loop run) — call-log mis-stamp on failed calls fixed; SecretsView save/delete failures no longer silent; sweep all green
 
 - Line-by-line audit found TWO real defects:
