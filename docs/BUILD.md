@@ -96,13 +96,21 @@ You only ever do these steps. Everything else is agent-deployed.
   Home card prints it and verify_all's live-health step fails loudly if it
   names InvalidProviderToken. A bad key can no longer hide between sweeps.
 - verify_all step 1b runs this probe every sweep (WARN mode) so the verdict
-  stays visible until fixed. A second watcher,
+  stays visible until fixed. The watch,
   `jarvis-ios-device-watch` (15m, 192 repeats, script-mode, delivers to the
-  TF Ops Signal group), waits on bridge /health `device_registered` and also
-  self-removes once the phone registers. Its flip path was TESTED END-TO-END
-  on 2026-09-18 (stub :8799 health → REGISTERED line + `hermes cron remove`
-  executed); the self-remove failure is now LOUD (prints a manual-removal
-  WARNING instead of swallowing). The live script is mirrored byte-identical
+  TF Ops Signal group), now waits on BOTH remaining flips and announces each
+  once: (1) KEY LIVE — installed APNs key ACCEPTED by Apple, detected by
+  running scripts/probe_apns_delivery.py (exit 0 = verdict 400
+  BadDeviceToken), which fires the moment the replacement .p8 is installed
+  via swap_apns_key.py; (2) REGISTERED — bridge /health device_registered
+  flips true (whitespace-tolerant match). It self-removes ONLY when both
+  bits are set (either order) — a registered phone on a still-rejected key
+  keeps the watch alive. Each flip path was TESTED END-TO-END on
+  2026-09-18 (stub probe + stub :8799 health → KEY LIVE + REGISTERED +
+  MISSION COMPLETE lines + `hermes cron remove` executing, using a
+  sacrificial job name so the real watch can never delete itself in a
+  test); the self-remove failure is LOUD (manual-removal WARNING instead
+  of swallowed). The live script is mirrored byte-identical
   at `scripts/testflight_device_watch.sh`, and its whole wiring contract
   (target bridge, JOB pin, cron spec, delivery group, mirror) is pinned by
   `scripts/check_watch_wiring.py`, run as step 5c of verify_all.sh. To
