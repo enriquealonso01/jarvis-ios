@@ -117,12 +117,7 @@ final class CallManager: NSObject, ObservableObject {
         callController?.request(transaction) { [weak self] error in
             Task { @MainActor in
                 if let error {
-                    self?.callState = "failed: \(error.localizedDescription)"
-                    CallLogStore.shared.finish(id: self?.logEntryID, outcome: "failed")
-                    self?.logEntryID = nil
-                    self?.activeCallUUID = nil
-                    self?.pendingAnswerPayload = nil
-                    Haptics.error()
+                    self?.handleConnectionFailure(error.localizedDescription)
                 }
                 // On success we wait for perform(_:CXStartCallAction) — the
                 // actual WebRTC dial happens there (CallKit contract).
@@ -168,6 +163,17 @@ final class CallManager: NSObject, ObservableObject {
             Task { @MainActor in self?.handleConnectionFailure(why) }
         }
         webRTC = client
+        // Connect deadline: the call is only "active" once media actually
+        // flows. If ICE never connects (dead gateway, NAT mismatch, network
+        // drop), this throws after 15s and the caller's catch path fails the
+        // call — no more "answered" log entries for calls that never rang.
+        do {
+            try await client.waitUntilConnected(timeout: 15)
+        } catch {
+            client.hangup()
+            webRTC = nil
+            throw error
+        }
         callState = "active"
         CallLogStore.shared.finish(id: logEntryID, outcome: "answered")
         Haptics.success()
@@ -291,11 +297,10 @@ extension CallManager: CXProviderDelegate {
                 action.fulfill()
             } catch {
                 action.fail()
-                self.callState = "failed: \(error.localizedDescription)"
-                CallLogStore.shared.finish(id: self.logEntryID, outcome: "failed")
-                self.logEntryID = nil
-                self.callStart = nil
-                Haptics.error()
+                // Full teardown (CallKit ended + log + PC hangup + state
+                // clear). Without clearing activeCallUUID the one-call-at-
+                // a-time guard would block every future call attempt.
+                self.handleConnectionFailure(error.localizedDescription)
             }
         }
     }

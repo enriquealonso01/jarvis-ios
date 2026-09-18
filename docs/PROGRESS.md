@@ -1,5 +1,29 @@
 # PROGRESS
 
+## 2026-09-18 09:02 UTC (build-loop run) — connect deadline actually enforced + answer-fail full teardown (drift fix)
+
+- Audit drift: the 08:20 run's PROGRESS entry claimed a 15s connect deadline in
+  `connect()`, but `waitUntilConnected(timeout:)` was NEVER called — the app
+  stamped `active`/`answered` the moment the SDP answer landed, before any
+  media connected. Dead-ICE calls still logged "answered" and showed
+  "active · connected" with no audio. Fixed for real:
+  - `connectWebRTC()` now awaits `waitUntilConnected(timeout: 15)`; on timeout
+    it hangs up the peer connection and rethrows, so `active`/"answered" only
+    happen when ICE actually connects.
+  - The `CXAnswerCallAction` catch path did a PARTIAL teardown: it never
+    cleared `activeCallUUID` nor hung up the peer connection — one failed
+    answer would permanently block the one-call-at-a-time guard and leak the
+    PC. It now routes into the idempotent `handleConnectionFailure` (CallKit
+    ended + log "failed" + PC hangup + full state clear), same as
+    `placeDirectCall`'s transaction-failure path (also consolidated).
+- New `scripts/check_deadline_fix.py` pins the rewired flow (deadline call,
+  PC hangup before rethrow, both fail paths into handleConnectionFailure,
+  handleConnectionFailure clears UUID + hangs up). swift_sanity OK;
+  full `scripts/verify_all.sh`: exit 0 ALL GREEN (bridge probe, gateway gate,
+  live health, parity + crons, native WebRTC e2e vs live gateway).
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 09:20 UTC (build-loop run) — mid-call dead-air fix on both ends (gateway error-state push + app fail-fast)
 
 - Backlog 1–9 re-audited (git log + PROGRESS): all landed. This run closed a
