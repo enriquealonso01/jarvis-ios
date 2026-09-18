@@ -215,13 +215,30 @@ struct WorkThreadView: View {
     @State private var lines: [ChatLine] = []
     @State private var draft = ""
     @State private var sending = false
+    @State private var lastError: String?
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    if lines.isEmpty && !sending {
+                        Text("No messages yet — say something to JARVIS.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 24)
+                    }
                     ForEach(lines) { line in
                         bubble(line)
+                    }
+                    if sending {
+                        HStack(spacing: 8) {
+                            ProgressView().tint(Color.jarvisAccent)
+                            Text("JARVIS is thinking…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 12)
                     }
                 }
                 .padding(14)
@@ -239,11 +256,26 @@ struct WorkThreadView: View {
                 .disabled(sending || draft.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(12)
+            if let lastError {
+                Text(lastError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 6)
+            }
         }
         .background(Color.black)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadHistory() }
+        // Backlog #2: poll history so agent replies that land after a slow
+        // turn (or sent from another surface) appear without reopening.
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if !sending { await pollHistory() }
+            }
+        }
     }
 
     private func bubble(_ line: ChatLine) -> some View {
@@ -273,22 +305,41 @@ struct WorkThreadView: View {
             let hist: WorkHistory = try await CCClient.shared.get(
                 "/api/control/work/\(id)/history", as: WorkHistory.self
             )
-            lines = (hist.messages ?? [])
-                .filter { $0.role == "user" || $0.role == "assistant" }
-                .compactMap { m in
-                    guard let text = m.text, !text.isEmpty else { return nil }
-                    return ChatLine(role: m.role, text: text)
-                }
+            lines = Self.decodedLines(hist)
+            lastError = nil
         } catch {
             // leave empty — send still works (dashboard keeps its own thread)
         }
     }
 
+    /// Silent poll tick: refresh from the server thread, keep scroll anchor,
+    /// never surface transient errors from a background poll.
+    @MainActor
+    private func pollHistory() async {
+        var id = workId
+        for prefix in ["work-", "project-"] where id.hasPrefix(prefix) {
+            id = String(id.dropFirst(prefix.count))
+        }
+        guard let hist = try? await CCClient.shared.get(
+            "/api/control/work/\(id)/history", as: WorkHistory.self
+        ) else { return }
+        let fresh = Self.decodedLines(hist)
+        if fresh != lines { lines = fresh }
+    }
+
+    private static func decodedLines(_ hist: WorkHistory) -> [ChatLine] {
+        (hist.messages ?? [])
+            .filter { $0.role == "user" || $0.role == "assistant" }
+            .compactMap { m in
+                guard let text = m.text, !text.isEmpty else { return nil }
+                return ChatLine(role: m.role, text: text)
+            }
+    }
+
     @MainActor
     private func send() async {
         let text = draft.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        lines.append(ChatLine(role: "user", text: text))
+        guard !text.isEmpty, !sending else { return }
         draft = ""
         sending = true
         do {
@@ -297,9 +348,22 @@ struct WorkThreadView: View {
                 body: ["text": text, "title": title],
                 as: WorkChatReply.self
             )
-            lines.append(ChatLine(role: "assistant", text: reply.reply))
+            // The server thread is the source of truth — reload instead of
+            // appending locally so timestamps/tool turns line up and the
+            // poller never fights an optimistic bubble.
+            if reply.reply.isEmpty {
+                await loadHistory()
+            } else {
+                lines.append(ChatLine(role: "user", text: text))
+                lines.append(ChatLine(role: "assistant", text: reply.reply))
+            }
+            lastError = nil
+            Haptics.tap()
         } catch {
-            lines.append(ChatLine(role: "assistant", text: "(couldn't reach JARVIS — try again)"))
+            // Send failed: restore the draft so nothing is silently lost.
+            draft = text
+            lastError = "Message didn't send — check connection and try again."
+            Haptics.error()
         }
         sending = false
     }

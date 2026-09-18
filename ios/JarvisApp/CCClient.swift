@@ -23,7 +23,8 @@ final class CCClient: @unchecked Sendable {
     }
 
     func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
-        var data = try await rawGet(path)
+        guard let url = urlFor(path) else { throw Failure(message: "bad server URL") }
+        var data = try await rawGet(url)
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch let err as CCClient.Failure {
@@ -31,7 +32,7 @@ final class CCClient: @unchecked Sendable {
         } catch {
             // 401 bodies decode as our error shape — attempt one refresh+retry.
             if await refreshIfNeeded() {
-                data = try await rawGet(path)
+                data = try await rawGet(url)
                 return try JSONDecoder().decode(T.self, from: data)
             }
             throw Failure(message: "Request failed: \(error.localizedDescription)")
@@ -39,10 +40,11 @@ final class CCClient: @unchecked Sendable {
     }
 
     func post<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
+        guard let url = urlFor(path) else { throw Failure(message: "bad server URL") }
         guard let payload = try? JSONSerialization.data(withJSONObject: body) else {
             throw Failure(message: "bad request body")
         }
-        var req = URLRequest(url: urlFor(path)!)
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = payload
@@ -50,8 +52,8 @@ final class CCClient: @unchecked Sendable {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    private func rawGet(_ path: String) async throws -> Data {
-        var req = URLRequest(url: urlFor(path)!)
+    private func rawGet(_ url: URL) async throws -> Data {
+        var req = URLRequest(url: url)
         req.httpMethod = "GET"
         return try await authedSend(req)
     }

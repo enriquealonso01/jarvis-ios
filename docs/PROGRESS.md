@@ -1,5 +1,26 @@
 # PROGRESS
 
+## 2026-09-18 08:40 UTC (build-loop run) — chat thread polling + live send UX, CCClient force-unwrap removal
+
+- **Chats: reply polling (backlog #2 gap)** — `WorkThreadView` loaded history
+  once on open; agent replies that landed after a slow turn (or sent from
+  WhatsApp/voice) never appeared without closing and reopening the thread.
+  Now a 5 s poll (`pollHistory`, silent, skipped while `sending`) refreshes
+  from the server thread and only mutates state on real diffs. Send no longer
+  appends a fake "(couldn't reach JARVIS…)" assistant bubble on failure —
+  the draft is restored, a red inline error line shows under the composer,
+  and success shows a "JARVIS is thinking…" progress row while the turn runs.
+  Empty-thread placeholder added.
+- **CCClient: no more force-unwrapped URL builds** — `get`/`post` now guard
+  `urlFor(path)` and throw a clean "bad server URL" failure (a malformed URL
+  typed in Settings would previously crash the app). Mirrors the WebRTCClient
+  hardening from 08:20 UTC.
+- swift_sanity pins the new symbols (pollHistory/decodedLines/thinking row);
+  full `scripts/verify_all.sh`: exit 0 ALL GREEN (bridge 15/15 bearer probe,
+  gateway gate, live health, parity, native WebRTC e2e vs live gateway).
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 08:20 UTC (build-loop run) — call-path hardening: ICE-failure detection + connect deadline, no more infinite "connecting"
 
 - Backlog items 1–9 confirmed complete (git log + docs audit). This run
