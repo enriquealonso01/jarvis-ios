@@ -12,7 +12,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "20"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: ""            # Enrique sets his team in Xcode (BUILD.md)
     PRODUCT_BUNDLE_IDENTIFIER: com.enriquecodes.jarvis
