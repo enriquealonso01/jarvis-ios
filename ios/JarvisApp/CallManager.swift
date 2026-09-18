@@ -386,12 +386,17 @@ extension CallManager: CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        // CXAction is internally synchronized and CallKit permits fulfilling
+        // from any thread; the MainActor hop is only for CallManager's
+        // published state. Bind the non-Sendable action once so Swift 6.2's
+        // region check doesn't flag the capture (same as CXEndCallAction).
+        nonisolated(unsafe) let answerAction = action
         Task { @MainActor in
             do {
                 try await self.connectWebRTC()
-                action.fulfill()
+                answerAction.fulfill()
             } catch {
-                action.fail()
+                answerAction.fail()
                 // Full teardown (CallKit ended + log + PC hangup + state
                 // clear). Without clearing activeCallUUID the one-call-at-
                 // a-time guard would block every future call attempt.
@@ -403,15 +408,17 @@ extension CallManager: CXProviderDelegate {
     /// Outgoing call: CallKit asks us to dial. Same WebRTC connect as
     /// answering an incoming push, driven by placeDirectCall().
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        // Bind the non-Sendable action once (same rationale as CXAnswerCallAction).
+        nonisolated(unsafe) let startAction = action
         Task { @MainActor in
             do {
                 // CallKit contract: report the call as outgoing-connected so
                 // the system audio UI engages, then connect media.
-                provider.reportOutgoingCall(with: action.callUUID, connectedAt: Date())
+                provider.reportOutgoingCall(with: startAction.callUUID, connectedAt: Date())
                 try await self.connectWebRTC()
-                action.fulfill()
+                startAction.fulfill()
             } catch {
-                action.fail()
+                startAction.fail()
                 // Full teardown — same as the answer-fail path (09:02) and
                 // ICE failures: without the reportCall(endedAt:) here the
                 // failed dial lingered in CallKit/system UI, and without
