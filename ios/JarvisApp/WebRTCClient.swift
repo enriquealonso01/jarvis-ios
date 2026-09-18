@@ -113,6 +113,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
 
         let pc = sharedFactory.peerConnection(with: config, constraints: constraints, delegate: client)
         client.pc = pc
+        guard let pc else { throw CallError.sdp }
 
         // Audio: mic in, receiver out.
         let audioSource = sharedFactory.audioSource(with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
