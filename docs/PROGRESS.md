@@ -1,5 +1,26 @@
 # PROGRESS
 
+## 2026-09-18 19:40 UTC (build-loop run) — sweep ALL GREEN; TestFlight watcher hardened onto a durable repo poller
+
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN (doc pins, swift_sanity,
+  bridge bearer probe 16/16, gateway bearer gate, live health — bridge
+  :9160 apns_configured:true / gateway :9150 realtime:true / public
+  /bridge/health 200, prod parity, 3 reminder crons armed) plus native
+  WebRTC e2e PASS vs the live gateway. check_deadline_fix.py: all PASS.
+- ASC ingest state unchanged: builds 19/20/21 still absent from
+  /v1/builds (count 0) — blocker remains Enrique's ASC-UI banner check
+  (see 19:30 entry). Watcher cron d6d31d5fec17 continues 15m polling.
+- Hardening: the watcher's poller lived in /tmp with hardcoded kid/issuer
+  — one reboot would kill the watch silently. Replaced with the in-repo
+  `scripts/poll_asc_builds.py` (reads APNS_KEY_ID from the bridge env,
+  encodes the gotcha that the ASC JWT issuer is the ASC issuer ID, not
+  APNS_TEAM_ID — a team-ID issuer gets 401), verified live (count: 0),
+  and repointed the cron prompt at it with `--expect 19`. Documented in
+  docs/BUILD.md "ASC build-visibility watcher".
+- Backlog 1-9 remain complete; the mission's only open item is the
+  ASC-side ingest (NEEDS ENRIQUE) + Enrique's phone-side TestFlight
+  install/open (reminder cron fires 9AM Miami Sep 19).
+
 ## 2026-09-18 19:30 UTC (build-loop run) — ASC ingest investigation: 3 uploads, ZERO build records on app 6813590605 (~80 min)
 
 - Found and reproduced the real "build 19 not visible" state: it is NOT slow propagation.

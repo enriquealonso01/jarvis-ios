@@ -46,6 +46,18 @@ You only ever do these steps. Everything else is agent-deployed.
   install the build once it appears, open it once — the app POSTs /register to
   the bridge on launch, which makes VoIP pushes live.
 
+## ASC build-visibility watcher
+- Cron `testflight-build-watch` (d6d31d5fec17, every 15m) polls
+  `GET /v1/builds?filter[app]=6813590605` until a build record appears,
+  then pings Enrique and self-removes. Its poller is the repo script
+  `scripts/poll_asc_builds.py` (canonical copy survives reboots; the
+  original /tmp copy did not). Key detail: the APNs .p8 doubles as the
+  ASC API key but the JWT **issuer** is the ASC issuer ID
+  (cbd7e0fd-925b-4aa8-8ce1-facbc1b39881), NOT the APNS_TEAM_ID — a
+  team-ID issuer gets HTTP 401. The poller reads both kid and issuer
+  itself; run with `--expect 19` to filter to a single version. Any
+  "BUILD:" line on stdout = build visible.
+
 ## Notes
 - TestFlight builds expire after 90 days — the loop agent will remind you well ahead.
 - No App Review is involved for internal testers (up to 100 devices).
