@@ -1,6 +1,30 @@
 # PROGRESS
 
-## 2026-09-18 07:09 UTC (build-loop run) — maintenance sweep, ALL GREEN
+## 2026-09-18 07:30 UTC (build-loop run) — first-call hardening (mic permission path)
+
+- Audited the app for on-device silent-failure classes beyond the wire probes.
+  Found two real gaps and fixed both:
+  - **`NSMicrophoneUsageDescription` was missing** from project.yml's
+    Info.plist properties. With CallKit + WebRTC, iOS hard-blocks mic access
+    (and can kill the app) without it — the first real call would have failed
+    on-device. Added; swift_sanity OK (xcodegen picks it up at next Mac build).
+  - **Mic permission was never requested.** The prompt would otherwise land
+    mid-call or be silently denied after a prior rejection, and the manual-
+    audio session could start one-way. `WebRTCClient.connect()` now awaits
+    `ensureMicrophonePermission()` BEFORE creating the offer (AVAudioApplication
+    on iOS 17+, AVAudioSession fallback; also pre-sets playAndRecord/voiceChat
+    + Bluetooth/speaker options). Denial raises a new `CallError.microphoneDenied`
+    surfaced in the call-state UI via the existing catch path.
+- Cleared a stale CallsView comment ("Bearer GET not enabled" for
+  /schedule/list) — the bridge has used `_auth_dual` there since the 15/15
+  probe commit; the app's Scheduled list was functional all along. Probe
+  re-confirms: "/schedule/list shows bearer-created entry" PASS.
+- Full `scripts/verify_all.sh` sweep: exit 0 ALL GREEN (6/6 incl. native
+  WebRTC e2e vs live gateway). py_compile clean. Committed + pushed 0051850.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
+
 
 - Backlog 1–9 remain complete; no drift found, nothing new actionable until
   the Enrique-gated ladder.
