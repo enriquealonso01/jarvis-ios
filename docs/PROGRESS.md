@@ -1,4 +1,32 @@
-## 2026-09-18 21:35 UTC (build-loop run) — full verification sweep ALL GREEN + cron-integrity audit; loop holds at terminal wait
+## 2026-09-18 21:50 UTC (build-loop run) — device-watch flip path PROVEN end-to-end + wiring contract pinned; real watch restored after test mishap
+
+- The one branch of the loop never actually exercised was the device-watch
+  FLIP: what happens the moment device_registered turns true (announce +
+  self-remove). Tested for real: stub HTTP server on :8799 answering
+  device_registered:true, watch copy pointed at it → REGISTERED line printed
+  AND `hermes cron remove` executed and deleted a cron job. The path works.
+- COST OF THE TEST (owned): the copy kept the hardcoded JOB name, so it
+  deleted the REAL jarvis-ios-device-watch. Restored in full same-run:
+  15m × 192 repeats, script-mode (no_agent), deliver
+  signal:group:Gd7ABv9… (TF Ops), id 67968b669507, state file reset to
+  "wait", safe-tick verified silent. Live bridge /health confirms the test
+  never touched real state (device_registered still false). Lesson encoded:
+  the wiring is now machine-checked so this class of drift can't hide.
+- Hardening: (1) self-remove failure is now LOUD — script prints a manual-
+  removal WARNING to the Ops group instead of `|| true` swallowing it;
+  (2) hermes invoked by absolute path /root/.local/bin/hermes (script
+  runs from cron's minimal PATH); (3) live script mirrored byte-identical
+  into the repo at scripts/testflight_device_watch.sh (same source-of-truth
+  pattern as the gateway mirror; edit mirror → cp → verify_all).
+- New scripts/check_watch_wiring.py (verify_all step 5c) pins the whole
+  contract: script targets :9160 (not a stub), JOB pinned, cron exists/
+  enabled/15m/192/script-mode, delivery = TF Ops group, repo mirror
+  byte-identical, hermes CLI resolvable. 13/13 pins hold; full
+  verify_all.sh ALL GREEN including the new step; doc contracts OK.
+- BUILD.md watcher section updated: tested flip path, loud-failure note,
+  mirror workflow. ASC unchanged: build 1 VALID + IN_BETA_TESTING.
+- NEEDS ENRIQUE (unchanged, phone-only): install TestFlight, accept invite,
+  open build 1 once → /register fires → watch announces → done.
 
 - Re-verified: verify_all.sh ALL GREEN end-to-end (doc-contract pins, swift_sanity,
   bridge bearer probe 16/16, gateway bearer gate, live health bridge :9160 ok /

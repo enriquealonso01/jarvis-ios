@@ -61,7 +61,10 @@ if cmp -s server/voice_gateway/gateway.py /opt/voice-gw/gateway.py; then
 else
   echo "GATE-FAIL: repo gateway mirror drifted from deployed gateway"; FAIL=1
 fi
-# 5c. reminder crons exist and are enabled
+# 5c. device-watch wiring contract (the mission-complete path)
+echo "--- device-watch wiring ---"
+if python3 scripts/check_watch_wiring.py; then :; else FAIL=1; fi
+# 5d. reminder crons exist and are enabled
 python3 - <<'PY' || FAIL=1
 import json, sys
 jobs = json.load(open('/root/.hermes/cron/jobs.json'))

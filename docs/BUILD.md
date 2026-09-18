@@ -66,8 +66,17 @@ You only ever do these steps. Everything else is agent-deployed.
   team-ID issuer gets HTTP 401. The poller reads both kid and issuer
   itself; run with `--expect 1` to filter to a single version. Any
   "BUILD:" line on stdout = build visible. A second watcher,
-  `jarvis-ios-device-watch` (15m), waits on bridge /health
-  `device_registered` and also self-removes once the phone registers.
+  `jarvis-ios-device-watch` (15m, 192 repeats, script-mode, delivers to the
+  TF Ops Signal group), waits on bridge /health `device_registered` and also
+  self-removes once the phone registers. Its flip path was TESTED END-TO-END
+  on 2026-09-18 (stub :8799 health → REGISTERED line + `hermes cron remove`
+  executed); the self-remove failure is now LOUD (prints a manual-removal
+  WARNING instead of swallowing). The live script is mirrored byte-identical
+  at `scripts/testflight_device_watch.sh`, and its whole wiring contract
+  (target bridge, JOB pin, cron spec, delivery group, mirror) is pinned by
+  `scripts/check_watch_wiring.py`, run as step 5c of verify_all.sh. To
+  change the watch: edit the repo mirror, `cp` it to
+  /root/.hermes/scripts/, then run verify_all.
 - POLLER GOTCHA (cost hours on 2026-09-18): GET /v1/builds lists only builds
   that PASSED asset validation. A rejected upload (ITMS-90683 etc.) never
   appears there, which looks exactly like a stuck ingest. The poller now
