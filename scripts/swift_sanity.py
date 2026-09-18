@@ -56,7 +56,7 @@ required = {
     "AuthViews.swift": ["applyManualToken", "testConnection", "faceIDLock", "SettingsView"],
     "AuthStore.swift": ["func applyManualToken"],
     "SecretsView.swift": ["lockedView", "LAContext", "secretsList"],
-    "JarvisApp.swift": ["RootTabView", "GlassCard"],
+    "JarvisApp.swift": ["RootTabView", "GlassCard", "glassEffect"],
     "CallLogStore.swift": ["final class CallLogStore", "struct Entry: Codable", "func add(reason", "func finish(id:", "outcome", "durationSeconds"],
     "CCClient.swift": ["struct Attention", "struct WorkHistory"],
     "HomeView.swift": ["alertsCard", "Attention"],

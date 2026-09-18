@@ -71,16 +71,25 @@ struct GlassCard<Content: View>: View {
     }
 
     var body: some View {
-        content
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.jarvisCard.opacity(0.72))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                    )
-            )
+        if #available(iOS 26.0, *) {
+            content
+                .padding(16)
+                .glassEffect(
+                    .regular,
+                    in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+                )
+        } else {
+            content
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.jarvisCard.opacity(0.72))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
+        }
     }
 }
 
