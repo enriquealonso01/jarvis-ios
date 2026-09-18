@@ -207,7 +207,12 @@ struct WorkThreadView: View {
     let title: String
 
     struct ChatLine: Identifiable, Equatable {
-        let id = UUID()
+        /// Content-only identity: server history has no stable message id, so
+        /// the id IS the content. A synthesized Equatable over a `let id =
+        /// UUID()` field compared unequal on EVERY poll tick — the 5s
+        /// background poll re-created every bubble (list-wide identity churn:
+        /// flicker + scroll jump) even when nothing changed.
+        var id: String { role + "|" + text }
         let role: String   // "user" | "assistant" | "tool"
         let text: String
     }

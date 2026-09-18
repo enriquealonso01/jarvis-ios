@@ -124,6 +124,14 @@ struct Overview: Decodable {
     let projects: [Project]?
 }
 
+/// The push bridge's own health (GET /health): apns_configured tells us
+/// whether VoIP pushes can actually ring the phone — surfaced on Home.
+struct BridgeHealth: Decodable {
+    let ok: Bool?
+    let apns_configured: Bool?
+    let scheduled: Int?
+}
+
 struct ZaiUsage: Decodable {
     struct Window: Decodable {
         let key: String

@@ -1,5 +1,31 @@
 # PROGRESS
 
+## 2026-09-18 11:30 UTC (build-loop run) — Chats poll identity churn + Home gateway dot now real; sweep all green
+
+- Line-by-line audit of the remaining hot paths found two real defects:
+- **Chats: poll identity churn** (`WorkThreadView.ChatLine`): `id` was a
+  `let id = UUID()` stored property — synthesized `Equatable` (needed by
+  pollHistory's array compare) included it, so every 5s background poll
+  produced a "different" array: all bubbles got fresh identities and the
+  LazyVStack rebuilt/flickered (scroll position jump) even when the thread
+  hadn't changed. Fixed: content-derived `var id: String { role + "|" +
+  text }` — identity, equality, and diffing all agree; a quiet poll now
+  updates nothing.
+- **Home: "Gateway connected" dot was hardcoded `.green`** — it lied
+  whenever the dashboard couldn't reach the gateway. Fixed: the status card
+  now loads `/api/control/overview` (`bridge.reachable`, the same signal the
+  web CC uses) and the bridge's own `/health`; dot goes red + "Gateway
+  unreachable" only on real evidence, and an "· ring pending APNs setup"
+  hint appears while `apns_configured:false` (VoIP pushes still queue
+  server-side — visible, not silent). Loads ride the existing per-endpoint
+  `try?` resilience; error-card condition extended with the overview fetch.
+- swift_sanity: REQUIRED-guard pins for both (`gatewayOK ? .green : .red`,
+  content-derived ChatLine id) so neither can regress silently.
+- Full scripts/verify_all.sh: exit 0 ALL GREEN (sanity incl. new pins, bridge
+  15/15, gateway gate, live health, prod parity + crons, native WebRTC e2e).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 11:20 UTC (build-loop run) — fresh-install device registration + Home resilience; sweep all green
 
 - Full re-audit (all 13 Swift files) found two more real defects:

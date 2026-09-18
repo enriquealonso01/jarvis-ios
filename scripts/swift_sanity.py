@@ -129,6 +129,13 @@ required_guard_pins = [
     # HomeView per-endpoint resilience: load1 + try? keeps one failing CC
     # endpoint from blanking the whole Home tab (all-or-nothing tuple throw).
     ("HomeView.swift", ["try? load1", "vitals = v2 ?? vitals"]),
+    # HomeView gateway dot must reflect real bridge reachability — a hardcoded
+    # .green Circle() lies when the dashboard can't reach the gateway.
+    ("HomeView.swift", ["gatewayOK ? .green : .red"]),
+    # Chats poll identity: ChatLine.id must be CONTENT-derived. A `let id =
+    # UUID()` field makes the 5s pollHistory compare unequal every tick and
+    # re-create every bubble (flicker + scroll jump).
+    ("ChatsView.swift", ["var id: String { role + \"|\" + text }"]),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):

@@ -8,6 +8,8 @@ struct HomeView: View {
     @State private var autos: Automations?
     @State private var activity: Activity?
     @State private var attention: Attention?
+    @State private var bridge: Overview.Bridge?
+    @State private var bridgeHealth: BridgeHealth?
     @State private var error: String?
 
     var body: some View {
@@ -84,8 +86,15 @@ struct HomeView: View {
                     metric("DISK", value: diskLabel)
                 }
                 HStack(spacing: 6) {
-                    Circle().fill(.green).frame(width: 7, height: 7)
-                    Text("Gateway connected").font(.caption).foregroundStyle(.secondary)
+                    Circle().fill(gatewayOK ? .green : .red).frame(width: 7, height: 7)
+                    Text(gatewayOK ? "Gateway connected" : "Gateway unreachable")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if bridgeHealth?.apns_configured == false {
+                        // VoIP pushes queue server-side until the APNs p8 is
+                        // installed (docs/BUILD.md) — visible, not silent.
+                        Text("· ring pending APNs setup")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Text(uptimeLabel).font(.caption2).foregroundStyle(.tertiary)
                 }
@@ -208,6 +217,11 @@ struct HomeView: View {
         return "up \(d)d"
     }
 
+    /// Gateway connectivity = PC-bridge reachability reported by the CC
+    /// overview (`/api/control/overview` → bridge.reachable, cached 60s
+    /// server-side). Optimistic when unknown: a red dot needs evidence.
+    private var gatewayOK: Bool { bridge?.reachable ?? true }
+
     private func nextIn(_ secs: Int?) -> String {
         guard let secs else { return "" }
         if secs < 90 { return "\(secs)s" }
@@ -231,20 +245,25 @@ struct HomeView: View {
             try await CCClient.shared.get(path, as: type)
         }
         async let v: Vitals? = try? load1("/api/control/vitals", as: Vitals.self)
+        async let o: Overview? = try? load1("/api/control/overview", as: Overview.self)
         async let z: ZaiUsage? = try? load1("/api/control/zai_usage", as: ZaiUsage.self)
         async let a: Automations? = try? load1("/api/control/automations", as: Automations.self)
         async let w: Activity? = try? load1("/api/control/activity", as: Activity.self)
         async let at: Attention? = try? load1("/api/control/attention", as: Attention.self)
-        let (v2, z2, a2, w2, at2) = await (v, z, a, w, at)
+        async let bh: BridgeHealth? = try? load1(
+            ServerConfig.shared.config.bridgeBaseURL + "/health", as: BridgeHealth.self)
+        let (v2, o2, z2, a2, w2, at2, bh2) = await (v, o, z, a, w, at, bh)
         vitals = v2 ?? vitals
+        bridge = o2?.bridge ?? bridge
         zai = z2 ?? zai
         autos = a2 ?? autos
         activity = w2 ?? activity
         attention = at2 ?? attention
+        bridgeHealth = bh2 ?? bridgeHealth
         // Only surface the error card when EVERYTHING failed (dashboard truly
         // unreachable / not signed in) — a single dead endpoint just keeps
         // its last-known-good card.
-        error = (vitals == nil && zai == nil && autos == nil && activity == nil && attention == nil)
+        error = (vitals == nil && zai == nil && autos == nil && activity == nil && attention == nil && bridge == nil)
             ? "Can't reach the dashboard." : nil
     }
 }
