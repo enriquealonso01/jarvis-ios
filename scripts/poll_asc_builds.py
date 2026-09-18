@@ -53,6 +53,11 @@ def main() -> int:
     ap.add_argument("--app", default=DEFAULT_APP)
     ap.add_argument("--expect", default=None,
                     help="only print BUILD lines for this version number")
+    ap.add_argument("--control-app", default="6773857468",
+                    help="second app whose latest build is printed as a "
+                         "CONTROL line (differential: is ASC ingest delayed "
+                         "team-wide, or specific to our app?). Empty string "
+                         "disables.")
     ap.add_argument("--env", default=DEFAULT_ENV)
     ap.add_argument("--key", default=DEFAULT_KEY)
     ap.add_argument("--issuer", default=DEFAULT_ISSUER)
@@ -102,7 +107,28 @@ def main() -> int:
         if args.expect and ver != str(args.expect):
             continue
         print(f"BUILD: {ver} | {a.get('processingState')} | {a.get('uploadedDate')}")
+    print_control(args, token)
     return 0
+
+
+def print_control(args, token: str) -> None:
+    """Print the control app's latest build (differential diagnosis aid)."""
+    if not args.control_app:
+        return
+    url = (f"https://api.appstoreconnect.apple.com/v1/builds"
+           f"?filter[app]={args.control_app}&limit=1&sort=-uploadedDate")
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.loads(r.read().decode())
+    except Exception as e:
+        print(f"control: unreadable ({e})")
+        return
+    for b in d.get("data", []):
+        a = b["attributes"]
+        print(f"CONTROL: app {args.control_app} latest build "
+              f"{a.get('version')} | {a.get('processingState')} | "
+              f"{a.get('uploadedDate')}")
 
 
 if __name__ == "__main__":

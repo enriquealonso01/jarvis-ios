@@ -1,5 +1,32 @@
 # PROGRESS
 
+## 2026-09-18 19:50 UTC (build-loop run) — ASC ingest deeper diagnosis: the "~4 min HeRose control" was a false baseline; poller now prints a differential CONTROL line
+
+- Re-derived the ingest evidence from scratch. Correction to the 19:30
+  entry: the HeRose "control" builds cited there (v19/v20, VALID, ~4 min
+  upload→visibility) were uploaded **2026-08-21**, NOT on Sep 18 — the
+  comparison used stale ASC records as a same-day baseline. So there is
+  currently NO verified data point that this team's uploads ingest in
+  minutes; the "3.5-4.5 min" figure was August data. What remains solid:
+  builds 19/20/21 of com.enriquecodes.jarvis are ABSENT from
+  /v1/builds (count 0, re-verified 19:45 UTC, ~95 min after the first
+  upload) AND from the app's preReleaseVersions index — two independent
+  ASC indexes. The ingest-stuck conclusion stands; only the timing
+  baseline was wrong.
+- scripts/poll_asc_builds.py hardened: new `--control-app` (default
+  HeRoseFromDeath 6773857468) prints a `CONTROL:` line with the control
+  app's LATEST build + uploadedDate on every poll — the watcher's log now
+  self-documents whether ASC ingest is delayed team-wide (control moves)
+  or specific to our app (control frozen at Aug 21). py_compile + live
+  run verified (count: 0 + CONTROL line).
+- Full scripts/verify_all.sh: exit 0 ALL GREEN (doc pins, swift_sanity,
+  bridge probe 16/16, gateway bearer gate, live health — bridge :9160
+  apns_configured:true, gateway :9150 realtime:true, public /bridge/health
+  200, prod parity, 3 reminder crons armed, native WebRTC e2e PASS).
+- NEEDS ENRIQUE (unchanged): ASC UI check (appstoreconnect.apple.com →
+  EA's J.A.R.V.I.S → TestFlight — accept any banner / agreement) + the
+  phone-side TestFlight install/open (crons fire 9AM Miami Sep 19).
+
 ## 2026-09-18 19:40 UTC (build-loop run) — sweep ALL GREEN; TestFlight watcher hardened onto a durable repo poller
 
 - Full `scripts/verify_all.sh`: exit 0 ALL GREEN (doc pins, swift_sanity,
