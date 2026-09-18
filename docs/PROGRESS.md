@@ -1,5 +1,23 @@
 # PROGRESS
 
+## 2026-09-18 10:05 UTC (build-loop run) — TestFlight lane auto-bumps the build number; full sweep all green
+
+- Gap closed in the Enrique ladder: the `testflight` fastlane lane uploaded with
+  the project.yml-pinned `CURRENT_PROJECT_VERSION: 1` every time — the SECOND
+  upload would have been rejected as a duplicate build number. The lane now
+  calls `latest_testflight_build_number` + `increment_build_number` (only when
+  the ASC API-key envs are set; interactive auth keeps the old manual-bump
+  path, documented). Fastfile structure-checked (no Ruby on this box; balanced
+  delimiter + string/comment scan passes). docs/FASTLANE.md updated.
+- Backlog 1–9 re-audited: complete, no drift. Full `scripts/verify_all.sh`:
+  exit 0 ALL GREEN — swift_sanity OK, scheduler-robust pin 5/5, drop-detection
+  pin, bridge bearer probe 15/15 (fresh throwaway), gateway bearer gate,
+  live health (bridge :9160 ok / apns_configured:false / scheduled:1,
+  voice-gw :9150 realtime:true, public /bridge/health 200), prod parity +
+  3 reminder crons armed, native WebRTC e2e PASS.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 09:55 UTC (build-loop run) — full contract re-audit vs live dashboard + live gateway: zero drift; maintenance sweep ALL GREEN
 
 - Backlog 1–9 re-audited (git log + PROGRESS): complete; no drift in the app.

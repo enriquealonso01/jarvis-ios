@@ -28,9 +28,11 @@ git pull
 ```
 Or straight: `cd ios && fastlane testflight`.
 
-Bump `CURRENT_PROJECT_VERSION` (ios/project.yml) when TestFlight rejects a
-duplicate build number — currently fixed at 1; fastlane may auto-increment via
-`increment_build_number` later if added.
+Build numbers: the `testflight` lane auto-bumps `CURRENT_PROJECT_VERSION` from
+the latest live TestFlight build (`latest_testflight_build_number` + 1) whenever
+the App Store Connect API-key envs are set — no manual edits needed. With
+interactive auth (no API key) it skips the bump: bump it by hand in
+ios/project.yml if TestFlight rejects a duplicate build number.
 
 ## Notes
 - First SPM resolve pulls the ~400MB WebRTC binary (see BUILD.md backlog-#4 note).

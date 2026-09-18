@@ -25,6 +25,22 @@ platform :ios do
       clean: true
     )
 
+    # Build number must be unique per upload — TestFlight rejects duplicates.
+    # project.yml pins CURRENT_PROJECT_VERSION at 1, so bump it from the live
+    # value on App Store Connect (no manual edits, no project.yml drift).
+    api_key = ENV.fetch("APP_STORE_CONNECT_API_KEY_PATH", nil) ? app_store_connect_api_key(
+      key_filepath: ENV["APP_STORE_CONNECT_API_KEY_PATH"],
+      key_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID")
+    ) : nil
+    increment_build_number(
+      build_number: latest_testflight_build_number(
+        app_identifier: "com.enriquecodes.jarvis",
+        api_key: api_key
+      ) + 1,
+      project: "JarvisApp.xcodeproj"
+    ) if api_key
+
     # APNs is not needed for upload; TestFlight internal testers get the build.
     upload_to_testflight(
       skip_waiting_for_build_processing: true,
