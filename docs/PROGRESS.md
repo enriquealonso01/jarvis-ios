@@ -1,5 +1,32 @@
 # PROGRESS
 
+## 2026-09-18 09:30 UTC (build-loop run) — mid-call drop detection: lost network now fails the call instead of dead "active" air
+
+- Remaining-gap audit after 09:20 (all backlog items 1–9 landed): once ICE
+  HAD connected, a mid-call network loss (Wi-Fi→cellular handoff, dead
+  gateway, tunnel drop) was never detected — `.disconnected` only failed
+  the call if it had never connected, so the phone sat on "active ·
+  connected" with a dead line and the log stamped "answered" forever.
+- WebRTCClient (`ios/JarvisApp/WebRTCClient.swift`):
+  - ICE `.disconnected` AFTER a successful connect now starts a 10 s grace
+    timer (a handoff usually recovers in seconds). ICE returning to
+    `connected`/`completed` cancels it — real blips ride through silently.
+  - Grace expiry fires `onConnectionFailed("media connection lost (no
+    recovery within 10s)")`; `failed`/`closed` also cancel the timer (no
+    leak). Timer torn down in `hangup()` too.
+  - Never-connected `.disconnected` stays terminal-immediate (unchanged).
+- CallManager routes expiry through the existing idempotent
+  `handleConnectionFailure`: CallKit call reported ended, log stamped
+  "failed", PC hung up, state cleared — the dead line can no longer linger.
+- `scripts/check_drop_detection.py` pins the wiring (grace armed only
+  post-connect, cancel paths, end-to-end failure routing); added to
+  `verify_all.sh` step 1. swift_sanity extended with the new symbols.
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN (7 checks incl. bridge
+  15/15 bearer probe, gateway gate, live health, parity + crons, native
+  WebRTC e2e vs live gateway). App-side only — server untouched, prod safe.
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 09:14 UTC (build-loop run) — app can CREATE scheduled calls (last /schedule gap closed)
 
 - Gap: the Calls tab could list + cancel scheduled calls but had no way to

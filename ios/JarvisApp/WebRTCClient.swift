@@ -35,6 +35,13 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     /// Fired once when ICE first reaches connected/completed.
     var onConnected: (@Sendable () -> Void)?
     private var connectedFired = false
+    /// Mid-call drop detection: ICE `.disconnected` AFTER we were connected
+    /// is transient (network blip, Wi-Fi→cellular). Start a grace timer; if
+    /// ICE returns to connected within it, cancel — otherwise the call is a
+    /// dead line and must fail instead of showing "active" forever.
+    private var disconnectGrace: DispatchSourceTimer?
+    /// How long ICE may stay `.disconnected` before we declare the call dead.
+    static let disconnectGraceSeconds: Int = 10
 
     nonisolated(unsafe) static var sharedFactory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
@@ -219,6 +226,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     func hangup() {
         pingTimer?.cancel()
         pingTimer = nil
+        cancelDisconnectGrace()
         appChannel?.close()
         appChannel = nil
         if let pcID {
@@ -257,19 +265,51 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
             onConnected?()
         }
         switch newState {
+        case .connected, .completed:
+            // ICE recovered (blip ended) — stand the grace timer down.
+            cancelDisconnectGrace()
         case .failed:
+            cancelDisconnectGrace()
             onConnectionFailed?("media connection failed")
         case .closed:
+            cancelDisconnectGrace()
             // Only terminal if we never got connected (a normal hangup closes
             // the PC deliberately and CallManager already handles that path).
             if !connected { onConnectionFailed?("media connection closed before connecting") }
         case .disconnected:
-            // Transient (network blip); only fatal if we never connected.
-            if !connected { onConnectionFailed?("media connection lost before connecting") }
+            // Transient while it lasts. If we NEVER connected it's terminal
+            // immediately; if we had, allow a grace window — a Wi-Fi→cellular
+            // handoff usually recovers within seconds. Expiry = dead line.
+            if !connected {
+                onConnectionFailed?("media connection lost before connecting")
+            } else {
+                startDisconnectGrace()
+            }
         default:
             break
         }
     }
+
+    // MARK: Mid-call drop detection
+
+    private func startDisconnectGrace() {
+        guard disconnectGrace == nil else { return } // already counting down
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + .seconds(Self.disconnectGraceSeconds))
+        t.setEventHandler { [weak self] in
+            guard let self, self.connected == false, self.disconnectGrace != nil else { return }
+            self.cancelDisconnectGrace()
+            self.onConnectionFailed?("media connection lost (no recovery within \(Self.disconnectGraceSeconds)s)")
+        }
+        t.resume()
+        disconnectGrace = t
+    }
+
+    private func cancelDisconnectGrace() {
+        disconnectGrace?.cancel()
+        disconnectGrace = nil
+    }
+
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}

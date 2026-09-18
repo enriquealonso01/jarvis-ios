@@ -60,6 +60,7 @@ required = {
     "CallLogStore.swift": ["final class CallLogStore", "struct Entry: Codable", "func add(reason", "func finish(id:", "outcome", "durationSeconds"],
     "CCClient.swift": ["struct Attention", "struct WorkHistory"],
     "HomeView.swift": ["alertsCard", "Attention"],
+    "WebRTCClient.swift": ["startDisconnectGrace", "cancelDisconnectGrace", "disconnectGraceSeconds", "no recovery within"],
     "ChatsView.swift": ["NewTaskSheet", "project/task", "lastMessage", "pollHistory", "decodedLines", "JARVIS is thinking"],
     "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome", "placeDirectCall", "CXStartCallAction", "setupCallUI", "dialing", "handleConnectionFailure"],
     "CallsView.swift": ["durationSeconds", "outcome", "trackOutgoingLog", "Talk to JARVIS", "placeDirectCall", "ScheduleCallSheet", "scheduleCall(at:", "/schedule", "whenLabel"],
