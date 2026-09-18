@@ -22,6 +22,19 @@ from pydantic import BaseModel
 STATE_DIR = Path(os.environ.get("BRIDGE_STATE_DIR", "/opt/jarvis-ios-bridge"))
 ENV_PATH = STATE_DIR / "apns.env"
 SCHEDULE_PATH = STATE_DIR / "scheduled_calls.json"
+
+
+def _save_env_key(key: str, value: str) -> None:
+    """Persist KEY=value into apns.env (EnvironmentFile + runtime config)."""
+    ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            if line.split("=", 1)[0].strip() != key:
+                lines.append(line)
+    lines.append(f"{key}={value}")
+    ENV_PATH.write_text("\n".join(lines) + "\n")
+    os.chmod(ENV_PATH, 0o600)
 def _shared_secret() -> str:
     env = os.environ.get("BRIDGE_SHARED_SECRET", "")
     if env:
@@ -108,8 +121,9 @@ def _scheduler_loop() -> None:
     from datetime import datetime, timezone
     while True:
         now = datetime.now(timezone.utc)
+        items = _load_schedule()
         remaining = []
-        for item in _load_schedule():
+        for item in items:
             due = datetime.fromisoformat(item["at_iso"])
             if due.tzinfo is None:
                 due = due.replace(tzinfo=timezone.utc)
@@ -117,9 +131,55 @@ def _scheduler_loop() -> None:
                 _send_voip(item.get("device_token", ""), {"reason": item["reason"], "call_id": item["call_id"], "scheduled_by": item.get("scheduled_by")})
             else:
                 remaining.append(item)
-        if len(remaining) != len(_load_schedule()):
+        if len(remaining) != len(items):
             _save_schedule(remaining)
         time.sleep(20)
+
+
+class RegisterReq(BaseModel):
+    device_token: str
+    bundle_id: str | None = None
+
+
+class CancelReq(BaseModel):
+    call_id: str | None = None  # None/empty cancels all
+
+
+@app.post("/register")
+async def register(request: Request, x_bridge_sig: str = Header(default="")):
+    """App calls this on launch with its APNs token; persisted to apns.env
+    (DEVICE_TOKEN=...) and auto-injected into every /call + /schedule payload."""
+    raw = await request.body()
+    _auth(x_bridge_sig, raw)
+    req = RegisterReq(**json.loads(raw))
+    if not req.device_token or len(req.device_token) < 20:
+        raise HTTPException(422, "device_token missing or malformed")
+    _save_env_key("DEVICE_TOKEN", req.device_token)
+    return {"registered": True, "token_len": len(req.device_token)}
+
+
+@app.get("/schedule/list")
+async def schedule_list(request: Request, x_bridge_sig: str = Header(default="")):
+    """List pending scheduled calls. GETs authenticate via HMAC over an empty
+    body: sig = HMAC-SHA256(secret, b'')."""
+    _auth(x_bridge_sig, b"")
+    return {"scheduled": _load_schedule()}
+
+
+@app.post("/schedule/cancel")
+async def schedule_cancel(request: Request, x_bridge_sig: str = Header(default="")):
+    """Cancel one scheduled call by call_id, or all if call_id omitted."""
+    raw = await request.body()
+    _auth(x_bridge_sig, raw)
+    req = CancelReq(**json.loads(raw or b"{}"))
+    items = _load_schedule()
+    kept = [i for i in items if req.call_id and i["call_id"] != req.call_id]
+    cancelled = len(items) - len(kept)
+    if cancelled:
+        _save_schedule(kept)
+    return {"cancelled": cancelled}
+
+
 
 
 @app.post("/call")

@@ -29,3 +29,19 @@
 - Backlog v1: SwiftUI app shell (CC view, chats, secrets, call log), CallKit+PushKit,
   WebRTC client vs voice gateway, push_bridge FastAPI + systemd, fastlane, WhatsApp/voice
   "call me" tooling, scheduled calls cron
+
+## 2026-09-18 02:35 UTC — bridge /register + scheduled-call list/cancel live (backlog #5)
+- POST /register: app sends APNs device_token on launch; bridge persists DEVICE_TOKEN=
+  into /opt/jarvis-ios-bridge/apns.env (0600) via _save_env_key; auto-injected into every
+  /call push and snapshotted into each /schedule entry. Rejects short tokens (422), bad
+  sigs (401).
+- GET /schedule/list (HMAC over empty body) and POST /schedule/cancel ({call_id} cancels
+  one, {} cancels all). Scheduler loop fixed to read the schedule once per tick.
+- Tested 15/15 functional checks against a throwaway instance (:9161, isolated state dir):
+  register good/bad-sig/short-token, 0600 perms, schedule x2, list, cancel one/all,
+  /call falls back cleanly with no APNs. Test instance + temp state killed afterwards.
+- Live service restarted (py_compile gate passed); /health verified ok after restart;
+  live /register round-trip verified, then test token scrubbed from apns.env.
+- docs/API.md updated with all three endpoints.
+- Next: backlog #3 Secrets tab -> gateway secret-scope endpoint wiring, #4 CallKit/
+  PushKit/WebRTC in the app, then #6 gateway native-client offer/answer.
