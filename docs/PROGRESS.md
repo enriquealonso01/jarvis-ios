@@ -1,3 +1,28 @@
+## 2026-09-18 21:20 UTC (build-loop run) — honesty pass: stale crons + docs corrected to the build-1 reality; nothing else to build
+
+- Re-verified on this run: verify_all.sh ALL GREEN (fresh sweep, bridge 16/16,
+  gateway gate, prod parity, live health, native WebRTC e2e PASS), doc
+  contracts OK, ASC live state unchanged — build 1 VALID + IN_BETA_TESTING,
+  no new uploads or rejections. Backlog 1–9 remains complete; no code delta
+  found that survives the small-edit bar (the last cosmetic label already
+  rides the next tagged build).
+- THIS RUN'S REAL FINDING — stale guidance aimed at Enrique: the 9AM
+  `jarvis-ios-apple-setup-guide` cron still told him to install **build 19**
+  (an ITMS-rejected upload that never existed in TestFlight). Both it and the
+  Sep-19 `jarvis-ios-loop-sunset` wrap-up predated the build-1 truth.
+  Fixed via `hermes cron edit`: guide now installs **build 1** only (no
+  Xcode/upload mentions); sunset wrap-up now ships the correct facts (build 1
+  LIVE, CI does signed uploads, Enrique never touches Xcode) and checks
+  bridge /health device_registered to choose mission-complete vs install
+  steps. Both verified post-edit in jobs.json.
+- Repo docs aligned to the same reality: README mission (3) — Enrique's only
+  manual step is phone-side install, CI uploads headless; BUILD.md header now
+  names build 1 as first SHIPPING build with the 19/20/21 ITMS-90683 history,
+  and the watcher section is past-tense (build-watch self-removed after
+  VALID; device-watch still armed on /health device_registered).
+- NEEDS ENRIQUE (unchanged, phone-only): install TestFlight, accept invite,
+  open build 1 once → /register fires → device-watch announces → done.
+
 ## 2026-09-18 21:05 UTC (build-loop run) — registration loop closed: device_registered on /health + self-removing watch; stale forge call cancelled
 
 - Backlog re-verified COMPLETE (1–9): all code in HEAD, verify_all ALL GREEN

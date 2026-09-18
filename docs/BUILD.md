@@ -2,8 +2,11 @@
 
 **SUPERSEDED for builds/uploads**: the full pipeline is automated — push tag
 `ios-v*` (or dispatch lane `beta` on .github/workflows/ios-release.yml) builds,
-signs, and uploads to TestFlight via GitHub Actions (first green run 35378698056,
-2026-09-18 18:14 UTC, build 19). The Xcode ritual below is the fallback only.
+signs, and uploads to TestFlight via GitHub Actions. First SHIPPING build is
+build 1 (run 35391242548, 2026-09-18 20:26 UTC, VALID in ~90 s); earlier runs
+35378698056/35383128608 produced builds 19/20/21 which Apple ITMS-rejected
+(90683, missing camera purpose string — fixed in 2fed80a). The Xcode ritual
+below is the fallback only.
 
 You only ever do these steps. Everything else is agent-deployed.
 
@@ -53,15 +56,18 @@ You only ever do these steps. Everything else is agent-deployed.
   internalBuildState=IN_BETA_TESTING is the authoritative all-clear.
 
 ## ASC build-visibility watcher
-- Cron `testflight-build-watch` (d6d31d5fec17, every 15m) polls ASC until a
-  build record appears, then pings Enrique and self-removes. Its poller is
-  the repo script `scripts/poll_asc_builds.py` (canonical copy survives
-  reboots; the original /tmp copy did not). Key detail: the APNs .p8 doubles
+- DONE & self-removed: cron `testflight-build-watch` (d6d31d5fec17) polled ASC
+  until build 1 appeared (VALID, 2026-09-18 ~20:28 UTC), pinged, and deleted
+  itself as designed. Its poller lives on as the repo script
+  `scripts/poll_asc_builds.py` (canonical copy survives reboots; the original
+  /tmp copy did not). Key detail: the APNs .p8 doubles
   as the ASC API key but the JWT **issuer** is the ASC issuer ID
   (cbd7e0fd-925b-4aa8-8ce1-facbc1b39881), NOT the APNS_TEAM_ID — a
   team-ID issuer gets HTTP 401. The poller reads both kid and issuer
-  itself; run with `--expect 19` to filter to a single version. Any
-  "BUILD:" line on stdout = build visible.
+  itself; run with `--expect 1` to filter to a single version. Any
+  "BUILD:" line on stdout = build visible. A second watcher,
+  `jarvis-ios-device-watch` (15m), waits on bridge /health
+  `device_registered` and also self-removes once the phone registers.
 - POLLER GOTCHA (cost hours on 2026-09-18): GET /v1/builds lists only builds
   that PASSED asset validation. A rejected upload (ITMS-90683 etc.) never
   appears there, which looks exactly like a stuck ingest. The poller now

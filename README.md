@@ -18,7 +18,9 @@ Store: distributed via TestFlight internal testing only.
    the app rings with context attached.
 3. **Agent-changeable.** JARVIS agents (this repo's loop agent, WhatsApp JARVIS,
    voice JARVIS) can modify app code and server config freely. Enrique's only
-   manual step: open Xcode on the Mac, bump, upload to TestFlight. Everything
+   manual step is phone-side: install TestFlight, accept the invite, install
+   the build. Signed builds/upload run headless via GitHub Actions (push tag
+   `ios-v*` → ios-release.yml; first green 2026-09-18 → build 1). Everything
    else (server push bridge, gateway changes, docs) deploys automatically.
 
 ## Layout
