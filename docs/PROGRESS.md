@@ -1,5 +1,25 @@
 # PROGRESS
 
+## 2026-09-18 13:04 UTC (build-loop run) — CallsView scheduled list no longer wipes on outage (last lie of this class); sweep all green
+
+- Defect-hunt pass (all 9 backlog items built; remaining runs are audit/hardening)
+  found ONE real defect: **`CallsView.loadScheduled()` still did
+  `catch { scheduled = [] }`** — a transient bridge outage rendered the lie
+  "Nothing scheduled." on the Calls tab, the exact bug class already fixed in
+  SecretsView (13:20 run) but missed here. Fixed: failed fetch keeps the
+  last-known-good list + shows "Can't reach the bridge — scheduled calls NOT
+  loaded."; the empty state only renders when the fetch succeeded and the
+  schedule is genuinely empty.
+- swift_sanity required-guard pins added for CallsView (loadFailed flag,
+  empty-gate condition, error label) — a revert to the bare `scheduled = []`
+  now fails the sweep like the SecretsView pins do.
+- Full verify_all: exit 0 ALL GREEN (doc pins 6/6, swift_sanity incl. new
+  pins, drop-detection + scheduler pins, bridge probe 16/16, gateway bearer
+  gate, live health, prod parity + 3 crons, native WebRTC e2e PASS).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md;
+  apple-setup guide cron fires 9AM Miami Sep 19).
+
 ## 2026-09-18 13:45 UTC (build-loop run) — docs/API.md caught documenting the leaked /schedule/list shape; doc-contract pins added; sweep all green
 
 - Live contract re-audit (full end-to-end against prod with a minted dashboard

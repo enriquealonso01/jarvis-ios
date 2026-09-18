@@ -157,6 +157,12 @@ required_guard_pins = [
     # transient bridge outage into the lie "No secrets stored".
     ("SecretsView.swift", ["loadFailed = true",
                            "secrets.isEmpty && !loading && !loadFailed"]),
+    # CallsView scheduled list: same contract — a failed /schedule/list fetch
+    # must KEEP last-known-good entries + show the error, never render the
+    # lie "Nothing scheduled." (bare `scheduled = []` in catch is the bug).
+    ("CallsView.swift", ["loadFailed = true",
+                         "scheduled.isEmpty && !loadFailed",
+                         "scheduled calls NOT loaded"]),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):

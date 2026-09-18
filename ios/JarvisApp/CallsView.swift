@@ -15,6 +15,7 @@ struct CallsView: View {
     // Persistent log (survives restarts; incoming pushes land here too).
     @ObservedObject private var callLog = CallLogStore.shared
     @State private var scheduled: [ScheduledCall] = []
+    @State private var loadFailed = false
     @State private var calling = false
     @State private var status: String?
     @State private var showSchedule = false
@@ -116,8 +117,16 @@ struct CallsView: View {
                 }
 
                 Section {
-                    if scheduled.isEmpty {
+                    // Load failure ≠ empty schedule: a transient bridge outage
+                    // must show the error, not the lie "Nothing scheduled."
+                    // (Same fix SecretsView got — empty state only when the
+                    // fetch SUCCEEDED and returned nothing.)
+                    if scheduled.isEmpty && !loadFailed {
                         Text("Nothing scheduled.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if loadFailed && scheduled.isEmpty {
+                        Label("Can't reach the bridge — scheduled calls NOT loaded.", systemImage: "wifi.exclamationmark")
+                            .font(.caption).foregroundStyle(.red)
                     }
                     ForEach(scheduled) { s in
                         HStack {
@@ -204,8 +213,11 @@ struct CallsView: View {
                 ServerConfig.shared.config.bridgeBaseURL + "/schedule/list",
                 as: ListResp.self)
             scheduled = resp.scheduled
+            loadFailed = false
         } catch {
-            scheduled = []
+            // Keep last-known-good entries: a transient bridge outage must not
+            // look like "Nothing scheduled" (same contract as SecretsView).
+            loadFailed = true
         }
     }
 
