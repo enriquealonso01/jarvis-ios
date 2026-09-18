@@ -1,5 +1,32 @@
 # PROGRESS
 
+## 2026-09-18 07:05 UTC (build-loop run) — native WebRTC path verified END-TO-END (real client, live gateway)
+
+- Previous runs had only auth-gate-verified the native offer (valid bearer →
+  500). This run closed the last agent-verifiable gap: a REAL WebRTC client
+  now exercises the exact iOS contract against the LIVE gateway and PASSES.
+- New `scripts/probe_webrtc_native.py` (aiortc in isolated venv
+  `/root/venvs/webrtc-probe`, aiortc+pyyaml — heavy native deps, deliberately
+  not in the system interpreter): mints a dashboard Bearer, POSTs an SDP offer
+  with `request_data {surface:"ios", reason}` to /voice-gw/api/offer, applies
+  the answer, opens the ordered `app` data channel, sends literal "ping" at
+  1 Hz, and asserts inbound audio track + gateway `hello` (thread + brain)
+  arrive. Cleans up: /voice-gw/api/hangup on its throwaway session. First
+  live run: offer 200 → answer → track + hello
+  (brain openai:gpt-realtime-2.1-mini) → hangup ok → PASS.
+- `verify_all.sh` now 6/6 steps: new step 6 runs the probe; sweep re-run
+  exit 0 ALL GREEN (swift_sanity, bridge 15/15, gateway gate, live health,
+  parity + crons, native WebRTC e2e). Probe skip-warns (non-fatal) if the
+  venv is missing; setup one-liner documented in the script header.
+- One real finding while building the probe: an offer without an explicit
+  audio transceiver still gets a working data-channel session but no inbound
+  track from aiortc's perspective — the iOS app is unaffected (it offers
+  sendrecv audio like the web page), so no app/gateway change needed; the
+  probe itself offers recvonly audio explicitly.
+- Docs: ARCHITECTURE.md "Verifying the native path (no phone needed)".
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 06:45 UTC (build-loop run) — native-call data channel + call-reason context (the gap the audit found)
 
 - Backlog 1-9 confirmed complete and sweep ALL GREEN again; audit of the live

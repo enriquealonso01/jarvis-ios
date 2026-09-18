@@ -82,6 +82,17 @@ PKCE endpoints). Agents never restart it unless a router file compiles AND
    `https://jarvis.enriquecodes.com/voice-gw/api/offer` with the Keychain
    bearer → gateway answers → JARVIS speaks with the reason as context.
 
+## Verifying the native path (no phone needed)
+`scripts/verify_all.sh` step 6/6 runs `scripts/probe_webrtc_native.py`: a real
+aiortc WebRTC client (venv `/root/venvs/webrtc-probe`, aiortc + pyyaml) mints a
+dashboard Bearer, POSTs an offer with `request_data {surface:"ios", reason}` to
+the LIVE gateway, connects ICE, opens the `app` data channel, pings at 1 Hz,
+and asserts the gateway's audio track + `hello` arrive — the exact contract
+the iOS `WebRTCClient` implements. It hangs its throwaway session up at the
+end and is read-only otherwise. If the probe ever FAILs after a gateway
+change, the native call path is broken regardless of what the auth-gate check
+(step 3) says.
+
 ## What only Enrique can do (the gated ladder)
 Xcode build on the Mac → TestFlight upload (fastlane lane or manual) → create
 the APNs p8 key and hand it over for install. See docs/BUILD.md, FASTLANE.md,

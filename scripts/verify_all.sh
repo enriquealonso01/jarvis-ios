@@ -5,6 +5,11 @@
 #   2. bridge bearer-auth probe on a throwaway instance (--spawn, self-cleaning)
 #   3. gateway native-bearer gate probe (live, read-only)
 #   4. live health: prod bridge :9160, voice-gw :9150, public /bridge/health
+#   5. prod parity (systemd + gateway mirror) + reminder crons
+#   6. native WebRTC e2e vs the live gateway (aiortc client, throwaway session,
+#      hangup at the end) — the real offer/answer/data-channel contract the
+#      iOS app depends on. Needs /root/venvs/webrtc-probe (aiortc+pyyaml);
+#      skipped with a warning if the venv is missing (does NOT fail the sweep).
 # Exit 0 iff everything passes. Safe: never touches prod bridge state.
 set -u
 cd "$(dirname "$0")/.."
@@ -65,6 +70,14 @@ for name in ('jarvis-ios-build-loop', 'jarvis-ios-loop-sunset', 'jarvis-ios-appl
     ok = ok and enabled
 sys.exit(0 if ok else 1)
 PY
+
+step "6/6 native WebRTC e2e (aiortc client vs live gateway)"
+WEBRTC_PROBE_VENV=/root/venvs/webrtc-probe/bin/python
+if [ -x "$WEBRTC_PROBE_VENV" ]; then
+  if "$WEBRTC_PROBE_VENV" scripts/probe_webrtc_native.py; then :; else FAIL=1; fi
+else
+  echo "SKIP: $WEBRTC_PROBE_VENV missing (setup: python3 -m venv /root/venvs/webrtc-probe && /root/venvs/webrtc-probe/bin/pip install aiortc pyyaml)"
+fi
 
 printf '\n================\n'
 if [ "$FAIL" = "0" ]; then echo "ALL GREEN"; else echo "FAILURES PRESENT"; fi
