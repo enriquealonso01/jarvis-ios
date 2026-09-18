@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Doc-contract pins for jarvis-ios (added 2026-09-18).
+
+Docs drift = the next agent (or Enrique, following docs/BUILD.md on his Mac)
+follows a contract the code no longer honors. These checks pin the load-bearing
+documented contracts to the actual code/probe behavior. Cheap, read-only.
+"""
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+failures = []
+
+
+def check(name, ok):
+    print(("PASS" if ok else "FAIL"), "-", name)
+    if not ok:
+        failures.append(name)
+
+
+# 1. docs/API.md /schedule/list entry shape must NOT include device_token —
+#    the push-delivery secret is stripped from responses (PROGRESS 13:20).
+api = open(os.path.join(ROOT, "docs", "API.md")).read()
+i = api.find("- `GET /schedule/list`")
+seg = api[i:api.find("\n- `POST", i)] if i >= 0 else ""
+shapes = re.findall(r"\{scheduled: \[[^\]]*\]\}", seg)
+check("API.md /schedule/list shape exists", bool(shapes))
+check("API.md /schedule/list shape excludes device_token",
+      bool(shapes) and "device_token" not in shapes[0])
+check("API.md documents the strip (STRIPPED note present)", "STRIPPED" in seg)
+
+# 2. Bridge code agrees: response entries are filtered.
+bridge = open(os.path.join(ROOT, "server", "push_bridge", "main.py")).read()
+check("bridge /schedule/list strips device_token + failures",
+      'if k not in ("device_token", "failures")' in bridge)
+
+# 3. Gateway doc contract: VoIP payload always carries gateway_ws "/voice-gw"
+#    (docs/API.md note + bridge code must match).
+gw = open(os.path.join(ROOT, "server", "push_bridge", "main.py")).read()
+check("bridge VoIP payload carries gateway_ws",
+      "gateway_ws" in gw and "/voice-gw" in gw)
+
+# 4. Entitlement doc contract: BUILD.md promises Push Notifications capability;
+#    project.yml must still wire CODE_SIGN_ENTITLEMENTS (swift_sanity pins the
+#    file itself; this pins the doc pointer).
+build = open(os.path.join(ROOT, "docs", "BUILD.md")).read()
+check("BUILD.md still documents the Push Notifications capability requirement",
+      "Push Notifications" in build)
+
+print()
+if failures:
+    print(f"{len(failures)} DOC CONTRACT FAILURE(S)")
+    sys.exit(1)
+print("DOC CONTRACTS OK")

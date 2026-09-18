@@ -40,7 +40,8 @@ identical verify: sig + kind=access + exp, checked locally).
   `apns-topic` MUST equal the app bundle ID (com.enriquecodes.jarvis); when the
   p8 isn't installed it logs-and-acks (`pushed:false`) so agents can develop.
 - `/schedule`, `/schedule/list`, `/schedule/cancel` → scheduler loop (20s tick)
-  fires `/call` when due; device_token snapshotted at schedule time.
+  fires `/call` when due; device_token snapshotted at schedule time
+  (server-side only — /schedule/list strips it from responses).
 - `/register` → app POSTs its APNs token on launch; persisted to apns.env and
   auto-injected into every push.
 - `/secrets`, `/secrets/set`, `/secrets/delete` → named-secret store.

@@ -10,8 +10,12 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
 - `POST /register` `{device_token, bundle_id?}` -> `{registered, token_len}`.
   App calls this on launch with its APNs token. Persisted as `DEVICE_TOKEN=...` in
   /opt/jarvis-ios-bridge/apns.env (0600) and auto-injected into every /call push and
-  every /schedule entry (`device_token` field, snapshotted at schedule time).
-- `GET /schedule/list` -> `{scheduled: [{call_id, at_iso, reason, scheduled_by, device_token}]}`.
+  every /schedule entry (`device_token` field, snapshotted at schedule time —
+  kept server-side only, never listed back by /schedule/list).
+- `GET /schedule/list` -> `{scheduled: [{call_id, at_iso, reason, scheduled_by}]}`.
+  (The snapshotted `device_token` and the internal `failures` counter are
+  STRIPPED from every entry — the push-delivery secret is only used by the
+  scheduler fire path, never returned to clients. Fixed 2026-09-18.)
   GETs authenticate via HMAC over an empty body (`sig = HMAC-SHA256(secret, b"")`)
   OR the iOS app's `Authorization: Bearer <dashboard token>` (added with backlog #4).
 - `POST /schedule/cancel` `{call_id?}` -> `{cancelled: N}`. With call_id cancels that one;

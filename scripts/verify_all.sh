@@ -17,6 +17,9 @@ FAIL=0
 
 step() { printf '\n=== %s ===\n' "$1"; }
 
+step "0/6 doc contract pins"
+python3 scripts/check_doc_contracts.py || FAIL=1
+
 step "1/6 swift_sanity"
 if python3 scripts/swift_sanity.py; then :; else FAIL=1; fi
 if python3 scripts/check_drop_detection.py; then :; else FAIL=1; fi

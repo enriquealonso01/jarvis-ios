@@ -1,5 +1,31 @@
 # PROGRESS
 
+## 2026-09-18 13:45 UTC (build-loop run) — docs/API.md caught documenting the leaked /schedule/list shape; doc-contract pins added; sweep all green
+
+- Live contract re-audit (full end-to-end against prod with a minted dashboard
+  Bearer: vitals/overview/zai_usage/automations/activity/attention/dispatch
+  board, work chat + history, project/task, bridge /schedule/list + /health)
+  found ONE real drift — **docs/API.md still showed the `/schedule/list`
+  response WITH the `device_token` field** after 60c121e stripped it from the
+  code. Anyone building against the doc would expect (and test for) the very
+  leak the fix removed. API.md now documents the stripped shape + the
+  strip rationale; ARCHITECTURE.md scheduler line clarified too.
+- Everything else verified zero-drift: CC models match live payloads
+  (vitals/overview/zai/automations/activity/attention/board shapes confirmed
+  byte-for-byte against responses), work chat {reply} + history {available,
+  messages[role,ts,text,tool_name?]} correct, project/task slug contract
+  correct, secrets/schedule/cancel/register endpoints match their docs.
+- New `scripts/check_doc_contracts.py` (step 0 of verify_all.sh): pins the
+  documented /schedule/list shape to the code's filter, the gateway_ws payload
+  field, and the BUILD.md push-capability promise — doc drift now fails the
+  sweep instead of waiting for a human to notice.
+- Full verify_all: exit 0 ALL GREEN (doc pins 6/6, swift_sanity, scheduler
+  pins, bridge probe 16/16, gateway bearer gate, live health, parity + crons,
+  native WebRTC e2e PASS).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md;
+  apple-setup guide cron fires 9AM Miami Sep 19).
+
 ## 2026-09-18 13:20 UTC (build-loop run) — /schedule/list no longer leaks the APNs device token; SecretsView outage no longer lies "empty"; sweep all green
 
 - Audit found TWO real defects (bridge runs from the repo dir, so repo = prod):
