@@ -37,9 +37,14 @@ You only ever do these steps. Everything else is agent-deployed.
 ## First TestFlight setup — DONE (2026-09-18)
 - ASC app record "EA's J.A.R.V.I.S" (id 6813590605), bundle reassigned to
   com.enriquecodes.jarvis. Build 19 uploaded by CI run 35378698056.
-- Remaining on the phone: install TestFlight, accept the internal-tester invite
-  (enriquealonsorequejo@icloud.com), install build 19, open it once — the app
-  POSTs /register to the bridge on launch, which makes VoIP pushes live.
+- Remaining: (1) ASC UI — open EA's J.A.R.V.I.S → TestFlight and check for a
+  banner (new Apple terms/agreement or an ingest error) and accept it. Three
+  uploads (builds 19/20/21, Sep 18) reached Apple but no build record was ever
+  created (~80 min, vs ~4 min for HeRose on the same team/.p8) — the app record's
+  ingest looks stuck; a banner-accept usually clears it. (2) Phone: install
+  TestFlight, accept the internal-tester invite (enriquealonsorequejo@icloud.com),
+  install the build once it appears, open it once — the app POSTs /register to
+  the bridge on launch, which makes VoIP pushes live.
 
 ## Notes
 - TestFlight builds expire after 90 days — the loop agent will remind you well ahead.

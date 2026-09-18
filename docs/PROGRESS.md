@@ -1,5 +1,30 @@
 # PROGRESS
 
+## 2026-09-18 19:30 UTC (build-loop run) — ASC ingest investigation: 3 uploads, ZERO build records on app 6813590605 (~80 min)
+
+- Found and reproduced the real "build 19 not visible" state: it is NOT slow propagation.
+  Evidence-based timing check — for HeRoseFromDeath (same team, same .p8, same pipeline),
+  fastlane "Successfully uploaded" → ASC build record visible takes ~3.5-4.5 min (run 19:
+  15:29Z → 15:32:45Z; run 20: 15:41Z → 15:45:33Z).
+- jarvis-ios uploads: run 19 (build #19) 18:14Z, run 20 (#20) 18:56Z, run 21 (#21) 18:58Z —
+  all three fastlane "Successfully uploaded the new binary to App Store Connect", all three
+  ABSENT from GET /v1/builds?filter[app]=6813590605 35-80+ min later (count 0; also no
+  v19/v20/v21 records under ANY app — the v19/v20 hits are HeRose builds from Aug 21).
+- Everything else verified healthy: ASC app record 6813590605 (com.enriquecodes.jarvis),
+  bundle ID registered (AN45BCRTAV), match AppStore profile live (exp 2027-09-18),
+  internal group + tester enriquealonsorequejo@icloud.com (already in group), 1.0
+  PREPARE_FOR_SUBMISSION, app 1.0 not submitted to review (TestFlight needs none).
+- Conclusion: uploads reach Apple's delivery pipeline but never materialize as build records —
+  a stuck/new-app ingest state on ASC's side (app record created + bundle reassigned the same
+  day). NOT a repo/pipeline defect: the ipa is well-formed, signed, accepted by the iTunes
+  transport. 3 independent uploads rule out a one-off.
+- Remedy is ASC-UI-side (NEEDS ENRIQUE, ~2 min): open appstoreconnect.apple.com → EA's
+  J.A.R.V.I.S → TestFlight — check for a banner (new Apple terms / agreement to accept, or an
+  ingest error), accept it; if none, Apple Support chat. The watcher cron (d6d31d5fec17) keeps
+  polling — the moment builds appear it pings and self-removes.
+- Pipeline change made: none needed (upload verified end-to-end; build numbers unique via
+  run_number). Next upload after Enrique's banner check will reuse this pipeline untouched.
+
 ## 2026-09-18 18:40 UTC (build-loop run) — post-upload audit clean; propagation watch extended (build 19 still not visible at ~25 min)
 
 - Full `scripts/verify_all.sh`: exit 0 ALL GREEN (doc pins 6/6, swift_sanity
