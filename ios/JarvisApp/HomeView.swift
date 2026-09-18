@@ -224,17 +224,27 @@ struct HomeView: View {
 
     @MainActor
     private func load() async {
-        do {
-            async let v: Vitals = CCClient.shared.get("/api/control/vitals", as: Vitals.self)
-            async let z: ZaiUsage = CCClient.shared.get("/api/control/zai_usage", as: ZaiUsage.self)
-            async let a: Automations = CCClient.shared.get("/api/control/automations", as: Automations.self)
-            async let w: Activity = CCClient.shared.get("/api/control/activity", as: Activity.self)
-            async let at: Attention = CCClient.shared.get("/api/control/attention", as: Attention.self)
-            let (v2, z2, a2, w2, at2) = try await (v, z, a, w, at)
-            vitals = v2; zai = z2; autos = a2; activity = w2; attention = at2
-            error = nil
-        } catch {
-            self.error = "Can't reach the dashboard."
+        // Per-endpoint resilience: each card loads independently, so one
+        // failing endpoint (e.g. a transient zai_usage 500) can't blank the
+        // whole Home tab or discard fresh data from the other four.
+        func load1<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+            try await CCClient.shared.get(path, as: type)
         }
+        async let v: Vitals? = try? load1("/api/control/vitals", as: Vitals.self)
+        async let z: ZaiUsage? = try? load1("/api/control/zai_usage", as: ZaiUsage.self)
+        async let a: Automations? = try? load1("/api/control/automations", as: Automations.self)
+        async let w: Activity? = try? load1("/api/control/activity", as: Activity.self)
+        async let at: Attention? = try? load1("/api/control/attention", as: Attention.self)
+        let (v2, z2, a2, w2, at2) = await (v, z, a, w, at)
+        vitals = v2 ?? vitals
+        zai = z2 ?? zai
+        autos = a2 ?? autos
+        activity = w2 ?? activity
+        attention = at2 ?? attention
+        // Only surface the error card when EVERYTHING failed (dashboard truly
+        // unreachable / not signed in) — a single dead endpoint just keeps
+        // its last-known-good card.
+        error = (vitals == nil && zai == nil && autos == nil && activity == nil && attention == nil)
+            ? "Can't reach the dashboard." : nil
     }
 }

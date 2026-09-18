@@ -304,18 +304,35 @@ extension CallManager: PKPushRegistryDelegate {
     private func sendDeviceToken(_ token: String) async {
         // /register accepts dual auth: the app sends its dashboard Bearer
         // (bridge-verified locally, same ladder as /call); agents use the
-        // x-bridge-sig HMAC path. Fire-and-forget — a 401 just means the
-        // access token expired and the next launch retries.
+        // x-bridge-sig HMAC path.
+        //
+        // Registration RETRY: on a fresh install the PushKit token arrives at
+        // launch — BEFORE the user has signed in — so the first attempt has
+        // no Bearer and the bridge 401s it. Without a retry the bridge never
+        // learns the token until the next cold launch and "ring this phone"
+        // is dead on day one. Retry on an exponential backoff while the app
+        // lives; each attempt re-reads the token so it upgrades itself to
+        // authed the moment login completes.
         let cfg = ServerConfig.shared.config
         let url = URL(string: cfg.bridgeBaseURL + "/register")
         guard let url else { return }
-        var req = URLRequest(postTo: url)
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["device_token": token, "bundle_id": Bundle.main.bundleIdentifier ?? ""])
-        if let tok = AuthStore.shared.accessToken {
-            req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+        for attempt in 0..<5 {
+            var req = URLRequest(postTo: url)
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: ["device_token": token, "bundle_id": Bundle.main.bundleIdentifier ?? ""])
+            if let tok = AuthStore.shared.accessToken {
+                req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+            }
+            if let (data, resp) = try? await URLSession.shared.data(for: req),
+               (resp as? HTTPURLResponse)?.statusCode == 200 {
+                return // registered — the bridge now knows this device
+            }
+            if attempt < 4 {
+                try? await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt))) * 2_000_000_000) // 2,4,8,16s
+            }
         }
-        _ = try? await URLSession.shared.data(for: req)
+        // Exhausted (server down for the session): the next launch's
+        // didUpdate credentials callback re-registers.
     }
 }
 

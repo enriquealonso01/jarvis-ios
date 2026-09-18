@@ -122,6 +122,13 @@ hazards = [
 # against it disappearing).
 required_guard_pins = [
     ("CallManager.swift", ["pendingAnswerPayload?.callID == p.callID"]),
+    # Device-token /register must retry (fresh install: push token arrives
+    # before login, so the first attempt 401s) — a revert to the fire-and-
+    # forget single POST leaves "ring this phone" dead until next launch.
+    ("CallManager.swift", ["for attempt in 0..<5"]),
+    # HomeView per-endpoint resilience: load1 + try? keeps one failing CC
+    # endpoint from blanking the whole Home tab (all-or-nothing tuple throw).
+    ("HomeView.swift", ["try? load1", "vitals = v2 ?? vitals"]),
 ]
 for fn in sorted(os.listdir(APP)):
     if not fn.endswith(".swift"):

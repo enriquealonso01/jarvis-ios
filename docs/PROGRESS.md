@@ -1,5 +1,32 @@
 # PROGRESS
 
+## 2026-09-18 11:20 UTC (build-loop run) — fresh-install device registration + Home resilience; sweep all green
+
+- Full re-audit (all 13 Swift files) found two more real defects:
+- **Device-token registration was one-shot** (CallManager.sendDeviceToken):
+  on a FRESH INSTALL the PushKit token arrives at launch — before the user
+  signs in — so the single fire-and-forget POST /register 401s and the
+  bridge never learns the token until the next cold launch. "Ring this
+  phone" (bridge /call + scheduled calls) was dead on day one. Fixed:
+  exponential-backoff retry (2/4/8/16s, 5 attempts) that re-reads the
+  access token each attempt, so it upgrades itself to authed the moment
+  login completes; success returns early; exhaustion falls back to the
+  next launch's didUpdate callback.
+- **HomeView was all-or-nothing**: one failing CC endpoint (e.g. a
+  transient /zai_usage 500) threw away the whole `try await (v,z,a,w,at)`
+  tuple — error card claimed the dashboard was unreachable and
+  fresh-but-good data from the other four endpoints was discarded. Fixed:
+  per-endpoint `try?` loads, last-known-good fallback per card, and the
+  error card only appears when EVERYTHING failed.
+- swift_sanity: new REQUIRED-guard pins (register retry loop, per-endpoint
+  load1 pins) so neither guard can regress silently.
+- Full scripts/verify_all.sh: exit 0 ALL GREEN (swift_sanity incl. new
+  pins, bridge probe 15/15, gateway bearer gate, live health bridge :9160
+  ok / voice-gw :9150 realtime:true, public /bridge/health 200, prod
+  parity + crons armed, native WebRTC e2e PASS vs live gateway).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 11:00 UTC (build-loop run) — VoIP duplicate-push guard landed on the incoming-call path; sweep all green
 
 - Line-by-line audit (all 13 Swift files) found the next real defect on the
