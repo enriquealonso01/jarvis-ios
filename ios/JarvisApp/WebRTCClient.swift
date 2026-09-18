@@ -191,7 +191,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
         timer.setEventHandler { [weak self] in
             guard let self, let dc = self.appChannel, dc.readyState == .open else { return }
-            dc.sendData(RTCDataBuffer(data: Data("ping".utf8)))
+            dc.sendData(RTCDataBuffer(data: Data("ping".utf8), isBinary: true))
         }
         timer.resume()
         pingTimer = timer
