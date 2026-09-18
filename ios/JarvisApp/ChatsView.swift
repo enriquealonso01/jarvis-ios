@@ -206,7 +206,7 @@ struct WorkThreadView: View {
     let workId: String
     let title: String
 
-    struct ChatLine: Identifiable {
+    struct ChatLine: Identifiable, Equatable {
         let id = UUID()
         let role: String   // "user" | "assistant" | "tool"
         let text: String

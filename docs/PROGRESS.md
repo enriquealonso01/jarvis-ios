@@ -1,5 +1,22 @@
 # PROGRESS
 
+## 2026-09-18 10:37 UTC (build-loop run) — compile-blocker fixed: ChatLine Equatable (pollHistory would fail the first real Xcode build); sweep all green
+
+- Backlog 1–9 re-audited (git log + PROGRESS): complete, no functional drift.
+- Real compile-blocker found in the line-by-line audit: `WorkThreadView.`
+  `pollHistory()` compares `[ChatLine]` with `!=` (ChatsView.swift), but
+  `ChatLine` never declared `Equatable` — Swift won't auto-conform, so the
+  5s-reply-polling feature (25cba21) was a guaranteed Xcode build failure on
+  Enrique's first archive. `ChatLine` now conforms to `Equatable`; swift_sanity
+  pins the conformance so it can't regress.
+- Full `scripts/verify_all.sh` after the fix: exit 0 ALL GREEN (swift_sanity OK
+  incl. the new pin, bridge bearer probe, gateway bearer gate, live health
+  bridge :9160 ok / apns_configured:false / voice-gw :9150 realtime:true,
+  public /bridge/health 200, prod parity + crons armed, native WebRTC e2e PASS
+  vs live gateway).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 10:30 UTC (build-loop run) — PushKit completion tied to CallKit report acceptance (wedge-hardening); sweep all green
 
 - Backlog 1–9 re-audited (git log + PROGRESS): complete, no functional drift.

@@ -61,7 +61,10 @@ required = {
     "CCClient.swift": ["struct Attention", "struct WorkHistory"],
     "HomeView.swift": ["alertsCard", "Attention"],
     "WebRTCClient.swift": ["startDisconnectGrace", "cancelDisconnectGrace", "disconnectGraceSeconds", "no recovery within"],
-    "ChatsView.swift": ["NewTaskSheet", "project/task", "lastMessage", "pollHistory", "decodedLines", "JARVIS is thinking"],
+    "ChatsView.swift": ["NewTaskSheet", "project/task", "lastMessage", "pollHistory", "decodedLines", "JARVIS is thinking",
+                        # pollHistory compares [ChatLine] with != — without Equatable
+                        # that line is a hard Xcode build error.
+                        "struct ChatLine: Identifiable, Equatable"],
     "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome", "placeDirectCall", "CXStartCallAction", "setupCallUI", "dialing", "handleConnectionFailure",
                           # PushKit contract: completion is resolved by the
                           # incoming-call report handler, never inline.
