@@ -1,5 +1,22 @@
 # PROGRESS
 
+## 2026-09-18 09:40 UTC (build-loop run) — maintenance sweep all green; loop hygiene fixes
+
+- Backlog 1–9 remain complete (git log + PROGRESS audit); no drift found.
+- Pushed the previous run's commit (52756a4, mid-call drop detection) that was
+  sitting unpushed on main — origin/main synced at 84984ec.
+- verify_all.sh: stale step labels "1/4…4/4" corrected to /6 (steps 5–6 landed
+  earlier but the labels never caught up) — cosmetic, committed + pushed.
+- Full `scripts/verify_all.sh` re-run: exit 0 ALL GREEN — swift_sanity OK +
+  drop-detection pinned; bridge probe 15/15 (throwaway :9162, prod untouched);
+  gateway gate correct (valid 500 / invalid+no+refresh 401); live health bridge
+  :9160 ok (apns_configured:false, scheduled:0) + voice-gw :9150 realtime:true +
+  public /bridge/health 200; both services active; gateway mirror
+  byte-identical; reminder crons armed; native WebRTC e2e PASS (offer → answer →
+  track → app datachannel → hello → hangup) against the live gateway.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 09:30 UTC (build-loop run) — mid-call drop detection: lost network now fails the call instead of dead "active" air
 
 - Remaining-gap audit after 09:20 (all backlog items 1–9 landed): once ICE
