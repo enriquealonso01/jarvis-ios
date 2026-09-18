@@ -45,7 +45,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -m 8 "$PUB_URL")
 echo "public $PUB_URL -> $code"
 [ "$code" = "200" ] || FAIL=1
 
-step "5/5 prod parity + reminder crons"
+step "5/6 prod parity + reminder crons"
 # 5a. both prod services active
 for svc in jarvis-ios-bridge jarvis-voice-gateway; do
   st=$(systemctl is-active "$svc" 2>/dev/null || true)

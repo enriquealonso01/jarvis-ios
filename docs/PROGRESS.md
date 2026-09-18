@@ -1,5 +1,18 @@
 # PROGRESS
 
+## 2026-09-18 10:35 UTC (build-loop run) — maintenance sweep all green; last stale step label fixed
+
+- Backlog 1–9 re-audited (git log + PROGRESS): complete, no functional drift.
+- Repo was already synced with origin/main (nothing unpushed).
+- `scripts/verify_all.sh` step 5 label corrected ("5/5" → "5/6" — stale since
+  the WebRTC e2e step landed; same class of cosmetic drift as 84984ec).
+- Full sweep re-run after the fix: exit 0 ALL GREEN (swift_sanity OK, bridge
+  bearer probe, gateway gate, live health bridge :9160 ok / apns_configured
+  :false / voice-gw :9150 realtime:true, public /bridge/health 200, parity +
+  crons armed, native WebRTC e2e PASS vs live gateway).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 10:20 UTC (build-loop run) — real Liquid Glass path landed in GlassCard (backlog #1 gap closed); sweep all green
 
 - Drift audit found: backlog #1 promised iOS 26 `glassEffect` Liquid Glass
