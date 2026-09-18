@@ -71,6 +71,10 @@ def main():
 
     good_body = json.dumps({"reason": "probe call", "scheduled_by": "probe"}).encode()
 
+    # /schedule/list with bearer -> 200 (app path, added with backlog #4)
+    st, _ = req(base, "GET", "/schedule/list", {"Authorization": f"Bearer {token}"})
+    check("/schedule/list valid bearer 200", st == 200)
+
     # /call with valid bearer -> 200 (pushed False: no APNs on probe box)
     st, out = req(base, "POST", "/call", {"Authorization": f"Bearer {token}"}, good_body)
     check("/call valid bearer 200 + call_id", st == 200 and out.get("call_id"))

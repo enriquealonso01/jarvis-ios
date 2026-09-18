@@ -15,6 +15,15 @@ You only ever do these steps. Everything else is agent-deployed.
 3. Window > Organizer > Distribute App > TestFlight (internal)
 4. TestFlight app on phone: update, install
 
+## First build after backlog #4 (WebRTC added)
+- `ios/project.yml` now pulls the Google WebRTC (STS) prebuilt via SPM
+  (stasel/WebRTC mirror). After `xcodegen`, open the project and let Xcode
+  resolve the package (File > Packages > Resolve Latest Package Versions) —
+  first resolve downloads ~400MB, be patient. Then sign + run as usual.
+- VoIP push background mode (`voip` in UIBackgroundModes) is already set.
+- CallKit reporting happens inside the PushKit callback (iOS hard
+  requirement); do not remove the PushKit registration from AppDelegate.
+
 ## First TestFlight setup
 - App Store Connect > My Apps > + > New App (iOS, name "JARVIS", bundle id
   com.enriquecodes.jarvis, SKU jarvis-ios-001). TestFlight tab > Internal Testing >

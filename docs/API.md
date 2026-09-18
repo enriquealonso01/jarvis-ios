@@ -12,7 +12,8 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   /opt/jarvis-ios-bridge/apns.env (0600) and auto-injected into every /call push and
   every /schedule entry (`device_token` field, snapshotted at schedule time).
 - `GET /schedule/list` -> `{scheduled: [{call_id, at_iso, reason, scheduled_by, device_token}]}`.
-  GETs authenticate via HMAC over an empty body: `sig = HMAC-SHA256(secret, b"")`.
+  GETs authenticate via HMAC over an empty body (`sig = HMAC-SHA256(secret, b"")`)
+  OR the iOS app's `Authorization: Bearer <dashboard token>` (added with backlog #4).
 - `POST /schedule/cancel` `{call_id?}` -> `{cancelled: N}`. With call_id cancels that one;
   with empty body `{}` cancels all pending.
 - `GET /health` -> `{ok, apns_configured, scheduled}`.
@@ -49,6 +50,11 @@ curl -s -X POST http://127.0.0.1:9160/secrets/set -H "x-bridge-sig: $sig" -H "Co
 2. `body='{"reason":"Call about X","scheduled_by":"whatsapp-jarvis"}'`
 3. `sig=$(printf %s "$body" | openssl dgst -sha256 -hmac "$secret" -hex | cut -d' ' -f2)`
 4. `curl -s -X POST http://127.0.0.1:9160/call -H "Content-Type: application/json" -H "x-bridge-sig: $sig" -d "$body"`
+
+Note (backlog #4): `/call`, `/schedule`, `/schedule/cancel` and `/schedule/list`
+also accept the iOS app's dashboard Bearer token (same dual-auth ladder as
+`/secrets`), so the app calls these directly. The VoIP push payload now always
+carries `gateway_ws: "/voice-gw"` per the contract in docs/GATEWAY.md.
 
 ## Pending until Enrique does his part
 - APNs: create .p8 key in App Store Connect (Keys tab), download, then JARVIS stores it at

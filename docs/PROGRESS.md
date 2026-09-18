@@ -1,5 +1,31 @@
 # PROGRESS
 
+## 2026-09-18 04:05 UTC — backlog #4: CallKit + PushKit + WebRTC client (app) + bearer-authed calling endpoints — LIVE
+
+- Bridge: `/call`, `/schedule`, `/schedule/cancel`, `/schedule/list` now accept
+  the app's dashboard Bearer token (same dual-auth ladder as `/secrets`).
+  Probe `scripts/probe_call_bearer_live.py`: 12/12 (valid/invalid/refresh/no-auth
+  ladders per endpoint, HMAC agent path intact, bearer-created schedule entry
+  listed + cancelled). Live-verified on :9160 after restart; /health + public
+  /bridge/health 200. VoIP push payload now carries `gateway_ws: "/voice-gw"`
+  (both /call and the scheduler fire path) matching docs/GATEWAY.md.
+- iOS: CallManager (PushKit PKPushRegistry + CXProvider/CXCallController;
+  reportNewIncomingCall inside the VoIP callback per the iOS hard requirement;
+  CXAnswerCallAction drives the WebRTC connect; audio session activation hooks),
+  WebRTCClient (Google WebRTC STS via SPM `stasel/WebRTC`; audio-only offer →
+  POST {sdp,type} to {voice-gw}/api/offer with Bearer → set answer; /api/say +
+  /api/hangup controls; STUN from gateway recipe). AuthStore.validAccessToken()
+  refreshes-when-expiring for the offer call. AppDelegate registers PushKit at
+  launch and re-POSTs the APNs token to /register (Bearer) on token rotation.
+  CallsView rewritten: real /call button (Bearer), live call state, scheduled
+  list + cancel — all against the live bridge.
+- project.yml: WebRTC package dependency; BUILD.md documents the ~400MB first
+  SPM resolve.
+- NEEDS ENRIQUE: first Xcode build with the new WebRTC package (xcodegen →
+  open → resolve packages → sign → run). Swift not compiled on this box.
+- Next: fastlane (backlog #7) or the WhatsApp/voice `call_enrique` tool
+  (backlog #8 — server-side /call recipe already in docs/API.md).
+
 ## 2026-09-18 03:20 UTC — backlog #3: Secrets (server store + iOS UI) LIVE
 
 - Named-secret store deployed on the push bridge (`/secrets`, `/secrets/set`,

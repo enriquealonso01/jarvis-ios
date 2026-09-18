@@ -130,7 +130,7 @@ def _scheduler_loop() -> None:
             if due.tzinfo is None:
                 due = due.replace(tzinfo=timezone.utc)
             if due <= now:
-                _send_voip(item.get("device_token", ""), {"reason": item["reason"], "call_id": item["call_id"], "scheduled_by": item.get("scheduled_by")})
+                _send_voip(item.get("device_token", ""), {"reason": item["reason"], "call_id": item["call_id"], "scheduled_by": item.get("scheduled_by"), "gateway_ws": "/voice-gw"})
             else:
                 remaining.append(item)
         if len(remaining) != len(items):
@@ -292,8 +292,8 @@ async def register(request: Request, x_bridge_sig: str = Header(default="")):
 @app.get("/schedule/list")
 async def schedule_list(request: Request, x_bridge_sig: str = Header(default="")):
     """List pending scheduled calls. GETs authenticate via HMAC over an empty
-    body: sig = HMAC-SHA256(secret, b'')."""
-    _auth(x_bridge_sig, b"")
+    body: sig = HMAC-SHA256(secret, b'') — or the app's dashboard Bearer."""
+    _auth_dual(request, x_bridge_sig, b"")
     return {"scheduled": _load_schedule()}
 
 
@@ -320,7 +320,7 @@ async def call(request: Request, x_bridge_sig: str = Header(default="")):
     req = CallReq(**json.loads(raw or b"{}"))
     call_id = str(uuid.uuid4())[:8]
     device_token = _load_env().get("DEVICE_TOKEN", "")
-    ok = _send_voip(device_token, {"reason": req.reason, "call_id": call_id, "scheduled_by": req.scheduled_by})
+    ok = _send_voip(device_token, {"reason": req.reason, "call_id": call_id, "scheduled_by": req.scheduled_by, "gateway_ws": "/voice-gw"})
     return {"call_id": call_id, "pushed": ok}
 
 

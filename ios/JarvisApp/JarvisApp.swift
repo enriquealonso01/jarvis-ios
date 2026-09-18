@@ -1,7 +1,9 @@
 import SwiftUI
+import UIKit
 
 @main
 struct JarvisApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var auth = AuthStore.shared
     @StateObject private var server = ServerConfig.shared
 
@@ -37,6 +39,15 @@ struct RootTabView: View {
             CallsView()
                 .tabItem { Label("Calls", systemImage: "phone.fill") }
         }
+    }
+}
+
+/// PushKit must be registered from launch (cold VoIP push delivery).
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        CallManager.shared.registerVoIP()
+        return true
     }
 }
 

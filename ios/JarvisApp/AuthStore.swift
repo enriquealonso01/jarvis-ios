@@ -136,6 +136,15 @@ final class AuthStore: ObservableObject {
         isAuthed = false
     }
 
+    /// Access token guaranteed valid for the next few minutes: refreshes first
+    /// when expiring soon. Used by the WebRTC client (backlog #4).
+    func validAccessToken() async throws -> String {
+        if accessToken == nil { throw AuthError.unauthorized }
+        if isExpiringSoon, !await refresh() { throw AuthError.unauthorized }
+        guard let token = accessToken else { throw AuthError.unauthorized }
+        return token
+    }
+
     enum AuthError: LocalizedError {
         case badResponse(String)
         case unauthorized
