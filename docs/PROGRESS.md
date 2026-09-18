@@ -1,5 +1,41 @@
 # PROGRESS
 
+## 2026-09-18 12:55 UTC (build-loop run) — Push Notifications entitlement wired (first-build VoIP blocker); sweep all green
+
+- Audit pivot: every Swift file has been line-by-line hardened across prior
+  runs, so this run audited the FIRST-BUILD ENVIRONMENT instead — the things
+  that fail only when Enrique opens Xcode. Found one real mission-blocker:
+- **No `aps-environment` entitlement anywhere in the project** —
+  project.yml set `UIBackgroundModes: voip` but never `CODE_SIGN_ENTITLEMENTS`.
+  With automatic signing that produces a provisioning profile with NO push
+  capability: APNs rejects every VoIP push (bad device token / topic
+  mismatch class), so "JARVIS calls this phone" — the mission centerpiece —
+  would silently never ring even after Enrique installs the .p8 and the
+  bridge reports apns_configured:true. The failure would only surface as
+  "no ring, no error" on device.
+- Fix: `ios/JarvisApp/JarvisApp.entitlements` (aps-environment=development;
+  TestFlight/App Store archives are rewritten to production automatically),
+  wired via `CODE_SIGN_ENTITLEMENTS` in project.yml. Plist + YAML parse
+  verified on-box.
+- SPM pin verified live: stasel/WebRTC tag **130.0.0 exists upstream**
+  (checked the GitHub tags API) — Enrique's first package resolve will not
+  fail on a missing tag. `from: 130.0.0` may float upward but 130.0.0 is a
+  valid floor.
+- swift_sanity: new pins — entitlement file present + `aps-environment`
+  inside it, `CODE_SIGN_ENTITLEMENTS` wiring in project.yml, SPM URL pin —
+  so none can regress silently.
+- BUILD.md: first-build section now tells Enrique Signing & Capabilities
+  must show "Push Notifications" after he picks his team (and how to add it
+  if Xcode doesn't auto-promote).
+- Full scripts/verify_all.sh: exit 0 ALL GREEN (swift_sanity incl. new
+  pins, scheduler pins 7/7, bridge bearer probe, gateway bearer gate, live
+  health bridge :9160 ok / apns_configured:false / voice-gw :9150
+  realtime:true, public /bridge/health 200, prod parity + 3 crons armed,
+  native WebRTC e2e PASS vs live gateway). Commit 1476aaa pushed.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md,
+  apple-setup guide cron fires 9AM Miami tomorrow).
+
 ## 2026-09-18 12:35 UTC (build-loop run) — bridge scheduler stale-token + cancel-all contract bugs fixed; sweep all green
 
 - Full re-audit of the server side (main.py, all 13 Swift files already
