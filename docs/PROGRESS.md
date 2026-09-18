@@ -1,5 +1,31 @@
 # PROGRESS
 
+## 2026-09-18 09:50 UTC (build-loop run) — scheduler robustness fix deployed: a dead loop can no longer silently drop every future scheduled call
+
+- Gap found during this run's audit: the bridge scheduler ran every entry
+  inline in a bare `while True` — one malformed `at_iso`, one push exception,
+  or one corrupt `scheduled_calls.json` killed the scheduler thread
+  PERMANENTLY (daemon thread, no supervisor). Every future "call me at 10am"
+  would then silently never fire — the worst failure mode for backlog #8.
+- `server/push_bridge/main.py`, deployed live (py_compile gate → restart →
+  /health 200, public /bridge/health 200, prod state intact, scheduled:1):
+  - `_run_scheduler_tick()` extracted: per-item try/except — malformed
+    entries are dropped with a log line, push errors are caught.
+  - Failed pushes now RETRY (failure counter per entry, capped at 10 ticks
+    ≈ 3.5 min) instead of vanishing on the first unconfigured-APNs blip;
+    a successful push removes the entry and logs it.
+  - `_load_schedule()` no longer crashes on a corrupt state file — backs it
+    up as `scheduled_calls.corrupt` once and starts fresh.
+  - `_scheduler_loop()` wraps each tick in try/except so no error can kill
+    the loop.
+- `scripts/check_scheduler_robust.py` pins the contract (5 checks, in-process,
+  temp state dir, no network); added to verify_all step 1.
+- Full `scripts/verify_all.sh` re-run after the prod restart: exit 0 ALL GREEN
+  (swift sanity + scheduler pin, bridge 15/15, gateway gate, live health,
+  parity + crons, native WebRTC e2e PASS).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 09:40 UTC (build-loop run) — maintenance sweep all green; loop hygiene fixes
 
 - Backlog 1–9 remain complete (git log + PROGRESS audit); no drift found.

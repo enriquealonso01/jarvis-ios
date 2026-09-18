@@ -20,6 +20,7 @@ step() { printf '\n=== %s ===\n' "$1"; }
 step "1/6 swift_sanity"
 if python3 scripts/swift_sanity.py; then :; else FAIL=1; fi
 if python3 scripts/check_drop_detection.py; then :; else FAIL=1; fi
+if python3 scripts/check_scheduler_robust.py; then :; else FAIL=1; fi
 
 step "2/6 bridge bearer probe (throwaway :916x)"
 if python3 scripts/probe_call_bearer_live.py --spawn; then :; else FAIL=1; fi

@@ -110,7 +110,17 @@ def health():
 
 def _load_schedule() -> list:
     if SCHEDULE_PATH.exists():
-        return json.loads(SCHEDULE_PATH.read_text() or "[]")
+        try:
+            return json.loads(SCHEDULE_PATH.read_text() or "[]")
+        except Exception as e:
+            # Corrupt state file must not kill the scheduler loop — back it up
+            # once and start fresh (PROGRESS 2026-09-18 09:50).
+            try:
+                SCHEDULE_PATH.rename(SCHEDULE_PATH.with_suffix(".corrupt"))
+                print(f"[bridge] schedule file corrupt (backed up as .corrupt): {e}")
+            except Exception:
+                pass
+            return []
     return []
 
 
@@ -119,22 +129,55 @@ def _save_schedule(items: list) -> None:
     SCHEDULE_PATH.write_text(json.dumps(items, indent=1))
 
 
-def _scheduler_loop() -> None:
+def _run_scheduler_tick() -> None:
+    """One scheduler pass. Robustness contract (PROGRESS 2026-09-18 09:50):
+    a malformed entry is dropped, a failed push retries up to 10 ticks then
+    drops, and no per-item error may escape to kill the loop."""
     from datetime import datetime, timezone
-    while True:
-        now = datetime.now(timezone.utc)
-        items = _load_schedule()
-        remaining = []
-        for item in items:
+    now = datetime.now(timezone.utc)
+    items = _load_schedule()
+    remaining = []
+    for item in items:
+        try:
             due = datetime.fromisoformat(item["at_iso"])
             if due.tzinfo is None:
                 due = due.replace(tzinfo=timezone.utc)
-            if due <= now:
-                _send_voip(item.get("device_token", ""), {"reason": item["reason"], "call_id": item["call_id"], "scheduled_by": item.get("scheduled_by"), "gateway_ws": "/voice-gw"})
-            else:
+            if due > now:
                 remaining.append(item)
-        if len(remaining) != len(items):
-            _save_schedule(remaining)
+                continue
+            payload = {"reason": item["reason"], "call_id": item["call_id"],
+                       "scheduled_by": item.get("scheduled_by"), "gateway_ws": "/voice-gw"}
+        except Exception as e:
+            # Malformed entry (bad/missing at_iso etc.) — never fixable, drop it.
+            print(f"[bridge] scheduler: dropping malformed entry {item.get('call_id', '?')}: {e}")
+            continue
+        try:
+            ok = _send_voip(item.get("device_token", ""), payload)
+        except Exception as e:
+            print(f"[bridge] scheduler: push error for {item.get('call_id', '?')}: {e}")
+            ok = False
+        if ok:
+            print(f"[bridge] scheduler: fired {item.get('call_id')} ({str(item.get('reason', ''))[:60]})")
+        else:
+            # Unconfigured APNs or transient push failure: retry, capped.
+            item["failures"] = item.get("failures", 0) + 1
+            if item["failures"] < 10:
+                remaining.append(item)
+                print(f"[bridge] scheduler: {item.get('call_id')} push failed (attempt {item['failures']}/10, retrying)")
+            else:
+                print(f"[bridge] scheduler: {item.get('call_id')} dropped after 10 failed push attempts")
+    if len(remaining) != len(items):
+        _save_schedule(remaining)
+
+
+def _scheduler_loop() -> None:
+    while True:
+        try:
+            _run_scheduler_tick()
+        except Exception as e:
+            # Never let one bad tick kill the scheduler thread — a dead loop
+            # means every future scheduled call silently never fires.
+            print(f"[bridge] scheduler tick error (loop survives): {e}")
         time.sleep(20)
 
 
