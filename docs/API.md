@@ -59,5 +59,8 @@ carries `gateway_ws: "/voice-gw"` per the contract in docs/GATEWAY.md.
 ## Pending until Enrique does his part
 - APNs: create .p8 key in App Store Connect (Keys tab), download, then JARVIS stores it at
   /opt/jarvis-ios-bridge/apns.key (root 600) and writes /opt/jarvis-ios-bridge/apns.env with
-  APNS_KEY_ID, APNS_TEAM_ID, APNS_P8_PATH, APNS_BUNDLE_ID=com.enriquecodes.jarvis.voip, APNS_SANDBOX=0.
+  APNS_KEY_ID, APNS_TEAM_ID, APNS_P8_PATH, APNS_BUNDLE_ID=com.enriquecodes.jarvis, APNS_SANDBOX=0.
+  IMPORTANT: APNS_BUNDLE_ID must equal the app's bundle identifier
+  (com.enriquecodes.jarvis) — Apple requires the VoIP push topic (`apns-topic`)
+  to be the app bundle ID for PushKit; a mismatched topic is rejected by APNs.
 - Device token: DONE — app POSTs to /register on launch; bridge persists it server-side.

@@ -1,5 +1,22 @@
 # PROGRESS
 
+## 2026-09-18 04:25 UTC (run 2) — VoIP push-topic bug fix + ARCHITECTURE.md
+
+- **Bug fixed before it cost a build**: `_send_voip` defaulted `apns-topic` to
+  `com.enriquecodes.jarvis.voip`, but the app bundle ID (project.yml, BUILD.md)
+  is `com.enriquecodes.jarvis`. Apple rejects VoIP pushes whose topic ≠ the
+  app's bundle ID — the first real ring would have silently failed after the
+  p8 install. Default corrected, docs/API.md pending-section corrected with an
+  explicit topic==bundle-ID warning.
+- Deployed live: py_compile gate → bridge restart → /health 200
+  (ok/apns_configured:false/scheduled:0, prod state untouched) + public
+  /bridge/health 200. Bridge still runs straight from the repo working tree.
+- docs/ARCHITECTURE.md written (was referenced by README/backlog #6 but never
+  existed): components map, Caddy routes, auth ladders, full call flow, and
+  the Enrique-gated ladder in one page.
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8.
+- Backlog 1–9 remain complete; nothing else actionable server-side.
+
 ## 2026-09-18 05:20 UTC — full-stack verification sweep — all green, awaiting Enrique
 
 - Backlog 1–9 confirmed complete (git log + entries below). No drift: bridge
