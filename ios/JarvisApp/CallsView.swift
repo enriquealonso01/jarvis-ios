@@ -17,6 +17,7 @@ struct CallsView: View {
     @State private var scheduled: [ScheduledCall] = []
     @State private var calling = false
     @State private var status: String?
+    @State private var showSchedule = false
 
     var body: some View {
         NavigationStack {
@@ -56,6 +57,18 @@ struct CallsView: View {
                         }
                     }
                     .disabled(calling)
+                    Button {
+                        Haptics.tap()
+                        showSchedule = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "calendar.badge.plus")
+                                .foregroundStyle(Color.jarvisAccent)
+                            Text("Schedule a call…")
+                                .font(.callout)
+                            Spacer()
+                        }
+                    }
                     if let status {
                         Text(status).font(.caption).foregroundStyle(.secondary)
                     }
@@ -110,7 +123,7 @@ struct CallsView: View {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(s.reason).font(.callout)
-                                Text(s.at_iso).font(.caption2).foregroundStyle(.secondary)
+                                Text(Self.whenLabel(s.at_iso)).font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Button {
@@ -129,6 +142,11 @@ struct CallsView: View {
             .navigationTitle("Calls")
             .refreshable { await loadScheduled() }
             .task { await loadScheduled() }
+            .sheet(isPresented: $showSchedule) {
+                ScheduleCallSheet { at, reason in
+                    await scheduleCall(at: at, reason: reason)
+                }
+            }
         }
     }
 
@@ -159,6 +177,23 @@ struct CallsView: View {
         String(format: "%d:%02d", s / 60, s % 60)
     }
 
+    /// Raw ISO (or anything unparseable) → "Sep 20, 2026 10:00" for the list.
+    static func whenLabel(_ iso: String) -> String {
+        // The bridge stores whatever /schedule received (ISO-8601 with
+        // +00:00 offset); the app always sends full internet-date-time.
+        let parser = ISO8601DateFormatter()
+        if let d = parser.date(from: iso) {
+            return d.formatted(date: .abbreviated, time: .shortened)
+        }
+        // Tolerate fractional seconds, then give up and show the raw string.
+        let frac = ISO8601DateFormatter()
+        frac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = frac.date(from: iso) {
+            return d.formatted(date: .abbreviated, time: .shortened)
+        }
+        return iso
+    }
+
     @MainActor
     private func loadScheduled() async {
         // GET /schedule/list accepts the app's dashboard Bearer (_auth_dual),
@@ -187,6 +222,81 @@ struct CallsView: View {
             }
         } catch {
             Haptics.error()
+        }
+    }
+
+    /// "Schedule a call…": POST /schedule on the bridge. The bridge's internal
+    /// scheduler fires the VoIP push when due (20s tick). The device token is
+    /// snapshotted server-side from the launch-time /register, so nothing
+    /// device-specific goes up here.
+    @MainActor
+    private func scheduleCall(at: Date, reason: String) async {
+        status = nil
+        do {
+            let iso = ISO8601DateFormatter().string(from: at)
+            struct SchedResp: Decodable { let call_id: String; let at: String }
+            let resp = try await CCClient.shared.post(
+                ServerConfig.shared.config.bridgeBaseURL + "/schedule",
+                body: ["at_iso": iso, "reason": reason, "scheduled_by": "ios-app"],
+                as: SchedResp.self)
+            scheduled.append(ScheduledCall(call_id: resp.call_id, at_iso: resp.at, reason: reason, scheduled_by: "ios-app"))
+            status = "Scheduled for \(at.formatted(date: .abbreviated, time: .shortened))."
+            Haptics.success()
+            showSchedule = false
+        } catch {
+            status = "Scheduling failed: \(error.localizedDescription)"
+            Haptics.error()
+        }
+    }
+}
+
+/// Composer for scheduling a future call: date+time picker + reason.
+struct ScheduleCallSheet: View {
+    var onSchedule: (Date, String) async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var when = Date().addingTimeInterval(3600)
+    @State private var reason = ""
+    @State private var busy = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("When") {
+                    DatePicker("Call at", selection: $when)
+                }
+                Section("Reason") {
+                    TextField("What should JARVIS call about?", text: $reason, axis: .vertical)
+                        .lineLimit(2...4)
+                }
+                Section {
+                    // /schedule expects ISO-8601; keep the picker honest.
+                    LabeledContent("Will fire at", value: when.formatted(date: .long, time: .standard))
+                        .font(.caption)
+                } footer: {
+                    Text("The bridge rings this phone via VoIP push when the time comes. Requires the APNs key to be installed.")
+                }
+            }
+            .navigationTitle("Schedule call")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if busy {
+                        ProgressView()
+                    } else {
+                        Button("Schedule") {
+                            busy = true
+                            Task {
+                                await onSchedule(when, reason.trimmingCharacters(in: .whitespaces))
+                                busy = false
+                            }
+                        }
+                        .disabled(reason.isEmpty)
+                    }
+                }
+            }
         }
     }
 }

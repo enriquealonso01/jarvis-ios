@@ -1,5 +1,24 @@
 # PROGRESS
 
+## 2026-09-18 09:14 UTC (build-loop run) — app can CREATE scheduled calls (last /schedule gap closed)
+
+- Gap: the Calls tab could list + cancel scheduled calls but had no way to
+  create one — `POST /schedule` was agent-only (voice tools) despite being
+  bearer-live since backlog #4/5.
+- CallsView: "Schedule a call…" row → new `ScheduleCallSheet` (DatePicker +
+  reason) → `scheduleCall(at:reason:)` POSTs `{at_iso (ISO-8601 Z), reason,
+  scheduled_by:"ios-app"}` to the bridge with the app Bearer; optimistic row
+  append from the echoed `{call_id, at}`, status line, haptics. Raw ISO in the
+  scheduled list now renders human-readable via `whenLabel` (Z + fractional-
+  seconds parsers, raw fallback).
+- Verified: swift_sanity OK (new symbols pinned). Throwaway-instance probe of
+  the exact app payload shape: 5/5 — schedule (Z + +00:00 shapes), echo `at`,
+  list shows entry, cancel. Full verify_all sweep: ALL GREEN (15/15 bridge
+  probe, gateway gate, live health, parity + crons, native WebRTC e2e).
+  Server unchanged — no deploy needed, prod untouched.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 09:02 UTC (build-loop run) — connect deadline actually enforced + answer-fail full teardown (drift fix)
 
 - Audit drift: the 08:20 run's PROGRESS entry claimed a 15s connect deadline in
