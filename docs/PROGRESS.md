@@ -1,5 +1,28 @@
 # PROGRESS
 
+## 2026-09-18 (late, run 2) — maintenance re-verification: all green, backlog remains complete
+
+- Full sweep re-run, no drift anywhere:
+  - Bridge prod :9160 /health 200 (ok / apns_configured:false / scheduled:0);
+    public https://jarvis.enriquecodes.com/bridge/health 200; voice-gw :9150
+    /healthz 200 (brain openai-realtime, realtime:true).
+  - Bridge server copy: prod runs from the repo working tree, so no drift by
+    construction; server/voice_gateway/gateway.py byte-identical to
+    /opt/voice-gw/gateway.py.
+  - probe_call_bearer_live.py on a fresh throwaway instance (:9164, isolated
+    state dir): **12/12 PASS** (bearer/HMAC ladders on /call, /schedule,
+    /schedule/list, /schedule/cancel, /secrets). Instance killed after; prod
+    state untouched (apns.env still empty → apns_configured:false, scheduled:0).
+  - probe_gateway_bearer_live.py: valid bearer reaches SDP handler (500 = gate
+    passed), invalid/no/refresh-kind all 401.
+  - scripts/swift_sanity.py: OK. git status clean, main synced with origin
+    (Everything up-to-date), repo unchanged since 05a8e30.
+- Nothing actionable without Enrique: the only remaining ladder is Xcode build
+  → TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md,
+  docs/API.md "Pending"). Reminder crons stay armed (apple-setup-guide
+  2026-09-19 13:00 UTC, loop-sunset 23:00 UTC).
+- NEEDS ENRIQUE (unchanged): the Xcode/TestFlight/APNs ladder.
+
 ## 2026-09-18 (late) — maintenance run: full re-verification, all green, nothing actionable
 
 - Repo clean and synced with origin/main. Backlog 1–9 remain complete; no new
