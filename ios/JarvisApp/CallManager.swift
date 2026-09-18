@@ -334,11 +334,17 @@ extension CallManager: PKPushRegistryDelegate {
 
     nonisolated func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
         guard type == .voIP else { completion(); return }
+        // PushKit's completion is a plain callback the system waits on from
+        // its own queue; capturing it (invoked exactly once, inside CallKit's
+        // report handler) is safe, but Swift 6.2's region check can't prove
+        // it — bind before the MainActor hop (same pattern as the CXActions).
+        nonisolated(unsafe) let reportCompletion = completion
+        nonisolated(unsafe) let pushPayload = payload
         Task { @MainActor in
             // completion() is deferred until CallKit accepts the incoming-call
             // report (reportNewIncomingCall's own handler) — the Apple-required
             // ordering that keeps killed/locked wakeups from being wedged out.
-            self.handleVoIPPayload(payload.dictionaryPayload, onReported: completion)
+            self.handleVoIPPayload(pushPayload.dictionaryPayload, onReported: reportCompletion)
         }
     }
 
