@@ -84,6 +84,55 @@ final class CallManager: NSObject, ObservableObject {
 
         let uuid = UUID()
         activeCallUUID = uuid
+        setupCallUI()
+        callState = "ringing"
+        // Report BEFORE returning from the VoIP push callback (hard requirement).
+        prov.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+            if let error { print("[CallManager] report incoming failed: \(error)") }
+        }
+    }
+
+    // MARK: Outgoing call ("Talk to JARVIS" — app-initiated, no APNs needed)
+
+    /// Places a DIRECT call from the app: we drive CallKit's start-call
+    /// action ourselves and dial the voice gateway immediately (no VoIP
+    /// push involved). This is the path that works before the APNs p8 is
+    /// installed, and it reuses the exact same WebRTC connect as answering.
+    func placeDirectCall() async {
+        guard activeCallUUID == nil else { return } // one call at a time
+        let uuid = UUID()
+        activeCallUUID = uuid
+        pendingAnswerPayload = VoIPPayload(
+            reason: "JARVIS call (from iOS app)",
+            callID: uuid.uuidString.prefix(8).description,
+            gatewayWS: "/voice-gw",
+            scheduledBy: "ios-app-direct")
+        logEntryID = CallLogStore.shared.add(reason: "JARVIS call (from iOS app)", outgoing: true)
+        setupCallUI()
+        callState = "dialing"
+        let handle = CXHandle(type: .generic, value: "JARVIS")
+        let start = CXStartCallAction(call: uuid, handle: handle)
+        start.isVideo = false
+        let transaction = CXTransaction(action: start)
+        callController?.request(transaction) { [weak self] error in
+            Task { @MainActor in
+                if let error {
+                    self?.callState = "failed: \(error.localizedDescription)"
+                    CallLogStore.shared.finish(id: self?.logEntryID, outcome: "failed")
+                    self?.logEntryID = nil
+                    self?.activeCallUUID = nil
+                    self?.pendingAnswerPayload = nil
+                    Haptics.error()
+                }
+                // On success we wait for perform(_:CXStartCallAction) — the
+                // actual WebRTC dial happens there (CallKit contract).
+            }
+        }
+    }
+
+    /// Shared CallKit UI setup (provider + controller) for both directions.
+    private func setupCallUI() {
+        guard provider == nil else { return }
         let config = CXProviderConfiguration(localizedName: "JARVIS")
         config.supportsVideo = false
         config.maximumCallsPerCallGroup = 1
@@ -93,11 +142,6 @@ final class CallManager: NSObject, ObservableObject {
         prov.delegate = self
         provider = prov
         callController = CXCallController()
-        callState = "ringing"
-        // Report BEFORE returning from the VoIP push callback (hard requirement).
-        prov.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
-            if let error { print("[CallManager] report incoming failed: \(error)") }
-        }
     }
 
     // MARK: Answer / end (driven by CXProviderDelegate)
@@ -175,7 +219,7 @@ final class CallManager: NSObject, ObservableObject {
         } else if let start = callStart, callState == "active" || callState.hasPrefix("active") {
             CallLogStore.shared.finish(id: logEntryID, outcome: "ended",
                                        durationSeconds: max(0, Int(Date().timeIntervalSince(start))))
-        } else if callState == "ringing" || callState == "connecting" {
+        } else if callState == "ringing" || callState == "connecting" || callState == "dialing" {
             // Never picked up (declined in CallKit, or push woke us and the
             // user let it ring out).
             CallLogStore.shared.finish(id: logEntryID, outcome: "missed")
@@ -243,6 +287,32 @@ extension CallManager: CXProviderDelegate {
             } catch {
                 action.fail()
                 self.callState = "failed: \(error.localizedDescription)"
+                CallLogStore.shared.finish(id: self.logEntryID, outcome: "failed")
+                self.logEntryID = nil
+                self.callStart = nil
+                Haptics.error()
+            }
+        }
+    }
+
+    /// Outgoing call: CallKit asks us to dial. Same WebRTC connect as
+    /// answering an incoming push, driven by placeDirectCall().
+    nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        Task { @MainActor in
+            do {
+                // CallKit contract: report the call as outgoing-connected so
+                // the system audio UI engages, then connect media.
+                provider.reportCall(with: action.callUUID, startedAt: Date())
+                try await self.connectWebRTC()
+                action.fulfill()
+            } catch {
+                action.fail()
+                self.callState = "failed: \(error.localizedDescription)"
+                CallLogStore.shared.finish(id: self.logEntryID, outcome: "failed")
+                self.logEntryID = nil
+                self.callStart = nil
+                self.activeCallUUID = nil
+                self.pendingAnswerPayload = nil
                 Haptics.error()
             }
         }

@@ -61,8 +61,8 @@ required = {
     "CCClient.swift": ["struct Attention", "struct WorkHistory"],
     "HomeView.swift": ["alertsCard", "Attention"],
     "ChatsView.swift": ["NewTaskSheet", "project/task", "lastMessage", "pollHistory", "decodedLines", "JARVIS is thinking"],
-    "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome"],
-    "CallsView.swift": ["durationSeconds", "outcome", "trackOutgoingLog"],
+    "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome", "placeDirectCall", "CXStartCallAction", "setupCallUI", "dialing"],
+    "CallsView.swift": ["durationSeconds", "outcome", "trackOutgoingLog", "Talk to JARVIS", "placeDirectCall"],
 }
 for fn, syms in required.items():
     path = os.path.join(APP, fn)

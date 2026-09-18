@@ -23,13 +23,35 @@ struct CallsView: View {
             List {
                 Section {
                     Button {
+                        Task { await mgr.placeDirectCall() }
+                    } label: {
+                        HStack {
+                            Image(systemName: "phone.fill")
+                                .foregroundStyle(Color.jarvisAccent)
+                            Text(mgr.callState == "idle" ? "Talk to JARVIS" : mgr.callState.hasPrefix("failed") ? "Talk to JARVIS" : "Calling…")
+                                .bold()
+                            Spacer()
+                        }
+                    }
+                    .disabled(mgr.activeCallUUID != nil)
+                    if mgr.activeCallUUID != nil && mgr.callState != "idle" {
+                        Button(role: .destructive) {
+                            mgr.endActiveCall()
+                        } label: {
+                            Label("End call", systemImage: "phone.down.fill")
+                        }
+                    }
+                    // Server-initiated ring: fires a VoIP push to this phone
+                    // (needs the APNs p8 installed; until then the bridge
+                    // queues it — kept for parity with the voice tools).
+                    Button {
                         Task { await callMe() }
                     } label: {
                         HStack {
-                            Image(systemName: "phone.arrow.up.right.fill")
-                                .foregroundStyle(Color.jarvisAccent)
-                            Text(calling ? "Calling…" : "Call me")
-                                .bold()
+                            Image(systemName: "phone.badge.waveform")
+                                .foregroundStyle(.secondary)
+                            Text("Ring this phone (server push)")
+                                .font(.callout)
                             Spacer()
                         }
                     }

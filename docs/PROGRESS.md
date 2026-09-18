@@ -1,5 +1,31 @@
 # PROGRESS
 
+## 2026-09-18 09:05 UTC (build-loop run) — direct in-app calls: "Talk to JARVIS" works without APNs
+
+- Gap found: the app's ONLY call path was the "Call me" button, which loops a
+  VoIP push back to the same phone — dead (`pushed:false`) until Enrique
+  installs the APNs p8. New **direct outgoing-call path** removes that
+  dependency: the app dials the voice gateway itself, same WebRTC contract as
+  answering (verified live by the e2e probe).
+  - CallManager.placeDirectCall(): builds the pending payload, writes the
+    outgoing log entry, and requests a CXStartCallAction transaction; the new
+    `perform(CXStartCallAction)` handler reports the call started, then runs
+    the exact same connectWebRTC() as incoming answer. Fail paths (including
+    answer-fail, previously unstamped) now write "failed" to the log.
+  - Provider/controller setup extracted to setupCallUI() and shared by both
+    directions; "dialing" state stamps "missed" if ended before connect.
+  - CallsView: primary gold "Talk to JARVIS" button (+ in-call "End call"),
+    old push-ring demoted to a secondary "Ring this phone (server push)"
+    row with an honest caption about the p8 requirement.
+- swift_sanity extended (pins placeDirectCall/CXStartCallAction/setupCallUI/
+  dialing/Talk-to-JARVIS symbols); structural audit 10/10 on the new path.
+- Full `scripts/verify_all.sh`: exit 0 ALL GREEN (bridge 15/15 bearer probe,
+  gateway gate, live health, parity + crons, native WebRTC e2e vs live gateway).
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md). Note: with this change, the app is fully
+  usable for voice the moment it's installed — the p8 only adds server-rung
+  calls (WhatsApp/voice "call_enrique") to the same phone.
+
 ## 2026-09-18 08:40 UTC (build-loop run) — chat thread polling + live send UX, CCClient force-unwrap removal
 
 - **Chats: reply polling (backlog #2 gap)** — `WorkThreadView` loaded history
