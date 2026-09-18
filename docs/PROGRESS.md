@@ -1,5 +1,23 @@
 # PROGRESS
 
+## 2026-09-18 07:35 UTC (build-loop run) — contract audit vs live dashboard: `live`→`active` field fix
+
+- Audited every Decodable model in the app against the LIVE dashboard
+  responses (minted access Bearer, :9119): vitals, zai_usage windows,
+  automations, activity sessions, dispatch board, work history. One real
+  mismatch found: `Activity.Session.live` does not exist server-side — the
+  dashboard emits `active` (line ~1057 control_center.py). The LIVE badge on
+  Home's Current Work card would never have shown. Fixed in CCClient.swift +
+  HomeView.swift.
+- All other shapes verified field-by-field against live payloads (incl. the
+  zai 5h window and automations item keys) — no other drift.
+- Full sweep: swift_sanity OK, bridge probe 15/15 (throwaway instance, prod
+  untouched), verify_all ALL GREEN, both services active, gateway mirror
+  identical, native WebRTC e2e PASS.
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md).
+
+
 ## 2026-09-18 07:30 UTC (build-loop run) — first-call hardening (mic permission path)
 
 - Audited the app for on-device silent-failure classes beyond the wire probes.

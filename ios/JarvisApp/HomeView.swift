@@ -135,7 +135,7 @@ struct HomeView: View {
                                 if let ago = s.ago_seconds {
                                     Text("· \(Self.ago(ago))").font(.caption2).foregroundStyle(.secondary)
                                 }
-                                if s.live == true {
+                                if s.active == true {
                                     Text("· LIVE").font(.caption2.bold()).foregroundStyle(.green)
                                 }
                             }

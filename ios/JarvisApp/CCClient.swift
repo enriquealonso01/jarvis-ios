@@ -161,7 +161,7 @@ struct Activity: Decodable {
         let model: String?
         let messages: Int?
         let ago_seconds: Int?
-        let live: Bool?
+        let active: Bool?
     }
     let available: Bool
     let sessions: [Session]?
