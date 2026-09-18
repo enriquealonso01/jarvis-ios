@@ -1,3 +1,22 @@
+## 2026-09-18 21:35 UTC (build-loop run) — full verification sweep ALL GREEN + cron-integrity audit; loop holds at terminal wait
+
+- Re-verified: verify_all.sh ALL GREEN end-to-end (doc-contract pins, swift_sanity,
+  bridge bearer probe 16/16, gateway bearer gate, live health bridge :9160 ok /
+  gateway :9150 realtime:true / public /bridge/health 200, prod parity both units
+  active + gateway mirror byte-identical, native WebRTC e2e PASS with hello+hangup).
+  ASC state unchanged: build 1 VALID + IN_BETA_TESTING, no new uploads/rejections.
+  Repo clean and in sync with origin/main; backlog 1–9 complete, no code delta.
+- Cron-integrity audit (this run's addition): (1) sunset job's hardcoded pause
+  target c4b099e2cf11 == the live jarvis-ios-build-loop id — tonight's shutdown
+  will pause the right job; (2) device-watch script verified on disk at
+  /root/.hermes/scripts/testflight_device_watch.sh and executes clean (silent
+  wait-tick while device_registered=false, as designed); (3) 9AM guide cron
+  verified telling Enrique build 1 only (no Xcode/upload mentions); (4) bridge
+  schedule clean (scheduled:0), watch state "wait".
+- device_registered still FALSE — waiting on the one phone-only step.
+- NEEDS ENRIQUE (unchanged, phone-only): install TestFlight, accept invite,
+  open build 1 once → /register fires → device-watch announces → done.
+
 ## 2026-09-18 21:20 UTC (build-loop run) — honesty pass: stale crons + docs corrected to the build-1 reality; nothing else to build
 
 - Re-verified on this run: verify_all.sh ALL GREEN (fresh sweep, bridge 16/16,
