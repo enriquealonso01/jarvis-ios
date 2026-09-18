@@ -1,5 +1,40 @@
 # PROGRESS
 
+## 2026-09-18 03:00 UTC — backlog #6: gateway native-client WebRTC access LIVE
+
+- /opt/voice-gw/gateway.py auth gate now accepts `Authorization: Bearer <access
+  token>` (the dashboard `basic` provider's stateless HMAC token — same one the
+  app already holds in Keychain from the RFC 8252 flow). Verified locally against
+  the signing secret the gateway already loads: sig + kind=access + exp. Cookie
+  path (CC orb/PWA) untouched.
+- Backup before edit: /root/voice-gw-backup-20260918-025349.py. py_compile gate
+  passed; service restarted; /healthz ok (brain openai-realtime); last-known-good
+  snapshot updated post-verify.
+- Live auth matrix verified (scripts/probe_gateway_bearer_live.py): valid bearer
+  passes gate → reaches SDP handler (500 only because probe sends no SDP — that
+  is a handler-level error, proving 401 is gone); invalid/no/refresh-kind → 401.
+- docs/GATEWAY.md written: offer/answer recipe for the iOS app (same endpoint as
+  the orb), say/hangup controls, VoIP push payload contract, refresh-on-401 note.
+- server/voice_gateway/gateway.py = synced deployed copy for traceability.
+- Next: backlog #3 Secrets tab → server-side storage; #4 CallKit/PushKit/WebRTC
+  client in the app (now unblocked server-side).
+
+## 2026-09-18 02:35 UTC — bridge /register + scheduled-call list/cancel live (backlog #5)
+- POST /register: app sends APNs device_token on launch; bridge persists DEVICE_TOKEN=
+  into /opt/jarvis-ios-bridge/apns.env (0600) via _save_env_key; auto-injected into every
+  /call push and snapshotted into each /schedule entry. Rejects short tokens (422), bad
+  sigs (401).
+- GET /schedule/list (HMAC over empty body) and POST /schedule/cancel ({call_id} cancels
+  one, {} cancels all). Scheduler loop fixed to read the schedule once per tick.
+- Tested 15/15 functional checks against a throwaway instance (:9161, isolated state dir):
+  register good/bad-sig/short-token, 0600 perms, schedule x2, list, cancel one/all,
+  /call falls back cleanly with no APNs. Test instance + temp state killed afterwards.
+- Live service restarted (py_compile gate passed); /health verified ok after restart;
+  live /register round-trip verified, then test token scrubbed from apns.env.
+- docs/API.md updated with all three endpoints.
+- Next: backlog #3 Secrets tab -> gateway secret-scope endpoint wiring, #4 CallKit/
+  PushKit/WebRTC in the app, then #6 gateway native-client offer/answer.
+
 ## 2026-09-18 02:20 UTC — iOS app shell committed + GitHub repo live (backlog #1)
 - GitHub repo created (private) and pushed: github.com/enriquealonso01/jarvis-ios (main @ 515b445).
 - ios/JarvisApp: SwiftUI sources for the full shell — App entry, RootTabView
@@ -29,19 +64,3 @@
 - Backlog v1: SwiftUI app shell (CC view, chats, secrets, call log), CallKit+PushKit,
   WebRTC client vs voice gateway, push_bridge FastAPI + systemd, fastlane, WhatsApp/voice
   "call me" tooling, scheduled calls cron
-
-## 2026-09-18 02:35 UTC — bridge /register + scheduled-call list/cancel live (backlog #5)
-- POST /register: app sends APNs device_token on launch; bridge persists DEVICE_TOKEN=
-  into /opt/jarvis-ios-bridge/apns.env (0600) via _save_env_key; auto-injected into every
-  /call push and snapshotted into each /schedule entry. Rejects short tokens (422), bad
-  sigs (401).
-- GET /schedule/list (HMAC over empty body) and POST /schedule/cancel ({call_id} cancels
-  one, {} cancels all). Scheduler loop fixed to read the schedule once per tick.
-- Tested 15/15 functional checks against a throwaway instance (:9161, isolated state dir):
-  register good/bad-sig/short-token, 0600 perms, schedule x2, list, cancel one/all,
-  /call falls back cleanly with no APNs. Test instance + temp state killed afterwards.
-- Live service restarted (py_compile gate passed); /health verified ok after restart;
-  live /register round-trip verified, then test token scrubbed from apns.env.
-- docs/API.md updated with all three endpoints.
-- Next: backlog #3 Secrets tab -> gateway secret-scope endpoint wiring, #4 CallKit/
-  PushKit/WebRTC in the app, then #6 gateway native-client offer/answer.
