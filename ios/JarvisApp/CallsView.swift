@@ -3,13 +3,6 @@ import SwiftUI
 /// Calls tab (backlog #4): "Call me" via bridge /call (Bearer auth now
 /// accepted), live call state from CallManager, scheduled calls list/cancel.
 struct CallsView: View {
-    struct CallEntry: Identifiable {
-        let id = UUID()
-        let reason: String
-        let at: Date
-        let outgoing: Bool
-    }
-
     struct ScheduledCall: Identifiable, Decodable {
         let call_id: String
         let at_iso: String
@@ -19,7 +12,8 @@ struct CallsView: View {
     }
 
     @ObservedObject private var mgr = CallManager.shared
-    @State private var log: [CallEntry] = []
+    // Persistent log (survives restarts; incoming pushes land here too).
+    @ObservedObject private var callLog = CallLogStore.shared
     @State private var scheduled: [ScheduledCall] = []
     @State private var calling = false
     @State private var status: String?
@@ -62,10 +56,10 @@ struct CallsView: View {
                 }
 
                 Section("Call log") {
-                    if log.isEmpty {
+                    if callLog.entries.isEmpty {
                         Text("No calls yet.").font(.caption).foregroundStyle(.secondary)
                     }
-                    ForEach(log.reversed()) { c in
+                    ForEach(callLog.entries.reversed()) { c in
                         HStack {
                             Image(systemName: c.outgoing ? "arrow.up.right.phone" : "phone.fill")
                                 .foregroundStyle(.secondary)
@@ -121,7 +115,7 @@ struct CallsView: View {
             status = resp.pushed
                 ? "VoIP push sent — answer via CallKit when it rings."
                 : "Bridge accepted the call (APNs not configured yet — push queued server-side)."
-            log.append(CallEntry(reason: "JARVIS call (from iOS app)", at: Date(), outgoing: true))
+            callLog.add(reason: "JARVIS call (from iOS app)", outgoing: true)
             Haptics.success()
         } catch {
             status = "Call failed: \(error.localizedDescription)"

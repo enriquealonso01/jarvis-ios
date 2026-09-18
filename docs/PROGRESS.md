@@ -1,5 +1,20 @@
 # PROGRESS
 
+## 2026-09-18 07:45 UTC (build-loop run) — persistent call log (incoming + outgoing, survives restarts)
+
+- Audited the Calls tab for silent-failure gaps and found one: the call log
+  was `@State` in `CallsView` — it reset on every app restart AND incoming
+  JARVIS calls (the core mission) never appeared in it at all. Fixed with a
+  new `CallLogStore.swift` (UserDefaults-backed, 100-entry cap): written from
+  `CallManager.handleVoIPPayload` (so a PushKit wake while killed/locked is
+  recorded even if never answered) and from the "Call me" button. CallsView
+  now renders the shared store; `CallEntry` struct removed.
+- swift_sanity extended to structurally pin CallLogStore; full
+  `scripts/verify_all.sh` sweep: exit 0 ALL GREEN (6/6 incl. native WebRTC
+  e2e vs live gateway).
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 07:35 UTC (build-loop run) — contract audit vs live dashboard: `live`→`active` field fix
 
 - Audited every Decodable model in the app against the LIVE dashboard

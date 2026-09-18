@@ -57,6 +57,7 @@ required = {
     "AuthStore.swift": ["func applyManualToken"],
     "SecretsView.swift": ["lockedView", "LAContext", "secretsList"],
     "JarvisApp.swift": ["RootTabView", "GlassCard"],
+    "CallLogStore.swift": ["final class CallLogStore", "struct Entry: Codable", "func add(reason"],
 }
 for fn, syms in required.items():
     path = os.path.join(APP, fn)

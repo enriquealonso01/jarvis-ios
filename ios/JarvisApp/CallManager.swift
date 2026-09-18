@@ -62,6 +62,9 @@ final class CallManager: NSObject, ObservableObject {
         )
         lastPayload = p
         pendingAnswerPayload = p
+        // Persistent log: record the incoming call even if it's never answered
+        // (PushKit may wake us while killed; this is the only trace it happened).
+        CallLogStore.shared.add(reason: p.reason, outgoing: false)
 
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: "JARVIS")
