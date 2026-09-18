@@ -1,5 +1,17 @@
 # PROGRESS
 
+## 2026-09-18 04:25 UTC — backlog #7: fastlane Fastfile + one-command upload.sh
+
+- `ios/fastlane/Fastfile`: `testflight` (xcodegen → archive → upload, skips
+  processing wait), `build_only`, `compile_check` (no-signing build for
+  sanity). `scripts/upload.sh` wraps both (syntax-checked; Fastfile lanes
+  verified present). `docs/FASTLANE.md`: one-time App Store Connect API-key
+  auth setup + every-upload ritual for Enrique's Mac.
+- NEEDS ENRIQUE: fastlane install + API key on his Mac (docs/FASTLANE.md);
+  signed upload is Mac-only by design.
+- Next: backlog #8 `call_enrique` tool for WhatsApp/voice JARVIS + scheduled-
+  call cron support + upload reminder.
+
 ## 2026-09-18 04:05 UTC — backlog #4: CallKit + PushKit + WebRTC client (app) + bearer-authed calling endpoints — LIVE
 
 - Bridge: `/call`, `/schedule`, `/schedule/cancel`, `/schedule/list` now accept

@@ -1,0 +1,55 @@
+# fastlane for jarvis-ios (backlog #7)
+#
+# Enrique runs everything signed on his Mac:
+#   cd ios && fastlane testflight
+# Uploads to TestFlight in one command (uses App Store Connect API key or
+# FASTLANE_USER/FASTLANE_PASSWORD env; see docs/BUILD.md).
+#
+# The build agent on the JARVIS box can run `fastlane build_only` logic via
+# scripts/upload.sh --dry-run (xcodebuild dry-run where a Mac is available);
+# everything requiring signing stays on the Mac per the mission rules.
+
+default_platform(:ios)
+
+platform :ios do
+  desc "Build + upload to TestFlight in one command"
+  lane :testflight do
+    # XcodeGen project is committed; regenerate to be safe.
+    sh("xcodegen")
+
+    build_app(
+      project: "JarvisApp.xcodeproj",
+      scheme: "JarvisApp",
+      configuration: "Release",
+      export_method: "app-store",
+      clean: true
+    )
+
+    # APNs is not needed for upload; TestFlight internal testers get the build.
+    upload_to_testflight(
+      skip_waiting_for_build_processing: true,
+      distribute_external: false
+    )
+
+    UI.success("Uploaded to TestFlight — TestFlight app will show the build after processing.")
+  end
+
+  desc "Build only (no upload) — sanity check that everything compiles/signs"
+  lane :build_only do
+    sh("xcodegen")
+    build_app(
+      project: "JarvisApp.xcodeproj",
+      scheme: "JarvisApp",
+      configuration: "Release",
+      export_method: "app-store",
+      clean: true,
+      skip_package_ipa: false
+    )
+  end
+
+  desc "Run unit-agnostic compile check (fast, no signing)"
+  lane :compile_check do
+    sh("xcodegen")
+    sh("xcodebuild -project JarvisApp.xcodeproj -scheme JarvisApp -destination 'generic/platform=iOS' build CODE_SIGNING_ALLOWED=NO")
+  end
+end
