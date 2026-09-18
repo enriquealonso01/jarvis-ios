@@ -129,10 +129,12 @@ struct Overview: Decodable {
 }
 
 /// The push bridge's own health (GET /health): apns_configured tells us
-/// whether VoIP pushes can actually ring the phone — surfaced on Home.
+/// whether VoIP pushes can actually ring the phone, device_registered whether
+/// THIS phone completed its /register handshake — both surfaced on Home.
 struct BridgeHealth: Decodable {
     let ok: Bool?
     let apns_configured: Bool?
+    let device_registered: Bool?
     let scheduled: Int?
 }
 

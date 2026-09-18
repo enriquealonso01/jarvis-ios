@@ -49,6 +49,14 @@ build = open(os.path.join(ROOT, "docs", "BUILD.md")).read()
 check("BUILD.md still documents the Push Notifications capability requirement",
       "Push Notifications" in build)
 
+# 5. /health device_registered contract (API.md): the documented boolean must
+#    actually be returned by bridge health() — watch crons + Home rely on it
+#    to detect the phone's /register handshake without exposing token material.
+check("bridge /health returns device_registered",
+      '"device_registered": bool(cfg.get("DEVICE_TOKEN"))' in bridge)
+check("API.md documents device_registered in /health",
+      "device_registered" in api[i:])
+
 print()
 if failures:
     print(f"{len(failures)} DOC CONTRACT FAILURE(S)")

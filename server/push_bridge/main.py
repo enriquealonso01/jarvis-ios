@@ -105,7 +105,12 @@ class ScheduleReq(CallReq):
 @app.get("/health")
 def health():
     cfg = _load_env()
-    return {"ok": True, "apns_configured": bool(cfg.get("APNS_KEY_ID")), "scheduled": len(_load_schedule())}
+    # device_registered (backlog #4 close-out): lets the CC/app/watch crons see
+    # WHEN the phone has completed its /register handshake without exposing any
+    # token material (boolean presence only — never the token or its length).
+    return {"ok": True, "apns_configured": bool(cfg.get("APNS_KEY_ID")),
+            "device_registered": bool(cfg.get("DEVICE_TOKEN")),
+            "scheduled": len(_load_schedule())}
 
 
 def _load_schedule() -> list:

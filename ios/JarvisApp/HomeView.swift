@@ -95,6 +95,13 @@ struct HomeView: View {
                         Text("· ring pending APNs setup")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
+                    if bridgeHealth?.device_registered == false {
+                        // This phone hasn't completed /register yet (fresh
+                        // install, or push woke us before login). Server-side
+                        // "call me" can't reach us until it lands — visible.
+                        Text("· device not registered")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Text(uptimeLabel).font(.caption2).foregroundStyle(.tertiary)
                 }

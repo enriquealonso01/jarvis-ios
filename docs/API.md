@@ -20,7 +20,9 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   OR the iOS app's `Authorization: Bearer <dashboard token>` (added with backlog #4).
 - `POST /schedule/cancel` `{call_id?}` -> `{cancelled: N}`. With call_id cancels that one;
   with empty body `{}` cancels all pending.
-- `GET /health` -> `{ok, apns_configured, scheduled}`.
+- `GET /health` -> `{ok, apns_configured, device_registered, scheduled}`.
+  `device_registered` = the phone has completed POST /register (boolean
+  presence signal only — the token itself is never exposed here).
 
 ## Named secrets (backlog #3, added 2026-09-18)
 

@@ -1,3 +1,26 @@
+## 2026-09-18 21:05 UTC (build-loop run) — registration loop closed: device_registered on /health + self-removing watch; stale forge call cancelled
+
+- Backlog re-verified COMPLETE (1–9): all code in HEAD, verify_all ALL GREEN
+  after this run's changes (bearer probe 16/16, gateway gate, prod parity,
+  WebRTC e2e PASS). TestFlight still: build 1 VALID + IN_BETA_TESTING.
+- Registration loop closed (the last blind spot): bridge /health now returns
+  `device_registered` (boolean — flips true the moment the phone POSTs
+  /register; no token material). Verified live: `{"ok":true,"apns_configured":
+  true,"device_registered":false,"scheduled":0}` after bridge restart.
+- App: BridgeHealth decodes the new field; Home SYSTEM card shows
+  "· device not registered" while it's false (same visible-not-silent contract
+  as the APNs hint). Ships with the next tagged build — build 2 not burned for
+  a cosmetic-only label while build 1 is still uninstalled.
+- Watch armed: cron `jarvis-ios-device-watch` (15m, Ops group) prints REGISTERED
+  + removes itself when the field flips; WAIT announced once, then silent
+  ticks (state file /tmp/.jarvis_ios_device_watch_state); 192-repeat expiry.
+- Housekeeping: cancelled the stale forge-validation scheduled call
+  (acbfbcd4, was parked at 2030); bridge schedule now clean (scheduled:0).
+  Removed dead empty ios/Sources/ tree. Doc-contract pins extended to cover
+  the device_registered contract (check 5 in check_doc_contracts.py).
+- NEEDS ENRIQUE (unchanged, phone-only): install TestFlight, accept invite,
+  open build 1 once → /register fires → watch announces → mission complete.
+
 ## 2026-09-18 20:45 UTC (build-loop run) — TestFlight LIVE: build 1 VALID + IN_BETA_TESTING; "ingest stall" was ITMS-90683 all along
 
 - ROOT CAUSE FOUND: builds 19/20/21 never "stalled in ingest" — they FAILED
