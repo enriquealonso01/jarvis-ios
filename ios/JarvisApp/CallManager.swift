@@ -199,9 +199,14 @@ final class CallManager: NSObject, ObservableObject {
         case "state":
             let st = msg["state"] as? String ?? ""
             let label = msg["label"] as? String
-            if st == "speaking" { callState = "active · speaking" }
+            if st == "error" {
+                // Gateway pipeline died mid-call (session.py now pushes this
+                // on a crash). Fail the call properly: CallKit ended + log
+                // stamp + teardown — never leave the phone on a dead line.
+                handleConnectionFailure(label ?? "gateway session error")
+            }
+            else if st == "speaking" { callState = "active · speaking" }
             else if st == "working" { callState = label.map { "active · \($0)" } ?? "active · working" }
-            else if st == "error" { callState = "failed: \(label ?? "gateway error")" }
             else { sessionInfo = label ?? st }
         case "transcript":
             if msg["role"] as? String == "assistant", let text = msg["text"] as? String {

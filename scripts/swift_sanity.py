@@ -61,7 +61,7 @@ required = {
     "CCClient.swift": ["struct Attention", "struct WorkHistory"],
     "HomeView.swift": ["alertsCard", "Attention"],
     "ChatsView.swift": ["NewTaskSheet", "project/task", "lastMessage", "pollHistory", "decodedLines", "JARVIS is thinking"],
-    "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome", "placeDirectCall", "CXStartCallAction", "setupCallUI", "dialing"],
+    "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome", "placeDirectCall", "CXStartCallAction", "setupCallUI", "dialing", "handleConnectionFailure"],
     "CallsView.swift": ["durationSeconds", "outcome", "trackOutgoingLog", "Talk to JARVIS", "placeDirectCall"],
 }
 for fn, syms in required.items():

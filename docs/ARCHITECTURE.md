@@ -52,9 +52,13 @@ Same Pipecat pipeline for every surface (web orb, PWA, native app):
 WebRTC offer/answer at `/api/offer` (auth: dashboard cookie OR Bearer access
 token — added 2026-09-18 for native clients), `/api/say`, `/api/hangup`,
 `/healthz`. The iOS payload field `gateway_ws:"/voice-gw"` tells the app which
-public path prefixes to use. Repo copy `server/voice_gateway/gateway.py` is a
-synced mirror for traceability; edits go through py_compile gate + restart +
-healthz verify (last-known-good snapshot kept).
+public path prefixes to use. Repo copies `server/voice_gateway/gateway.py` +
+`server/voice_gateway/session.py` are synced mirrors for traceability; edits
+go through py_compile gate + restart + healthz verify (last-known-good
+snapshot kept). On a mid-call pipeline crash, `VoiceSession._run()` pushes
+`{type:"state", state:"error", label}` over the app data channel before
+closing (added 2026-09-18) — the iOS app turns that into CallKit call-ended +
+a "failed" call-log stamp instead of dead air.
 
 Native-client specifics (added 2026-09-18, build-loop audit): the iOS app
 sends `request_data: {surface: "ios", reason}` in its offer body. The gateway

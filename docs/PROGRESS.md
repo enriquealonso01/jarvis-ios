@@ -1,5 +1,30 @@
 # PROGRESS
 
+## 2026-09-18 09:20 UTC (build-loop run) — mid-call dead-air fix on both ends (gateway error-state push + app fail-fast)
+
+- Backlog 1–9 re-audited (git log + PROGRESS): all landed. This run closed a
+  real remaining call-path gap: **mid-call dead air**. If the gateway voice
+  pipeline crashed mid-call, `VoiceSession._run()` only logged the exception —
+  the client kept a live WebRTC connection to a dead pipeline (no audio, no
+  hint), and the app's old `state:"error"` handler merely relabelled the call
+  state without ending the CallKit call or stamping the log.
+  - Gateway (`/opt/voice-gw/session.py`, deployed): `_run()` now pushes
+    `{type:"state", state:"error", label:"session error: …"}` over the app
+    data channel before closing. py_compile passed → restart → healthz ok →
+    native WebRTC e2e probe re-run: PASS. Backup at
+    `/opt/voice-gw/session.py.bak-pre-errstate`.
+  - App (`CallManager.swift`): `handleAppMessage` now routes `state:"error"`
+    into `handleConnectionFailure` — CallKit call reported ended, log stamped
+    "failed", peer connection hung up, haptic error. Idempotency guard in
+    handleConnectionFailure prevents double-teardown with the ICE path.
+  - `server/voice_gateway/session.py` added to the repo as a synced mirror
+    (same traceability pattern as gateway.py); ARCHITECTURE.md updated.
+  - swift_sanity pins handleConnectionFailure; full `scripts/verify_all.sh`
+    sweep: exit 0 ALL GREEN (bridge 15/15, gateway gate, live health, parity,
+    crons, native WebRTC e2e vs the freshly restarted gateway).
+- NEEDS ENRIQUE (unchanged): Xcode build → TestFlight upload → APNs p8
+  (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 09:05 UTC (build-loop run) — direct in-app calls: "Talk to JARVIS" works without APNs
 
 - Gap found: the app's ONLY call path was the "Call me" button, which loops a
