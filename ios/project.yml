@@ -37,6 +37,7 @@ targets:
           - UIInterfaceOrientationPortrait
         UIUserInterfaceStyle: Dark
         NSFaceIDUsageDescription: "Unlock JARVIS secrets."
+        NSMicrophoneUsageDescription: "JARVIS needs the microphone for voice calls."
         ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes:
           - audio

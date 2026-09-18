@@ -131,12 +131,9 @@ struct CallsView: View {
 
     @MainActor
     private func loadScheduled() async {
-        // GET /schedule/list authenticates with HMAC over an empty body on the
-        // agent side; the Bearer path isn't enabled for GETs, so we read via a
-        // signed helper only if the app ever gets one. For now: hidden unless
-        // the bridge later adds Bearer GET support.
+        // GET /schedule/list accepts the app's dashboard Bearer (_auth_dual),
+        // same as every other call endpoint.
         struct ListResp: Decodable { let scheduled: [ScheduledCall] }
-        // Attempt a Bearer GET; if the bridge starts accepting it this lights up.
         do {
             let resp = try await CCClient.shared.get(
                 ServerConfig.shared.config.bridgeBaseURL + "/schedule/list",

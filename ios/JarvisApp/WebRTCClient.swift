@@ -37,6 +37,32 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
 
     nonisolated(unsafe) static var activeAudioSession: AVAudioSession?
 
+    /// Ask for mic permission BEFORE creating the offer. Without this the
+    /// prompt can surface mid-call (or be silently denied after a prior
+    /// rejection) and the call runs one-way / dead. Returns true if the mic
+    /// is usable.
+    static func ensureMicrophonePermission() async -> Bool {
+        // iOS 17+: AVAudioApplication.requestRecordPermission is the
+        // non-deprecated API; fall back to AVAudioSession's for older sims.
+        if #available(iOS 17.0, *) {
+            let granted: Bool = await withCheckedContinuation { cont in
+                AVAudioApplication.requestRecordPermission { ok in cont.resume(returning: ok) }
+            }
+            guard granted else { return false }
+        } else {
+            let granted: Bool = await withCheckedContinuation { cont in
+                AVAudioSession.sharedInstance().requestRecordPermission { ok in cont.resume(returning: ok) }
+            }
+            guard granted else { return false }
+        }
+        // Pre-warm the session so the first audio unit start happens with
+        // permission already granted and the category set.
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
+        return true
+    }
+
+
     static func activateAudioSession(_ session: AVAudioSession) {
         activeAudioSession = session
         try? session.setMode(.voiceChat)
@@ -62,6 +88,12 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         let config = RTCConfiguration()
         config.iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
         config.sdpSemantics = .unifiedPlan
+
+        // Mic permission + session category BEFORE the offer — otherwise the
+        // prompt can land mid-call or the session runs one-way.
+        guard await ensureMicrophonePermission() else {
+            throw CallError.microphoneDenied
+        }
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
 
         let pc = sharedFactory.peerConnection(with: config, constraints: constraints, delegate: client)
@@ -145,10 +177,12 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
 
     enum CallError: LocalizedError {
         case sdp
+        case microphoneDenied
         case gateway(String)
         var errorDescription: String? {
             switch self {
             case .sdp: return "could not build WebRTC offer"
+            case .microphoneDenied: return "microphone access denied — enable it in Settings to place calls"
             case .gateway(let why): return "gateway: \(why)"
             }
         }
