@@ -1,3 +1,51 @@
+## 2026-09-18 22:35 UTC (build-loop run) — APNs delivery path PROBED for the first time: key is ASC-only, REJECTED by APNs (InvalidProviderToken) — new key = the one new NEEDS-ENRIQUE item
+
+- Gap found and closed: `_send_voip` had only ever been exercised in its
+  *unconfigured* branch (`pushed:false`, no p8). The p8 IS installed
+  (apns_configured:true since 16:37 UTC) but no device ever registered, so
+  Apple's verdict on the key itself was still unknown. New
+  `scripts/probe_apns_delivery.py` mints the bridge's exact provider JWT
+  (pyjwt ES256, kid header) and POSTs a syntactically valid, guaranteed-
+  unregistered dummy token (DEADBEEF…9999) to the configured host.
+  `400 BadDeviceToken` = everything healthy, no phone yet; anything else =
+  named diagnosis.
+- **THE FINDING: the live key (kid 2PMV4SF2LS) is REJECTED by APNs — both
+  hosts answer `403 InvalidProviderToken` (production AND sandbox checked,
+  iat skews 0/±5/±30 to rule out clock drift, curl + httpx + bridge's own
+  stack). The same key signs ASC API calls fine (poller green all day;
+  /v1/apps 200 re-verified this run). Diagnosis: the key was created in
+  App Store Connect WITHOUT the "Apple Push Notifications service (APNs)"
+  capability — ASC-only keys are accepted by api.appstoreconnect but not by
+  api.push.** Ruled out: team ID (APNS_TEAM_ID 5ZXB95KW57 == ASC seed ID,
+  confirmed via /v1/bundleIds), topic (== bundle ID), hosts, clocks, egress
+  (raw h2 preface test to api.push.apple.com passes).
+- Consequence, honestly stated: **until the key is replaced, NO VoIP push can
+  be delivered.** The whole "pushed:false = just install TestFlight" story was
+  incomplete — even with the phone registered, /call would still fail at
+  Apple. Better to know tonight than on the first real "call me".
+- NEEDS ENRIQUE (web, ~2 min; NEW, replaces nothing): developer.apple.com →
+  Certificates, Identifiers & Profiles → Keys → create key WITH "Apple Push
+  Notifications service (APNs)" checked → download the .p8 and send it to
+  JARVIS (secret link is fine). Install + apns.env update + bridge restart +
+  probe re-run are all agent-side; probe must then print
+  `400 BadDeviceToken`. Documented in docs/BUILD.md "APNs key status" and
+  docs/API.md "Pending".
+- Bridge hardening (deployed live): `_send_voip` failure is now LOUD —
+  non-200 logs `[bridge] APNs push REJECTED: HTTP <code> <reason>
+  (topic=…, host=…)`; empty-token path gets its own distinct log line, so
+  "no device" never masquerades as "APNs broken" again. Deployed per the
+  safe path: py_compile OK → LKG snapshot (/opt/jarvis-ios-bridge-lkg/) →
+  idle-window restart 22:22 UTC (gateway quiet ≥3 min) → /health ok →
+  real /call probe prints the new skip line in the journal.
+- verify_all: new step **1b/6 APNs delivery-path probe** (--warn mode so the
+  cron sweep stays green while the key is pending; flip to gate mode once it
+  reports BadDeviceToken). Full sweep ALL GREEN after the bridge restart,
+  including bearer probe 16/16, gateway gate, prod parity, native WebRTC e2e.
+- Housekeeping: one-off diagnostics cleaned from /tmp; probe caches its
+  provider token 45 min @0600 (Apple's TooManyProviderTokenUpdates guards).
+- NEEDS ENRIQUE (still open, phone-only): install TestFlight, accept invite,
+  open build 1 once → /register fires → device-watch announces. Key first,
+  then the phone — both are on the critical path to the first real ring.
 ## 2026-09-18 22:00 UTC (build-loop run) — backlog #8 CLOSED: `call_enrique` is real — agent CLI shipped + voice-brain tool LIVE in the restarted gateway
 
 - Gap found: #8's "WhatsApp/voice JARVIS call_enrique tool" existed only as a

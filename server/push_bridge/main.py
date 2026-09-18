@@ -70,13 +70,25 @@ def _auth(x_bridge_sig: str, body: bytes) -> None:
 
 def _send_voip(device_token: str, payload: dict) -> bool:
     """Send a VoIP push via APNs HTTP/2. Uses apswift-compatible raw HTTP2 via
-    httpx + h2 if available; falls back to `apns2`-style JWT auth."""
+    httpx + h2 if available; falls back to `apns2`-style JWT auth.
+
+    Failure must be LOUD: a silent False here is indistinguishable from "no
+    phone registered" for every caller (scheduler, /call, call_enrique.py).
+    On any non-200, log status + Apple's `reason` string. Found the first
+    InvalidProviderToken (p8 without APNs capability) exactly this way —
+    see scripts/probe_apns_delivery.py + PROGRESS 2026-09-18 22:20.
+    """
     cfg = _load_env()
     key_id, team_id = cfg.get("APNS_KEY_ID"), cfg.get("APNS_TEAM_ID")
     p8 = Path(cfg.get("APNS_P8_PATH", ""))
     if not (key_id and team_id and p8.exists()):
         # Not yet configured: log-and-ack so the loop agent can still develop.
         print(f"[bridge] APNs not configured yet; would push {payload}")
+        return False
+    if not device_token:
+        # No registered device (or snapshot empty): nothing to push to.
+        # Distinct log line so "no device" never masquerades as "APNs broken".
+        print("[bridge] push skipped: no DEVICE_TOKEN registered yet")
         return False
     import jwt  # pyjwt
     from httpx import Client
@@ -90,6 +102,13 @@ def _send_voip(device_token: str, payload: dict) -> bool:
     url = f"https://api.sandbox.push.apple.com/3/device/{device_token}" if cfg.get("APNS_SANDBOX", "1") == "1" else f"https://api.push.apple.com/3/device/{device_token}"
     with Client(http2=True, timeout=10) as c:
         r = c.post(url, headers=headers, json={"aps": {}, **payload})
+        if r.status_code != 200:
+            try:
+                reason = r.json().get("reason", "")
+            except Exception:
+                reason = (r.text or "")[:120]
+            print(f"[bridge] APNs push REJECTED: HTTP {r.status_code} {reason} "
+                  f"(topic={headers['apns-topic']}, host={'sandbox' if cfg.get('APNS_SANDBOX') == '1' else 'production'})")
         return r.status_code == 200
 
 

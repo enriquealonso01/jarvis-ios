@@ -25,6 +25,14 @@ if python3 scripts/swift_sanity.py; then :; else FAIL=1; fi
 if python3 scripts/check_drop_detection.py; then :; else FAIL=1; fi
 if python3 scripts/check_scheduler_robust.py; then :; else FAIL=1; fi
 
+step "1b/6 APNs delivery-path probe (dummy token, real key)"
+# Gate mode is intentionally OFF in the sweep (cron-friendly): the live key
+# currently answers 403 InvalidProviderToken (needs a new APNs-capable key —
+# NEEDS ENRIQUE). --warn prints the verdict without failing the sweep, so the
+# state stays visible on every run until Enrique installs the new key. Flip to
+# gate mode (drop --warn) once the probe reports BadDeviceToken = healthy.
+if python3 scripts/probe_apns_delivery.py --warn; then :; else FAIL=1; fi
+
 step "2/6 bridge bearer probe (throwaway :916x)"
 if python3 scripts/probe_call_bearer_live.py --spawn; then :; else FAIL=1; fi
 

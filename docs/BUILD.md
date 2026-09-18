@@ -65,7 +65,23 @@ You only ever do these steps. Everything else is agent-deployed.
   (cbd7e0fd-925b-4aa8-8ce1-facbc1b39881), NOT the APNS_TEAM_ID — a
   team-ID issuer gets HTTP 401. The poller reads both kid and issuer
   itself; run with `--expect 1` to filter to a single version. Any
-  "BUILD:" line on stdout = build visible. A second watcher,
+  "BUILD:" line on stdout = build visible.
+
+## APNs key status (the blocker before first ring)
+- The installed key (kid 2PMV4SF2LS, in /opt/jarvis-ios-bridge/apns.key) is
+  valid for the ASC API but REJECTED by APNs itself: both push hosts answer
+  `403 InvalidProviderToken` to a correctly signed provider token (checked
+  2026-09-18 22:20 with scripts/probe_apns_delivery.py — sandbox AND
+  production, multiple iat skews, curl + httpx). The key was evidently
+  created without the "Apple Push Notifications service (APNs)" capability.
+- NEEDS ENRIQUE (web, 2 min): developer.apple.com → Certificates, Identifiers
+  & Profiles → Keys → + create a key with **Apple Push Notifications service
+  (APNs)** checked → download the .p8 and send it (or drop it in a one-time
+  link). Everything else is agent-side: JARVIS installs it, updates apns.env
+  (new APNS_KEY_ID), restarts the bridge, and re-runs the probe until it
+  prints `400 BadDeviceToken` (= healthy, waiting only on the phone).
+- verify_all step 1b runs this probe every sweep (WARN mode) so the verdict
+  stays visible until fixed. A second watcher,
   `jarvis-ios-device-watch` (15m, 192 repeats, script-mode, delivers to the
   TF Ops Signal group), waits on bridge /health `device_registered` and also
   self-removes once the phone registers. Its flip path was TESTED END-TO-END

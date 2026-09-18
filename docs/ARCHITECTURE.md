@@ -32,13 +32,19 @@ Caddy  jarvis.enriquecodes.com
   button POSTs bridge `/call`; scheduled list/cancel against `/schedule/*`.
 
 ### Push bridge (`server/push_bridge/main.py`, systemd `jarvis-ios-bridge`, :9160)
-FastAPI. State dir `/opt/jarvis-ios-bridge/` (shared_secret, apns.env,
-scheduled_calls.json, secrets.json — all 0600). Auth ladder on every route:
-`x-bridge-sig` HMAC-SHA256(secret, raw body) **or** dashboard Bearer (gateway-
-identical verify: sig + kind=access + exp, checked locally).
+FastAPI. Serves from the repo checkout
+(`WorkingDirectory=/root/projects/jarvis-ios/server/push_bridge`): a repo edit
+IS the deploy after a restart; last-known-good copy lives in
+`/opt/jarvis-ios-bridge-lkg/`. State dir `/opt/jarvis-ios-bridge/`
+(shared_secret, apns.env, apns.key, scheduled_calls.json, secrets.json — all
+root-only 0600). Auth ladder on every
+route: `x-bridge-sig` HMAC-SHA256(secret, raw body) **or** dashboard Bearer
+(gateway-identical verify: sig + kind=access + exp, checked locally).
 - `/call` → APNs VoIP push (payload: reason, call_id, gateway_ws:"/voice-gw").
   `apns-topic` MUST equal the app bundle ID (com.enriquecodes.jarvis); when the
   p8 isn't installed it logs-and-acks (`pushed:false`) so agents can develop.
+  Any APNs non-200 is logged LOUD (`[bridge] APNs push REJECTED: HTTP <code>
+  <reason>`) — a rejected push must never masquerade as "no device yet".
 - `/schedule`, `/schedule/list`, `/schedule/cancel` → scheduler loop (20s tick)
   fires `/call` when due; device_token snapshotted at schedule time
   (server-side only — /schedule/list strips it from responses).

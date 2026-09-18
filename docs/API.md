@@ -94,4 +94,14 @@ carries `gateway_ws: "/voice-gw"` per the contract in docs/GATEWAY.md.
   IMPORTANT: APNS_BUNDLE_ID must equal the app's bundle identifier
   (com.enriquecodes.jarvis) — Apple requires the VoIP push topic (`apns-topic`)
   to be the app bundle ID for PushKit; a mismatched topic is rejected by APNs.
+- APNs KEY CAPABILITY (found 2026-09-18 22:20): the installed key (kid 2PMV4SF2LS)
+  works for the App Store Connect API but is REJECTED by APNs itself — both hosts
+  answer `403 InvalidProviderToken` to a correctly signed provider token
+  (`scripts/probe_apns_delivery.py`). The key was created without the "Apple Push
+  Notifications service (APNs)" capability. Fix (Enrique): developer.apple.com →
+  Certificates, Identifiers & Profiles → Keys → create a new key WITH APNs checked
+  → download .p8, then tell JARVIS — install is agent-side after that (same paths
+  as above, apns.env gets the new kid). Until then VoIP pushes CANNOT be
+  delivered: /call will answer pushed:false with `[bridge] APNs push REJECTED`
+  in the journal. verify_all step 1b prints the probe verdict on every run.
 - Device token: DONE — app POSTs to /register on launch; bridge persists it server-side.
