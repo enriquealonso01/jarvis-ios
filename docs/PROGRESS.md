@@ -1,5 +1,21 @@
 # PROGRESS
 
+## 2026-09-18 06:00 UTC (build-loop run) — verify_all.sh extended to prod parity + cron guard (5/5)
+
+- Backlog 1–9 remain complete; nothing new actionable until the Enrique-gated
+  ladder. This run hardened the sweep instead of idling: `verify_all.sh` now
+  has step 5/5 —
+  - both prod services `systemctl is-active` (jarvis-ios-bridge,
+    jarvis-voice-gateway),
+  - repo gateway mirror byte-identical to deployed /opt/voice-gw/gateway.py
+    (drift now FAILS the sweep),
+  - reminder crons armed check (build-loop, apple-setup-guide, loop-sunset —
+    all present + enabled).
+- Full sweep re-run: exit 0, ALL GREEN (5/5 steps; bridge 12/12, gateway gate,
+  live health 200s, parity, crons).
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 05:55 UTC (build-loop run) — maintenance sweep, all green
 
 - Backlog 1–9 remain complete; nothing new actionable until the Enrique-gated
