@@ -1,5 +1,25 @@
 # PROGRESS
 
+## 2026-09-18 (late) — maintenance run: full re-verification, all green, nothing actionable
+
+- Repo clean and synced with origin/main. Backlog 1–9 remain complete; no new
+  server-side work possible (everything left is Enrique-gated).
+- scripts/swift_sanity.py: OK. probe_call_bearer_live.py re-run on a fresh
+  throwaway instance (:9163, isolated state dir): **12/12 PASS** (bearer/HMAC
+  ladders on /call, /schedule, /schedule/list, /schedule/cancel, /secrets).
+  Instance killed; /tmp state removed; prod state untouched (apns.env still
+  empty → apns_configured:false, scheduled:0 as before).
+- probe_gateway_bearer_live.py: valid bearer reaches SDP handler (500 = gate
+  passed), invalid/no/refresh-kind all 401. Gateway file byte-identical to
+  /opt/voice-gw/gateway.py (no drift).
+- Live health: bridge :9160 /health 200; public
+  https://jarvis.enriquecodes.com/bridge/health 200 (Caddy handle_path
+  /bridge/* → :9160); voice-gw :9150 /healthz 200. py_compile gate clean.
+- Reminder crons confirmed armed: jarvis-ios-apple-setup-guide
+  2026-09-19 13:00 UTC, jarvis-ios-loop-sunset 23:00 UTC.
+- NEEDS ENRIQUE (unchanged, the only remaining ladder): Xcode build →
+  TestFlight upload → APNs p8 install (docs/BUILD.md, docs/FASTLANE.md).
+
 ## 2026-09-18 04:25 UTC (run 2) — VoIP push-topic bug fix + ARCHITECTURE.md
 
 - **Bug fixed before it cost a build**: `_send_voip` defaulted `apns-topic` to
