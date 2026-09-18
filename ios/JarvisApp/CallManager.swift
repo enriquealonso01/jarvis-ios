@@ -410,11 +410,12 @@ extension CallManager: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
         // Bind the non-Sendable action once (same rationale as CXAnswerCallAction).
         nonisolated(unsafe) let startAction = action
+        nonisolated(unsafe) let startProvider = provider
         Task { @MainActor in
             do {
                 // CallKit contract: report the call as outgoing-connected so
                 // the system audio UI engages, then connect media.
-                provider.reportOutgoingCall(with: startAction.callUUID, connectedAt: Date())
+                startProvider.reportOutgoingCall(with: startAction.callUUID, connectedAt: Date())
                 try await self.connectWebRTC()
                 startAction.fulfill()
             } catch {
