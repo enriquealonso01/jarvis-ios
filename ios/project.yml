@@ -38,6 +38,9 @@ targets:
         UIUserInterfaceStyle: Dark
         NSFaceIDUsageDescription: "Unlock JARVIS secrets."
         NSMicrophoneUsageDescription: "JARVIS needs the microphone for voice calls."
+        # ITMS-90683 fix (2026-09-18): WebRTC links camera symbols even though the
+        # app only makes audio calls — the ASC scanner requires the key anyway.
+        NSCameraUsageDescription: "JARVIS can use the camera for video calls and scanning your setup. Audio-only calls work without camera access."
         ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes:
           - audio
