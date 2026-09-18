@@ -3,10 +3,11 @@
 You only ever do these steps. Everything else is agent-deployed.
 
 ## One-time (per Mac)
-1. `git clone git@github.com:enriquealonso01/jarvis-ios.git` (repo will be pushed once first buildable)
-2. Open `ios/JarvisApp.xcodeproj` (or `JarvisApp.xcworkspace`)
-3. Signing & Capabilities: select your Personal Team (the one tied to your Apple Developer sub)
-4. Product > Scheme > JarvisApp; destination: any iPhone
+1. `git clone https://github.com/enriquealonso01/jarvis-ios.git` (private repo — private-repo clone is pushed and live)
+2. `cd jarvis-ios/ios && xcodegen` (XcodeGen: `brew install xcodegen`) — generates JarvisApp.xcodeproj from project.yml
+3. Open `ios/JarvisApp.xcodeproj`
+4. Signing & Capabilities: select your Personal Team (the one tied to your Apple Developer sub)
+5. Product > Scheme > JarvisApp; destination: any iPhone
 
 ## Every update cycle (agents tell you when via WhatsApp DM)
 1. `git pull`
