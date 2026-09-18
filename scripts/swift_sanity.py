@@ -68,7 +68,7 @@ required = {
     "CallManager.swift": ["trackOutgoingLog", "logEntryID", "outcome", "placeDirectCall", "CXStartCallAction", "setupCallUI", "dialing", "handleConnectionFailure",
                           # PushKit contract: completion is resolved by the
                           # incoming-call report handler, never inline.
-                          "onReported: completion", "onReported?()"],
+                          "onReported: reportCompletion", "onReported?()"],
     "CallsView.swift": ["durationSeconds", "outcome", "trackOutgoingLog", "Talk to JARVIS", "placeDirectCall", "ScheduleCallSheet", "scheduleCall(at:", "/schedule", "whenLabel"],
 }
 for fn, syms in required.items():

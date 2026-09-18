@@ -1,5 +1,10 @@
 # BUILD (Enrique's manual ritual)
 
+**SUPERSEDED for builds/uploads**: the full pipeline is automated — push tag
+`ios-v*` (or dispatch lane `beta` on .github/workflows/ios-release.yml) builds,
+signs, and uploads to TestFlight via GitHub Actions (first green run 35378698056,
+2026-09-18 18:14 UTC, build 19). The Xcode ritual below is the fallback only.
+
 You only ever do these steps. Everything else is agent-deployed.
 
 ## One-time (per Mac)
@@ -29,10 +34,12 @@ You only ever do these steps. Everything else is agent-deployed.
 - CallKit reporting happens inside the PushKit callback (iOS hard
   requirement); do not remove the PushKit registration from AppDelegate.
 
-## First TestFlight setup
-- App Store Connect > My Apps > + > New App (iOS, name "JARVIS", bundle id
-  com.enriquecodes.jarvis, SKU jarvis-ios-001). TestFlight tab > Internal Testing >
-  add yourself. Subsequent archives just need upload; testers persist.
+## First TestFlight setup — DONE (2026-09-18)
+- ASC app record "EA's J.A.R.V.I.S" (id 6813590605), bundle reassigned to
+  com.enriquecodes.jarvis. Build 19 uploaded by CI run 35378698056.
+- Remaining on the phone: install TestFlight, accept the internal-tester invite
+  (enriquealonsorequejo@icloud.com), install build 19, open it once — the app
+  POSTs /register to the bridge on launch, which makes VoIP pushes live.
 
 ## Notes
 - TestFlight builds expire after 90 days — the loop agent will remind you well ahead.

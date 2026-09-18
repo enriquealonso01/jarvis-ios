@@ -1,5 +1,32 @@
 # PROGRESS
 
+## 2026-09-18 18:35 UTC (build-loop run) — FIRST FULL PIPELINE GREEN: build 19 on TestFlight; stale pins/docs reconciled
+
+- **Upload SUCCEEDED.** GitHub Actions run 35378698056 (triggered by Enrique's
+  bundle-ID reassignment of the "EA's J.A.R.V.I.S" app record, id 6813590605)
+  compiled, archived, signed, and UPLOADED build 19 to TestFlight at 18:14 UTC —
+  no Mac involved. The 17:40 entry's "blocked on ASC app record" state is
+  resolved; ship is now: push tag `ios-v*` (or dispatch lane beta).
+- Verified via ASC API (with bridge .p8 as the ASC key, aud=appstoreconnect-v1):
+  GET /v1/builds?filter[app]=6813590605 → count 0 at 18:30 (normal; propagation
+  took >30 min at first attempt). Watcher cron d6d31d5fec17 (15m × 4,
+  /tmp/poll_build.py, self-removing) pings Enrique on first sight of build 19.
+- swift_sanity false-FAIL fixed: the PushKit-completion required-guard still
+  pinned the pre-df8f6e9 literal "onReported: completion"; df8f6e9 renamed the
+  symbol to reportCompletion when boxing it for the MainActor hop (CI green on
+  that code proves it's the intended form). Pin updated to
+  "onReported: reportCompletion" — sweep back to ALL GREEN (doc pins, sanity
+  incl. pins, bridge probe 16/16, gateway bearer gate, live health, prod parity,
+  native WebRTC e2e PASS).
+- docs/BUILD.md updated: header marks the Xcode ritual SUPERSEDED by the
+  automated pipeline (fallback only); "First TestFlight setup" marked DONE with
+  Enrique's remaining phone-side steps (install TestFlight, accept invite,
+  install build 19, open once → app POSTs /register → VoIP pushes live).
+- apple-setup-guide cron 2203e22d518d (fires 9AM Miami Sep 19) rewritten: it
+  still described minting a .p8 and creating the app record — all done. New
+  content: phone-side TestFlight steps + notification-permission check only.
+- No code changes; nothing needed from Enrique except the phone-side steps.
+
 ## 2026-09-18 17:40 UTC (CI fix loop) — all 40 Swift compile errors fixed; archive green; upload blocked on missing ASC app record
 
 - CI_ERRORS.txt's 40 unique errors (Xcode 26.3 / iOS 26.2 SDK / Swift 6.2
