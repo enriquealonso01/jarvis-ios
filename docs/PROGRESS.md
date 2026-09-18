@@ -1,3 +1,47 @@
+## 2026-09-19 00:00 UTC (build-loop run) — stale-guidance bug caught BEFORE it fired: the Sep-19 9AM setup guide claimed the broken APNs key works; prompts now mirrored + pinned; watch lifetime doubled to 4 days
+
+- This run's own audit found the next scheduled message to Enrique was wrong:
+  the `jarvis-ios-apple-setup-guide` cron (fires 9AM Miami Sep 19) still said
+  "the push bridge is live with the APNs key" and FORBADE mentioning key
+  creation — written at 21:20, BEFORE the 22:35 discovery that the key is
+  ASC-only and Apple rejects its pushes (403 InvalidProviderToken). He would
+  have installed build 1, failed the "ring this phone" test, and concluded
+  the app is broken. Fixed: the prompt is now STATE-DRIVEN — it runs
+  scripts/probe_apns_delivery.py + /health FIRST and includes the 2-minute
+  key-creation step (developer.apple.com → APNs checked → send the .p8)
+  ONLY if the verdict is still InvalidProviderToken; the ring-test section
+  now says it works only AFTER the key lands.
+- Same staleness class fixed in the sunset job (Sep 19 23:00): its wrap-up
+  now builds the NEEDS-ENRIQUE list from live checks (probe verdict +
+  device_registered) instead of hardcoded facts, and it explicitly leaves
+  the device-watch running after pausing the build loop (previously
+  unstated — the watch is what announces the flips after the loop stops).
+- Prompt-drift is now a pinned contract: both prompts mirrored into the
+  repo at scripts/cron_prompts/ (source-of-truth, same pattern as the
+  gateway mirror) and check_doc_contracts.py step 8 machine-checks
+  (a) live prompts byte-identical to mirrors, (b) state-driven shape
+  (probe + /health present), (c) no "bridge is live with the APNs key"
+  claim. 23/23 pins PASS.
+- Device-watch lifetime doubled: 192 → 384 ticks (48h → ~4 days). Its
+  expiry (Wed ~21:30 UTC) had silently drifted past the sunset deadline —
+  if Enrique acted over the weekend, the KEY-LIVE / REGISTERED /
+  MISSION-COMPLETE announcements would never fire. flip-1 detection
+  re-verified through the exact production command path (/usr/bin/python3,
+  "delivery path PROVEN" grep) — silent now, fires on the good-key
+  verdict. check_watch_wiring.py delivery pins corrected to the actual
+  watchdog convention (announcements → personal DM, failures → TF Ops
+  group) — the old pin predated the convention and flagged the correct
+  live config as FAIL.
+- Verified live: verify_all.sh ALL GREEN (incl. 23/23 doc contracts, 15/15
+  wiring pins, native WebRTC e2e vs the live gateway); live crons edited
+  via `hermes cron edit` and re-read back from jobs.json (byte-identical
+  to mirrors); bridge /health unchanged (device_registered:false,
+  last_push_error:""); ASC unchanged (build 1 VALID + IN_BETA_TESTING).
+- NEEDS ENRIQUE (both unchanged): (1) web ~2 min — create the APNs-capable
+  key (developer.apple.com → Keys → APNs CHECKED) and send the .p8 (one
+  command installs it); (2) phone — install TestFlight, accept invite,
+  open build 1 once → REGISTERED. The 9AM guide now tells him both steps.
+
 ## 2026-09-18 23:55 UTC (build-loop run) — the push path's last unexercised link closed: transport guard in `_send_voip` + the probe now proves the BRIDGE'S OWN httpx+h2 stack (both-legs verdict), stale "egress mangles python h2" claim disproven and corrected
 
 - Audit found the delivery chain had one link never exercised AND one

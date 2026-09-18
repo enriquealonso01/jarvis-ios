@@ -103,8 +103,10 @@ You only ever do these steps. Everything else is agent-deployed.
   returns a LOUD recorded False instead of 500-ing POST /call.
 - verify_all step 1b runs this probe every sweep (WARN mode) so the verdict
   stays visible until fixed. The watch,
-  `jarvis-ios-device-watch` (15m, 192 repeats, script-mode, delivers to the
-  TF Ops Signal group), now waits on BOTH remaining flips and announces each
+  `jarvis-ios-device-watch` (15m, 384 repeats ≈ 4 days, script-mode,
+  announcements → Enrique's personal Signal DM, failure notices → the
+  TF Ops group — watchdog convention: personal → DM), now waits on BOTH
+  remaining flips and announces each
   once: (1) KEY LIVE — installed APNs key ACCEPTED by Apple, detected by
   running scripts/probe_apns_delivery.py (exit 0 = verdict 400
   BadDeviceToken), which fires the moment the replacement .p8 is installed

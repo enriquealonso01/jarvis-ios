@@ -11,7 +11,8 @@ This check makes the whole contract falsifiable from now on:
   1. watch script exists and targets the live bridge (127.0.0.1:9160)
   2. flip branch self-removes via `hermes cron remove "$JOB"`
   3. cron job exists, enabled, script-mode (--no-agent), 15m cadence
-  4. delivery goes to the TF Ops Signal group
+  4. announcements deliver to Enrique's personal Signal DM; failure notices
+     route to the TF Ops Signal group (watchdog convention: personal → DM)
   5. lifetime >= 48h of 15m ticks (currently 192)
   6. hermes CLI resolvable (script PATH or /root/.local/bin/hermes)
 
@@ -78,7 +79,11 @@ if job:
     check("lifetime >= 48h of ticks", isinstance(times, int) and times >= 48,
           f"times={times}")
     deliver = str(job.get("deliver") or "")
-    check("delivers to TF Ops Signal group", OPS_GROUP in deliver, deliver[:50])
+    fdeliver = str(job.get("failure_deliver") or "")
+    check("announcements deliver to Enrique's personal DM",
+          deliver.startswith("signal:+"), deliver[:50])
+    check("failure notices route to the TF Ops Signal group",
+          OPS_GROUP in fdeliver, fdeliver[:50])
 
 # 6. repo mirror byte-identical to live script (source-of-truth discipline,
 #    same pattern as the gateway mirror in verify_all 5b)

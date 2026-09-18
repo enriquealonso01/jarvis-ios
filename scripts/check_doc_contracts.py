@@ -92,6 +92,47 @@ check("_send_voip wraps the POST in a transport guard (LOUD, recorded False)",
 check("probe doc names the both-leg design",
       "Both legs" in probe or "BOTH legs" in probe)
 
+# 8. Reminder-cron prompt contract (added 2026-09-18 23:45): agent-mode crons
+#    aimed at Enrique must NOT contain stale guidance — the Sep-19 9AM guide
+#    once claimed "the push bridge is live with the APNs key" AFTER that key
+#    was discovered ASC-only (403 InvalidProviderToken). The live crons'
+#    prompts must match their repo mirrors byte-identical (drift = silent
+#    divergence from the reviewed text) and must be STATE-DRIVEN: they read
+#    the probe/device verdicts before telling Enrique what to do.
+mirs = {
+    "apple-setup-guide": os.path.join(ROOT, "scripts", "cron_prompts", "apple_setup_guide.txt"),
+    "loop-sunset": os.path.join(ROOT, "scripts", "cron_prompts", "loop_sunset.txt"),
+}
+LIVE_IDS = {"apple-setup-guide": "2203e22d518d", "loop-sunset": "3b3cf2b06cad"}
+jobs_path = os.path.expanduser(os.path.join("~", ".hermes", "cron", "jobs.json"))
+try:
+    with open(jobs_path) as fh:
+        _j = json.load(fh)
+    live_jobs = {j.get("id"): j for j in (_j if isinstance(_j, list) else _j.get("jobs", []))}
+    cron_store_ok = True
+except Exception:
+    live_jobs = {}
+    cron_store_ok = False
+check("cron jobs.json readable (prompt pins need it)", cron_store_ok)
+guide_mirror = open(mirs["apple-setup-guide"]).read()
+check("guide mirror is state-driven (runs probe + /health before advising)",
+      "probe_apns_delivery" in guide_mirror and "/health" in guide_mirror)
+check("guide mirror knows the ASC-only key failure mode (InvalidProviderToken)",
+      "InvalidProviderToken" in guide_mirror and "BadDeviceToken" in guide_mirror)
+check("guide mirror tells him the key step (developer.apple.com, APNs checked)",
+      "developer.apple.com" in guide_mirror and "APNs" in guide_mirror)
+check("guide mirror does NOT claim the live key delivers pushes",
+      "bridge is live with the APNs key" not in guide_mirror)
+sunset_mirror = open(mirs["loop-sunset"]).read()
+check("sunset mirror checks probe verdict for the NEEDS-ENRIQUE list",
+      "probe_apns_delivery" in sunset_mirror and "InvalidProviderToken" in sunset_mirror)
+check("sunset mirror keeps the device-watch running after pausing the loop",
+      "device-watch" in sunset_mirror)
+for label, jid in LIVE_IDS.items():
+    live = live_jobs.get(jid, {}).get("prompt", "")
+    check(f"live cron {label} ({jid}) matches its repo mirror",
+          bool(live) and live == open(mirs[label]).read())
+
 
 print()
 if failures:
