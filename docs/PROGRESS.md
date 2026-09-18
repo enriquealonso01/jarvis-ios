@@ -1,3 +1,40 @@
+## 2026-09-18 22:55 UTC (build-loop run) — bad APNs key can no longer hide between sweeps: bridge remembers push rejections (`last_push_error` on /health), app + verify_all surface it
+
+- Gap found: `_send_voip` logs a rejection once (journal line) and forgets.
+  `/health` said `{apns_configured:true}` all evening while Apple was
+  rejecting every push with `403 InvalidProviderToken` — the only witness
+  was a 15-min sweep and whoever reads journals. A bad key that lands after
+  any future swap/config drift would look "configured" between sweeps.
+- Fix (deployed LIVE to the bridge this run):
+  1. `_send_voip` now records every non-200 as `LAST_PUSH_ERROR=<code>
+     <reason> at <ts>` in apns.env (0600, same store as DEVICE_TOKEN), and
+     clears it on the first 200. Unconfigured path records `unconfigured`.
+     No restart needed (env re-read per push, unchanged contract).
+  2. `/health` exposes it as `last_push_error` (empty string = healthy).
+     Live now: `{"ok":true,"apns_configured":true,"device_registered":false,
+     "last_push_error":"","scheduled":0}` — empty is CORRECT until a device
+     registers (the only real pushes so far took the no-device early-exit).
+  3. App Home SYSTEM card prints `· APNs: <error>` when non-empty
+     (HomeView + CCClient BridgeHealth field) — ships with the next tagged
+     build, per the no-builds-for-cosmetics rule.
+  4. verify_all step 4 now GATE-FAILS if /health names InvalidProviderToken
+     (belt to 1b's WARN suspenders).
+- Proven: shadow-tests on the real module with a stubbed APNs — 403
+  InvalidProviderToken → False + LAST_PUSH_ERROR set; 200 → True + cleared;
+  unconfigured → recorded; /call HMAC path unchanged (44024b5b pushed:false,
+  skip line in journal). py_compile + TestClient /health/401-shape checks
+  green; deployed per the safe path (repo→LKG /opt/jarvis-ios-bridge-lkg →
+  idle-window restart 22:53 UTC → /health ok → real /call probe). Full
+  verify_all ALL GREEN incl. native WebRTC e2e against the new process.
+- docs: API.md /health shape, BUILD.md "APNs key status" (surfacing note).
+- ASC unchanged: build 1 VALID + IN_BETA_TESTING. device_registered still
+  false; probe still 403 (key verdict unchanged, now machine-visible).
+- NEEDS ENRIQUE (both unchanged, one web + one phone): (1) create the
+  APNs-capable key (developer.apple.com → Keys → APNs checked) and send the
+  .p8 — agent-side install is one command (scripts/swap_apns_key.py);
+  (2) install TestFlight, accept invite, open build 1 once → /register
+  fires → device-watch announces → mission complete.
+
 ## 2026-09-18 22:55 UTC (build-loop run) — the one remaining agent-side gap closed: `swap_apns_key.py` turns the broken-key fix into ONE gated command; blocker verdict re-confirmed live
 
 - Backlog 1–9 re-verified complete; verify_all ALL GREEN after this run's

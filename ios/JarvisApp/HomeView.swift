@@ -95,6 +95,14 @@ struct HomeView: View {
                         Text("· ring pending APNs setup")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
+                    if let lpe = bridgeHealth?.last_push_error, !lpe.isEmpty {
+                        // Last APNs rejection, surfaced from the bridge
+                        // (LAST_PUSH_ERROR written by _send_voip on any
+                        // non-200). "403 InvalidProviderToken" means the
+                        // installed .p8 lacks the APNs capability — swap it
+                        // (scripts/swap_apns_key.py, docs/BUILD.md).
+                        Text("· APNs: \(lpe)").font(.caption2).foregroundStyle(.secondary)
+                    }
                     if bridgeHealth?.device_registered == false {
                         // This phone hasn't completed /register yet (fresh
                         // install, or push woke us before login). Server-side

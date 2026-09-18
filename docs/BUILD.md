@@ -90,6 +90,11 @@ You only ever do these steps. Everything else is agent-deployed.
   After the swap: `scripts/probe_apns_delivery.py` (no args) must print
   `400 BadDeviceToken` against the LIVE paths, then verify_all step 1b can
   drop `--warn` and go gate-mode.
+- Live rejection surfacing: the bridge records every APNs non-200 in
+  apns.env (`LAST_PUSH_ERROR=403 InvalidProviderToken at <ts>`, cleared on
+  the first 200) and `/health` exposes it as `last_push_error` — the app's
+  Home card prints it and verify_all's live-health step fails loudly if it
+  names InvalidProviderToken. A bad key can no longer hide between sweeps.
 - verify_all step 1b runs this probe every sweep (WARN mode) so the verdict
   stays visible until fixed. A second watcher,
   `jarvis-ios-device-watch` (15m, 192 repeats, script-mode, delivers to the

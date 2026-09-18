@@ -82,6 +82,7 @@ def _send_voip(device_token: str, payload: dict) -> bool:
     key_id, team_id = cfg.get("APNS_KEY_ID"), cfg.get("APNS_TEAM_ID")
     p8 = Path(cfg.get("APNS_P8_PATH", ""))
     if not (key_id and team_id and p8.exists()):
+        _save_env_key("LAST_PUSH_ERROR", "unconfigured")
         # Not yet configured: log-and-ack so the loop agent can still develop.
         print(f"[bridge] APNs not configured yet; would push {payload}")
         return False
@@ -102,14 +103,17 @@ def _send_voip(device_token: str, payload: dict) -> bool:
     url = f"https://api.sandbox.push.apple.com/3/device/{device_token}" if cfg.get("APNS_SANDBOX", "1") == "1" else f"https://api.push.apple.com/3/device/{device_token}"
     with Client(http2=True, timeout=10) as c:
         r = c.post(url, headers=headers, json={"aps": {}, **payload})
-        if r.status_code != 200:
-            try:
-                reason = r.json().get("reason", "")
-            except Exception:
-                reason = (r.text or "")[:120]
-            print(f"[bridge] APNs push REJECTED: HTTP {r.status_code} {reason} "
-                  f"(topic={headers['apns-topic']}, host={'sandbox' if cfg.get('APNS_SANDBOX') == '1' else 'production'})")
-        return r.status_code == 200
+        if r.status_code == 200:
+            _save_env_key("LAST_PUSH_ERROR", "")
+            return True
+        try:
+            reason = r.json().get("reason", "")
+        except Exception:
+            reason = (r.text or "")[:120]
+        print(f"[bridge] APNs push REJECTED: HTTP {r.status_code} {reason} "
+              f"(topic={headers['apns-topic']}, host={'sandbox' if cfg.get('APNS_SANDBOX') == '1' else 'production'})")
+        _save_env_key("LAST_PUSH_ERROR", f"{r.status_code} {reason} at {int(time.time())}")
+        return False
 
 
 class CallReq(BaseModel):
@@ -129,6 +133,7 @@ def health():
     # token material (boolean presence only — never the token or its length).
     return {"ok": True, "apns_configured": bool(cfg.get("APNS_KEY_ID")),
             "device_registered": bool(cfg.get("DEVICE_TOKEN")),
+            "last_push_error": cfg.get("LAST_PUSH_ERROR", ""),
             "scheduled": len(_load_schedule())}
 
 

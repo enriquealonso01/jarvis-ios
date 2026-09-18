@@ -135,6 +135,9 @@ struct BridgeHealth: Decodable {
     let ok: Bool?
     let apns_configured: Bool?
     let device_registered: Bool?
+    /// Last APNs rejection recorded by the bridge ("403 InvalidProviderToken
+    /// at …" when the installed .p8 can't sign pushes). Empty = healthy.
+    let last_push_error: String?
     let scheduled: Int?
 }
 

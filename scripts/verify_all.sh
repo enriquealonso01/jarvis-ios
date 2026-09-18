@@ -48,6 +48,12 @@ step "4/6 live health"
 b=$(curl -s -m 5 http://127.0.0.1:9160/health)
 echo "bridge :9160  -> $b"
 echo "$b" | grep -q '"ok":true' || FAIL=1
+# A key rejected by APNs must fail the sweep LOUDLY (not just the 1b WARN):
+# last_push_error is written by _send_voip on every non-200 and cleared on 200.
+if echo "$b" | grep -q 'InvalidProviderToken'; then
+  echo "GATE-FAIL: bridge /health last_push_error names InvalidProviderToken — installed key cannot push"
+  FAIL=1
+fi
 g=$(curl -s -m 5 http://127.0.0.1:9150/healthz)
 echo "gateway :9150 -> $g"
 echo "$g" | grep -q '"realtime":true' || FAIL=1
