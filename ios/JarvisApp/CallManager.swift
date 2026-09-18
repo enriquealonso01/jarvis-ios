@@ -2,6 +2,7 @@ import Foundation
 import PushKit
 import CallKit
 import AVFoundation
+import UIKit
 
 /// Backlog #4: PushKit VoIP provider + CallKit call controller.
 ///
@@ -93,7 +94,7 @@ final class CallManager: NSObject, ObservableObject {
                                                     tokenProvider: { try await AuthStore.shared.validAccessToken() })
         webRTC = client
         callState = "active"
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        Haptics.success()
     }
 
     func endActiveCall() {
@@ -156,7 +157,7 @@ extension CallManager: CXProviderDelegate {
             } catch {
                 action.fail()
                 self.callState = "failed: \(error.localizedDescription)"
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                Haptics.error()
             }
         }
     }

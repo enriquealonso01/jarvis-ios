@@ -28,7 +28,11 @@ targets:
       path: JarvisApp/Info.plist
       properties:
         CFBundleDisplayName: JARVIS
-        UILaunchScreen: {}
+        # Backlog #9: real launch screen (branded, no flash of white).
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchReactor
+          UIImageRespectsSafeAreaInsets: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIUserInterfaceStyle: Dark
@@ -42,3 +46,5 @@ targets:
         PRODUCT_NAME: JarvisApp
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_PREVIEWS: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

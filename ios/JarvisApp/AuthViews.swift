@@ -114,14 +114,20 @@ struct LoginView: View {
     }
 }
 
-/// Settings tab lives under Home's gear for now — server URL + token + logout.
+/// Settings (backlog #9): server URLs, auth token (manual entry / paste for
+/// debugging + refresh fallback), connection test, session info, sign out.
 struct SettingsView: View {
     @ObservedObject private var server = ServerConfig.shared
     @ObservedObject private var auth = AuthStore.shared
+    @State private var manualToken = ""
+    @State private var tokenRevealed = false
+    @State private var testResult: String?
+    @State private var testing = false
+    @AppStorage("jarvis.settings.faceid") private var faceIDLock = false
 
     var body: some View {
         Form {
-            Section("Server") {
+            Section {
                 LabeledField("Dashboard URL", text: Binding(
                     get: { server.config.baseURL },
                     set: { server.config.baseURL = $0 }
@@ -134,12 +140,96 @@ struct SettingsView: View {
                     get: { server.config.voiceGWURL },
                     set: { server.config.voiceGWURL = $0 }
                 ))
+            } header: {
+                Text("Server")
+            } footer: {
+                Text("Defaults point at jarvis.enriquecodes.com. Only change if the deployment moves.")
             }
-            Section("Session") {
-                LabeledContent("Signed in", value: auth.isAuthed ? "Yes" : "No")
-                LabeledContent("Token expires", value: Date(timeIntervalSince1970: auth.expiresAt).formatted())
-                Button("Sign Out", role: .destructive) { auth.logout() }
+
+            Section("Connection test") {
+                Button {
+                    Task { await testConnection() }
+                } label: {
+                    HStack {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                        Text(testing ? "Testing…" : "Test connection")
+                    }
+                }
+                .disabled(testing)
+                if let testResult {
+                    Label(testResult, systemImage: testResult.hasPrefix("OK") ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(testResult.hasPrefix("OK") ? .green : .red)
+                }
             }
+
+            Section {
+                if auth.isAuthed {
+                    LabeledContent("Signed in", value: "Yes")
+                    LabeledContent("Token expires", value: Date(timeIntervalSince1970: auth.expiresAt).formatted())
+                } else {
+                    LabeledContent("Signed in", value: "No")
+                }
+                if tokenRevealed, !manualToken.isEmpty {
+                    Text(manualToken)
+                        .font(.caption2.monospaced())
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                }
+                SecureField("Paste access token (manual)", text: $manualToken)
+                    .font(.callout.monospaced())
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("Apply pasted token") {
+                    let t = manualToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !t.isEmpty else { return }
+                    auth.applyManualToken(t)
+                    manualToken = ""
+                    Haptics.success()
+                }
+                .disabled(manualToken.trimmingCharacters(in: .whitespaces).isEmpty)
+                if auth.isAuthed {
+                    Button("Copy access token", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = auth.accessToken
+                        Haptics.tap()
+                    }
+                }
+            } header: {
+                Text("Auth token")
+            } footer: {
+                Text("Normally you sign in with username/password. Manual token entry is a fallback for debugging or server-side minted sessions.")
+            }
+
+            Section {
+                Toggle("Lock Secrets with Face ID", isOn: $faceIDLock)
+            } header: {
+                Text("Privacy")
+            } footer: {
+                Text("Requires Face ID (or passcode) every time the Secrets tab opens.")
+            }
+
+            Section {
+                Button("Sign Out", role: .destructive) {
+                    auth.logout()
+                    Haptics.warning()
+                }
+            }
+        }
+        .navigationTitle("Settings")
+    }
+
+    @MainActor
+    private func testConnection() async {
+        testing = true
+        defer { testing = false }
+        do {
+            struct Ping: Decodable { let cpu_pct: Double? }
+            let _: Ping = try await CCClient.shared.get("/api/control/vitals", as: Ping.self)
+            testResult = "OK — dashboard reachable"
+            Haptics.success()
+        } catch {
+            testResult = "FAIL — \(error.localizedDescription)"
+            Haptics.error()
         }
     }
 }

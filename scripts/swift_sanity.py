@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Sanity checks for jarvis-ios Swift sources (backlog #9).
+
+No Swift toolchain on this box, so we verify structural things agents can
+break: balanced braces/parens per file, required symbols present, and that
+Assets.xcassets JSON files all parse. Run: python3 scripts/swift_sanity.py
+"""
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+APP = os.path.join(ROOT, "ios", "JarvisApp")
+
+failures = []
+
+# 1. brace/paren/bracket balance per Swift file (strings/comments ignored —
+#    good enough for structural drift detection).
+for fn in sorted(os.listdir(APP)):
+    if not fn.endswith(".swift"):
+        continue
+    src = open(os.path.join(APP, fn)).read()
+    # strip line comments and string literals crudely to avoid false counts
+    cleaned = []
+    in_str = in_line_comment = False
+    i = 0
+    while i < len(src):
+        c = src[i]
+        if in_line_comment:
+            if c == "\n":
+                in_line_comment = False
+                cleaned.append(c)
+        elif in_str:
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+        else:
+            if c == '"':
+                in_str = True
+            elif c == "/" and i + 1 < len(src) and src[i + 1] == "/":
+                in_line_comment = True
+            else:
+                cleaned.append(c)
+        i += 1
+    s = "".join(cleaned)
+    for open_c, close_c, name in [("{", "}", "braces"), ("(", ")", "parens"), ("[", "]", "brackets")]:
+        bal = s.count(open_c) - s.count(close_c)
+        if bal != 0:
+            failures.append(f"{fn}: unbalanced {name} ({bal:+d})")
+
+# 2. required symbols across the app.
+required = {
+    "Haptics.swift": ["enum Haptics", "static func success", "static func tap"],
+    "AuthViews.swift": ["applyManualToken", "testConnection", "faceIDLock", "SettingsView"],
+    "AuthStore.swift": ["func applyManualToken"],
+    "SecretsView.swift": ["lockedView", "LAContext", "secretsList"],
+    "JarvisApp.swift": ["RootTabView", "GlassCard"],
+}
+for fn, syms in required.items():
+    path = os.path.join(APP, fn)
+    if not os.path.exists(path):
+        failures.append(f"missing file: {fn}")
+        continue
+    src = open(path).read()
+    for sym in syms:
+        if sym not in src:
+            failures.append(f"{fn}: missing symbol {sym}")
+
+# 3. asset catalog JSON validity + required entries.
+assets = os.path.join(APP, "Assets.xcassets")
+for root, _, files in os.walk(assets):
+    for f in files:
+        if f.endswith(".json"):
+            try:
+                json.load(open(os.path.join(root, f)))
+            except Exception as e:
+                failures.append(f"bad asset JSON {os.path.relpath(os.path.join(root, f), ROOT)}: {e}")
+
+for entry in ["AppIcon.appiconset/icon-1024.png", "LaunchReactor.imageset/launch-reactor.png",
+              "LaunchBackground.colorset/Contents.json", "AccentColor.colorset/Contents.json"]:
+    if not os.path.exists(os.path.join(assets, entry)):
+        failures.append(f"missing asset: {entry}")
+
+# 4. project.yml wiring.
+pyml = open(os.path.join(ROOT, "ios", "project.yml")).read()
+for needle in ["ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon",
+               "UILaunchScreen:", "UIColorName: LaunchBackground", "UIImageName: LaunchReactor"]:
+    if needle not in pyml:
+        failures.append(f"project.yml missing: {needle}")
+
+if failures:
+    print("FAIL")
+    for f in failures:
+        print(" -", f)
+    sys.exit(1)
+print("OK: swift structural + asset + project.yml checks passed")

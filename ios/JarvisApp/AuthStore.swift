@@ -145,6 +145,21 @@ final class AuthStore: ObservableObject {
         return token
     }
 
+    /// Backlog #9: manual token entry from Settings (debug / minted-session
+    /// fallback). Stores the token in the Keychain like the PKCE flow does.
+    /// Expiry unknown — treat as expiring-soon so refresh attempts happen and
+    /// a hard 401 just falls back to the login screen.
+    func applyManualToken(_ token: String) {
+        Self.saveString(accessKey, token)
+        // keep prior refresh token if any; set expiry in the past-ish so the
+        // client refreshes before first use rather than sending a stale token.
+        if Self.loadString(expiresKey) == nil {
+            Self.saveString(expiresKey, String(Date().timeIntervalSince1970 - 1))
+        }
+        lastError = nil
+        isAuthed = true
+    }
+
     enum AuthError: LocalizedError {
         case badResponse(String)
         case unauthorized

@@ -1,9 +1,11 @@
 import SwiftUI
+import LocalAuthentication
 
 /// Secrets tab (backlog #3): named-secret manager backed by the push bridge's
 /// server-side store (`/secrets` family on the bridge origin). Values are typed
 /// once, sent over TLS, persisted server-side (0600), masked after save, and
 /// NEVER stored on device or echoed back by the API.
+/// Backlog #9: optional Face ID gate (Settings toggle) + shared haptics.
 struct SecretMeta: Decodable, Identifiable {
     let name: String
     let masked: String?
@@ -23,10 +25,56 @@ struct SecretsView: View {
     @State private var loading = false
     @State private var status: String?
     @State private var confirmDelete: SecretMeta?
+    @State private var unlocked = false
+    @AppStorage("jarvis.settings.faceid") private var faceIDLock = false
 
     var body: some View {
         NavigationStack {
-            List {
+            Group {
+                if faceIDLock && !unlocked {
+                    lockedView
+                } else {
+                    secretsList
+                }
+            }
+            .navigationTitle("Secrets")
+        }
+    }
+
+    /// Face ID gate (backlog #9): nothing renders until biometrics pass.
+    private var lockedView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "faceid")
+                .font(.system(size: 48))
+                .foregroundStyle(Color.jarvisAccent)
+            Text("Secrets are locked")
+                .font(.headline)
+            Button("Unlock") { unlock() }
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
+        .task { unlock() }
+    }
+
+    private func unlock() {
+        let ctx = LAContext()
+        var err: NSError?
+        guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {
+            unlocked = true   // no biometrics/passcode on device — don't brick the tab
+            return
+        }
+        ctx.evaluatePolicy(.deviceOwnerAuthentication,
+                           localizedReason: "Unlock JARVIS secrets") { ok, _ in
+            Task { @MainActor in
+                unlocked = ok
+                if ok { Haptics.success() } else { Haptics.error() }
+            }
+        }
+    }
+
+    private var secretsList: some View {
+        List {
                 Section {
                     if secrets.isEmpty && !loading {
                         Text("No secrets stored. Values live server-side only.")
@@ -77,7 +125,6 @@ struct SecretsView: View {
                     }
                 }
             }
-            .navigationTitle("Secrets")
             .refreshable { await load() }
             .task { await load() }
             .confirmationDialog("Delete \(confirmDelete?.name ?? "")?",
@@ -91,7 +138,6 @@ struct SecretsView: View {
             } message: {
                 Text("The value is removed from the server. This cannot be undone.")
             }
-        }
     }
 
     private func maskLine(_ s: SecretMeta) -> String {
@@ -134,11 +180,11 @@ struct SecretsView: View {
             newValue = ""
             newName = ""
             status = (resp.created ?? true) ? "Saved — masked on server, never stored here." : "Updated — value rotated."
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             await load()
         } catch {
             status = nil
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            Haptics.error()
         }
     }
 
@@ -151,10 +197,10 @@ struct SecretsView: View {
                 "\(bridgeBase())/secrets/delete",
                 body: ["name": s.name],
                 as: SecretWriteResp.self)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             await load()
         } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            Haptics.error()
         }
     }
 }

@@ -14,7 +14,18 @@ struct HomeView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     if let error {
-                        GlassCard { Label(error, systemImage: "wifi.exclamationmark").font(.footnote) }
+                        GlassCard {
+                            VStack(spacing: 8) {
+                                Label(error, systemImage: "wifi.exclamationmark")
+                                    .font(.footnote)
+                                Button("Retry") {
+                                    Haptics.tap()
+                                    Task { await load() }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
                     }
                     statusCard
                     llmCard

@@ -1,5 +1,32 @@
 # PROGRESS
 
+## 2026-09-18 04:10 UTC — backlog #9: polish (app icon, launch screen, Settings, haptics, error/empty states) — DONE, backlog complete
+
+- App icon: generated 1024×1024 arc-reactor mark (dark #0A0B0F, gold rings +
+  12 ticks, glowing core) via `scripts/gen_app_icon.py` (Pillow, reproducible);
+  single-size AppIcon.appiconset, vision-verified clean (no clipping).
+  AccentColor colorset = JARVIS gold, wired via
+  ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME.
+- Launch screen: plist UILaunchScreen dict (LaunchBackground color +
+  LaunchReactor image) — dark from first frame, no storyboard, no white flash.
+- Settings rebuilt: server URLs, one-tap connection test (pings
+  /api/control/vitals), manual access-token entry (paste → Keychain via
+  AuthStore.applyManualToken, debug/minted-session fallback), copy-token,
+  Face ID lock toggle for Secrets, sign out.
+- Secrets tab: optional Face ID/biometrics gate (LocalAuthentication, degrades
+  to open when no passcode is set). All haptics centralized in Haptics.swift;
+  SecretsView/CallManager/CallsView converted.
+- Error/empty states: Home + Chats error cards now have Retry buttons; Chats
+  empty state upgraded. `scripts/swift_sanity.py` added (brace balance, required
+  symbols, asset-JSON validity, project.yml wiring) — passing.
+- docs/ICON.md: icon/launch-screen spec + regeneration recipe.
+- NEEDS ENRIQUE (unchanged): first Xcode build/upload — xcodegen picks up the
+  new Assets.xcassets automatically (docs/BUILD.md). Swift still not compiled on
+  this box; verified structurally only.
+- Backlog items 1–9 are now all landed. Remaining mission work = the
+  Enrique-gated ladder: Xcode build → TestFlight upload → APNs p8 install
+  (docs/BUILD.md, docs/FASTLANE.md, docs/API.md "Pending" section).
+
 ## 2026-09-18 04:55 UTC — backlog #8: voice call_enrique + schedule_call tools — LIVE
 
 - Forged two voice tools via jarvis-voice-forge, both validated + enabled:

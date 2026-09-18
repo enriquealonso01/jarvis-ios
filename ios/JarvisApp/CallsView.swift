@@ -115,10 +115,10 @@ struct CallsView: View {
                 ? "VoIP push sent — answer via CallKit when it rings."
                 : "Bridge accepted the call (APNs not configured yet — push queued server-side)."
             log.append(CallEntry(reason: "JARVIS call (from iOS app)", at: Date(), outgoing: true))
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
         } catch {
             status = "Call failed: \(error.localizedDescription)"
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            Haptics.error()
         }
     }
 
@@ -149,10 +149,10 @@ struct CallsView: View {
                 as: CancelResp.self)
             if resp.cancelled ?? 0 > 0 {
                 scheduled.removeAll { $0.call_id == id }
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                Haptics.success()
             }
         } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            Haptics.error()
         }
     }
 }

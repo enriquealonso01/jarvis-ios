@@ -5,6 +5,7 @@ import SwiftUI
 struct ProjectsView: View {
     @State private var threads: [ThreadRow] = []
     @State private var error: String?
+    @State private var loading = false
 
     struct ThreadRow: Identifiable {
         let id: String
@@ -41,8 +42,30 @@ struct ProjectsView: View {
                         }
                     }
                 }
-                if threads.isEmpty && error == nil {
-                    Text("No open threads.").foregroundStyle(.secondary)
+                if threads.isEmpty && error == nil && !loading {
+                    VStack(spacing: 10) {
+                        Image(systemName: "tray")
+                            .font(.title)
+                            .foregroundStyle(.secondary)
+                        Text("No open threads.")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                }
+                if let error {
+                    VStack(spacing: 10) {
+                        Label(error, systemImage: "wifi.exclamationmark")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                        Button("Retry") {
+                            Haptics.tap()
+                            Task { await load() }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
                 }
             }
             .navigationTitle("Chats")
@@ -53,6 +76,8 @@ struct ProjectsView: View {
 
     @MainActor
     private func load() async {
+        loading = true
+        defer { loading = false }
         do {
             struct Board: Decodable {
                 struct Thread: Decodable {
