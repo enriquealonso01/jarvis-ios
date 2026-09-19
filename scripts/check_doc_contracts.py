@@ -134,6 +134,30 @@ for label, jid in LIVE_IDS.items():
           bool(live) and live == open(mirs[label]).read())
 
 
+# 9. Push-success counter contract (added 2026-09-19): /health carries
+#    push_ok/push_fail — totals of REAL Apple round-trips — because
+#    last_push_error=="" means only "nothing failed YET". The device-watch
+#    endgame verifies its verification push through these counters (call
+#    fired via call_enrique.py, push_ok must increment) BEFORE claiming
+#    "pushed:true"; failure is LOUD and fail-closed (cron stays).
+bridge_src = bridge  # (already read above)
+check("bridge defines the counter bump helper",
+      "_bump_push_counters" in bridge_src and "push_ok" in bridge_src and "push_fail" in bridge_src)
+check("bridge early-exits are NOT counted (round-trip-only semantics)",
+      "NOT counted" in bridge_src)
+check("/health exposes push_ok + push_fail",
+      '"push_ok":' in bridge_src.replace(" ", "") or '"push_ok"' in bridge_src)
+watch_src = open(os.path.join(ROOT, "scripts", "testflight_device_watch.sh")).read()
+check("watch endgame fires a real verification call (call_enrique.py)",
+      "call_enrique.py call" in watch_src and "push_ok" in watch_src)
+check("watch endgame is fail-closed (URGENT branch, cron NOT removed)",
+      "URGENT" in watch_src and "PUSH_OK_BEFORE" in watch_src and "PUSH_OK_NOW" in watch_src)
+check("watch extracts push_ok whitespace-tolerantly (spaced JSON)",
+      '"push_ok":[[:space:]]*[0-9]+' in watch_src)
+check("API.md documents the push counters",
+      "push_ok" in api and "REAL Apple round-trips" in api)
+
+
 print()
 if failures:
     print(f"{len(failures)} DOC CONTRACT FAILURE(S)")

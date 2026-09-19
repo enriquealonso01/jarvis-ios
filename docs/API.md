@@ -21,13 +21,21 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
 - `POST /schedule/cancel` `{call_id?}` -> `{cancelled: N}`. With call_id cancels that one;
   with empty body `{}` cancels all pending.
 - `GET /health` -> `{ok, apns_configured, device_registered, last_push_error,
-  scheduled}`.
+  push_ok, push_fail, scheduled}`.
   `device_registered` = the phone has completed POST /register (boolean
   presence signal only — the token itself is never exposed here).
   `last_push_error` records every APNs non-200 (`"<code> <reason> at <ts>"`)
   AND transport failures (`"transport <ErrorName> at <ts>"` — h2 handshake,
   timeout, connection reset are caught inside `_send_voip` and never escape
   into POST /call; empty string = healthy).
+  `push_ok` / `push_fail` (added 2026-09-19) count REAL Apple round-trips:
+  every APNs POST bumps exactly one counter (200 → push_ok; transport error
+  or non-200 → push_fail). Early-exits without a round-trip (APNs
+  unconfigured, no device registered) are NOT counted. `push_ok >= 1` is the
+  only proof a delivery actually happened — `last_push_error == ""` means
+  only "nothing failed recently". The device-watch MISSION-COMPLETE message
+  verifies its endgame push through these counters (push_ok incremented by a
+  real verification call) before declaring the delivery path proven.
 
 ## Named secrets (backlog #3, added 2026-09-18)
 

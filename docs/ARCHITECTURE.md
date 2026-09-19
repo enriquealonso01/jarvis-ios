@@ -36,8 +36,8 @@ FastAPI. Serves from the repo checkout
 (`WorkingDirectory=/root/projects/jarvis-ios/server/push_bridge`): a repo edit
 IS the deploy after a restart; last-known-good copy lives in
 `/opt/jarvis-ios-bridge-lkg/`. State dir `/opt/jarvis-ios-bridge/`
-(shared_secret, apns.env, apns.key, scheduled_calls.json, secrets.json — all
-root-only 0600). Auth ladder on every
+(shared_secret, apns.env, apns.key, scheduled_calls.json, secrets.json,
+push_counters.json — all root-only 0600). Auth ladder on every
 route: `x-bridge-sig` HMAC-SHA256(secret, raw body) **or** dashboard Bearer
 (gateway-identical verify: sig + kind=access + exp, checked locally).
 - `/call` → APNs VoIP push (payload: reason, call_id, gateway_ws:"/voice-gw").

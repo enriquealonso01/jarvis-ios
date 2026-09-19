@@ -1,4 +1,75 @@
-## 2026-09-19 00:10 UTC (build-loop run) — loop cadence right-sized 5m→30m: state machine fully green and purely waiting on Enrique, ~288 redundant agent runs/day eliminated; no code delta survived the small-edit bar
+## 2026-09-19 01:00 UTC (build-loop run) — push-success observability closed the mission-complete honesty gap: bridge counts real Apple round-trips (push_ok/push_fail on /health), the device-watch ENDGAME now PROVES delivery with a real verification call instead of asserting it; prod-path verified live, deploy executed via the safe path
+
+- Close audit this run found the endgame seam: the watch's
+  MISSION-COMPLETE message asserted "/call now rings the phone
+  (pushed:true)" — a claim nothing had verified at that moment, and one
+  /health field actively could not support: last_push_error=="" means only
+  "nothing failed YET", never "a push succeeded". Bridge + watch + probes
+  + docs upgraded together so the mission's final announcement is earned,
+  not assumed.
+- BRIDGE (deployed LIVE this run): `_bump_push_counters()` persists
+  push_ok/push_fail to push_counters.json (0600, corrupt-file tolerant,
+  best-effort — a counter write failure can never affect the push result);
+  every REAL Apple round-trip bumps exactly one counter (200 → push_ok,
+  transport error / non-200 → push_fail); the unconfigured and no-device
+  early-exits are NOT counted (round-trip-only semantics — they never
+  touched Apple); /health exposes both as ints. Shadow probe
+  (scripts/probe_push_counters_shadow.py, stubbed Apple vs the REAL module,
+  17/17) pins: transport→fail, 200→ok, 403→fail, both early-exits not
+  counted, /health shape, corrupt-counters reset, 0600 perms. Wired into
+  verify_all as step 1c.
+- WATCH (live script replaced, byte-identical mirror): the
+  both-flips-seen branch now reads push_ok BEFORE, fires a real
+  verification call via scripts/call_enrique.py (production HMAC path,
+  reason explains "ignore/hang up"), re-reads /health with retries, and
+  declares MISSION COMPLETE only if push_ok incremented (Apple ACCEPTED
+  the push). Fail-closed: any mismatch → LOUD URGENT line (routes to the
+  TF Ops group via failure_deliver), state kept, cron NOT removed so the
+  loop agent triages on its next run. The message also states the honest
+  boundary: push_ok proves APNs accepted, not that CallKit rang — the
+  manual ring test stays recommended. Whole block tested in a sandbox
+  (stub bridge on :9163, stub call tool, fake hermes): 4/4 PASS — happy
+  path (counter bump → mission complete + self-remove fired), call-tool
+  failure, no-bump, spaced-JSON health. Sandbox testing caught TWO real
+  bugs before they could ship: a state-file read of a variable nothing
+  writes (dead "before" value) and a compact-JSON-only grep that would
+  have read the REAL bridge's push_ok as empty (spaced JSON) and turned
+  every real mission-complete into a false URGENT.
+- PROD-PATH VERIFIED LIVE before deploying the watch: /register with a
+  sacrificial token (device-watch paused first so no false REGISTERED
+  announcement was possible) → real /call → APNs answered the known 403
+  InvalidProviderToken → /call returned pushed:false (correct) AND
+  /health showed push_fail:1 (the rejected round-trip counted). Live
+  state then restored pristine: sacrificial DEVICE_TOKEN removed,
+  counters reset to 0/0, LAST_PUSH_ERROR cleared, watch resumed. Bridge
+  deployed per the safe path: py_compile (repo + venv) → LKG staged →
+  restart → /health verified (counters 0/0, device_registered false).
+- Incident found by the post-deploy wiring sweep, fixed this run:
+  `hermes cron pause/resume` MANGLED the watch's deliver field
+  (personal DM → TF Ops group), which would have sent mission announcements
+  to the Ops group instead of Enrique. Restored via `hermes cron edit
+  --deliver 'signal:+130****2646'`; check_watch_wiring ALL PINS HOLD after.
+  (The pause was itself protocol — it made the sacrificial-token test
+  provably unable to fire a false REGISTERED.)
+- Docs + pins: API.md /health shape now documents push_ok/push_fail and
+  the "last_push_error=='' ≠ delivered" rule; ARCHITECTURE.md lists
+  push_counters.json; check_doc_contracts step 9 (7 new pins) holds the
+  counter contract, the early-exit semantics, the watch's real-call
+  endgame, its fail-closed shape, and the whitespace-tolerant extraction.
+  verify_all ALL GREEN end-to-end after everything (30/30 doc contracts,
+  swift_sanity, counter shadow probe, bearer probe 16/16, gateway gate,
+  live health, prod parity incl. LKG==prod==repo, watch wiring,
+  native WebRTC e2e).
+- NEEDS ENRIQUE (both unchanged): (1) web ~2 min — create the APNs-capable
+  key (developer.apple.com → Keys → APNs CHECKED) and send the .p8
+  (scripts/swap_apns_key.py installs it; probe + swap gates re-verify
+  Apple's verdict automatically). (2) phone — install TestFlight, accept
+  the invite, open build 1 once → /register fires (CallManager retries
+  with backoff). The device-watch (15m) announces either flip within 15
+  minutes, and when BOTH land it will now prove the delivery path with a
+  real push before declaring the mission complete.
+
+
 
 - Full re-audit this run: backlog 1–9 complete, verify_all ALL GREEN
   (23/23 doc contracts, 15/15 watch pins, bridge bearer probe, gateway

@@ -23,6 +23,7 @@ STATE_DIR = Path(os.environ.get("BRIDGE_STATE_DIR", "/opt/jarvis-ios-bridge"))
 ENV_PATH = STATE_DIR / "apns.env"
 SCHEDULE_PATH = STATE_DIR / "scheduled_calls.json"
 SECRETS_PATH = STATE_DIR / "secrets.json"          # values live here, root-only, never served back
+COUNTERS_PATH = STATE_DIR / "push_counters.json"   # push success/failure counters (dev-observability)
 DASH_CONFIG_PATH = Path(os.environ.get("BRIDGE_DASH_CONFIG", "/root/.hermes/config.yaml"))
 
 
@@ -68,6 +69,32 @@ def _auth(x_bridge_sig: str, body: bytes) -> None:
         raise HTTPException(401, "bad signature")
 
 
+def _bump_push_counters(ok: bool) -> None:
+    """Persist push success/failure counters to push_counters.json.
+
+    Dev-observability (dev-success-counter contract, PROGRESS 2026-09-19):
+    /health exposes the totals so the device-watch's MISSION-COMPLETE message
+    (and any later audit) can verify that a real delivery actually happened
+    after the key flip — `last_push_error` alone cannot ("" means only
+    'nothing failed YET', never 'a push succeeded').
+    Best-effort: a counter write failure must never affect the push result.
+    """
+    try:
+        data = {}
+        if COUNTERS_PATH.exists():
+            try:
+                data = json.loads(COUNTERS_PATH.read_text() or "{}")
+            except Exception:
+                data = {}
+        key = "push_ok" if ok else "push_fail"
+        data[key] = int(data.get(key, 0)) + 1
+        data["last_at"] = int(time.time())
+        COUNTERS_PATH.write_text(json.dumps(data))
+        os.chmod(COUNTERS_PATH, 0o600)
+    except Exception as e:
+        print(f"[bridge] push-counter write failed (non-fatal): {e}")
+
+
 def _send_voip(device_token: str, payload: dict) -> bool:
     """Send a VoIP push via APNs over HTTP/2 (httpx + h2) with provider-token
     JWT auth (pyjwt ES256, kid header). Config/token read per call.
@@ -88,11 +115,14 @@ def _send_voip(device_token: str, payload: dict) -> bool:
     if not (key_id and team_id and p8.exists()):
         _save_env_key("LAST_PUSH_ERROR", "unconfigured")
         # Not yet configured: log-and-ack so the loop agent can still develop.
+        # NOT counted in push counters — nothing reached Apple (attempt-only
+        # semantics: push_ok/push_fail count real Apple round-trips).
         print(f"[bridge] APNs not configured yet; would push {payload}")
         return False
     if not device_token:
         # No registered device (or snapshot empty): nothing to push to.
         # Distinct log line so "no device" never masquerades as "APNs broken".
+        # NOT counted (see above — no Apple round-trip happened).
         print("[bridge] push skipped: no DEVICE_TOKEN registered yet")
         return False
     import jwt  # pyjwt
@@ -118,9 +148,11 @@ def _send_voip(device_token: str, payload: dict) -> bool:
         print(f"[bridge] APNs push TRANSPORT ERROR: {type(e).__name__}: {e} "
               f"(host={'sandbox' if cfg.get('APNS_SANDBOX') == '1' else 'production'})")
         _save_env_key("LAST_PUSH_ERROR", f"transport {type(e).__name__} at {int(time.time())}")
+        _bump_push_counters(False)
         return False
     if r.status_code == 200:
         _save_env_key("LAST_PUSH_ERROR", "")
+        _bump_push_counters(True)
         return True
     try:
         reason = r.json().get("reason", "")
@@ -129,6 +161,7 @@ def _send_voip(device_token: str, payload: dict) -> bool:
     print(f"[bridge] APNs push REJECTED: HTTP {r.status_code} {reason} "
           f"(topic={headers['apns-topic']}, host={'sandbox' if cfg.get('APNS_SANDBOX') == '1' else 'production'})")
     _save_env_key("LAST_PUSH_ERROR", f"{r.status_code} {reason} at {int(time.time())}")
+    _bump_push_counters(False)
     return False
 
 
@@ -147,9 +180,21 @@ def health():
     # device_registered (backlog #4 close-out): lets the CC/app/watch crons see
     # WHEN the phone has completed its /register handshake without exposing any
     # token material (boolean presence only — never the token or its length).
+    # push_ok/push_fail (dev-success-counter contract): real Apple round-trip
+    # totals — prove (or disprove) that a delivery actually happened.
+    # last_push_error == "" only means "nothing failed recently"; only
+    # push_ok >= 1 is evidence of a delivered push.
+    counters = {}
+    if COUNTERS_PATH.exists():
+        try:
+            counters = json.loads(COUNTERS_PATH.read_text() or "{}")
+        except Exception:
+            counters = {}
     return {"ok": True, "apns_configured": bool(cfg.get("APNS_KEY_ID")),
             "device_registered": bool(cfg.get("DEVICE_TOKEN")),
             "last_push_error": cfg.get("LAST_PUSH_ERROR", ""),
+            "push_ok": int(counters.get("push_ok", 0)),
+            "push_fail": int(counters.get("push_fail", 0)),
             "scheduled": len(_load_schedule())}
 
 
