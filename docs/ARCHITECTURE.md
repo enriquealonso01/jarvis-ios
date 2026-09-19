@@ -73,7 +73,11 @@ labels the session surface `ios` (metrics/CC show it distinctly from
 `cc_pwa`) and, if a `reason` is present, injects it ~6s after connect as a
 spoken line so JARVIS opens the call with why he's calling. The app ALSO
 creates the SmallWebRTC "app" data channel (label `app`, ordered) and sends a
-literal `ping` string every second — same contract as voice_page.html. The
+literal `ping` TEXT string every second — same contract as voice_page.html.
+TEXT is load-bearing: pipecat's keepalive counts only str frames starting
+with "ping" (`isinstance(message, str)`); a binary ping is missed by the
+liveness clock and error-logged per second (build 29 shipped isBinary:true —
+fixed 2026-09-19, pinned in swift_sanity). The
 gateway pushes `hello` / `state` / `transcript` / `metrics` JSON back over it;
 `WebRTCClient.onAppMessage` routes those into `CallManager` (call-state label
 + last transcript on the Calls tab). A native call without the data channel

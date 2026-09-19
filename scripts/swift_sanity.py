@@ -60,7 +60,14 @@ required = {
     "CallLogStore.swift": ["final class CallLogStore", "struct Entry: Codable", "func add(reason", "func finish(id:", "outcome", "durationSeconds"],
     "CCClient.swift": ["struct Attention", "struct WorkHistory"],
     "HomeView.swift": ["alertsCard", "Attention"],
-    "WebRTCClient.swift": ["startDisconnectGrace", "cancelDisconnectGrace", "disconnectGraceSeconds", "no recovery within"],
+    "WebRTCClient.swift": ["startDisconnectGrace", "cancelDisconnectGrace", "disconnectGraceSeconds", "no recovery within",
+                          # Data-channel keepalive must be a TEXT ping. Pipecat's
+                          # SmallWebRTCConnection counts ONLY str frames that
+                          # start with "ping" for its 3s liveness clock; isBinary:
+                          # true made every iOS ping fall into json.loads ->
+                          # error-log spam per second + a dead keepalive (the
+                          # web orb and the native probe both send text).
+                          'Data("ping".utf8), isBinary: false'],
     "ChatsView.swift": ["NewTaskSheet", "project/task", "lastMessage", "pollHistory", "decodedLines", "JARVIS is thinking",
                         # pollHistory compares [ChatLine] with != — without Equatable
                         # that line is a hard Xcode build error.

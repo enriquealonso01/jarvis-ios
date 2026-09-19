@@ -197,7 +197,13 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
         timer.setEventHandler { [weak self] in
             guard let self, let dc = self.appChannel, dc.readyState == .open else { return }
-            dc.sendData(RTCDataBuffer(data: Data("ping".utf8), isBinary: true))
+            // isBinary MUST stay false: the gateway's keepalive (pipecat
+            // SmallWebRTCConnection) only counts TEXT frames that start with
+            // "ping" — a binary ping misses the keepalive branch, throws in
+            // its json.loads, and is error-logged every second while the
+            // session's liveness clock never advances (voice_page.html and
+            // probe_webrtc_native.py both send text; we must match).
+            dc.sendData(RTCDataBuffer(data: Data("ping".utf8), isBinary: false))
         }
         timer.resume()
         pingTimer = timer

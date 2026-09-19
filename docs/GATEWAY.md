@@ -50,7 +50,9 @@ how a JARVIS-initiated call (VoIP push → answer) tells him why it rang.
 
 Data channel (required, mirror of the CC voice page): after the answer is
 set, the app creates an ordered data channel labeled `app` and sends a
-literal `ping` string once per second (session liveness). The gateway pushes
+literal `ping` TEXT string once per second (session liveness — pipecat
+counts only text pings; a binary ping silently kills the keepalive). The
+gateway pushes
 JSON app messages back: `hello` (brain/tts/stt), `state`
 (listening/thinking/working/speaking + label), `transcript`
 (role user/assistant + text), `metrics`, `tool`, `reset`.
