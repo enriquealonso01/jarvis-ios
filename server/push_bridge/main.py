@@ -171,6 +171,37 @@ class CallReq(BaseModel):
     scheduled_by: str | None = None
 
 
+# Reason/text-size guards (1g, 2026-09-19): `reason` rides INSIDE the APNs
+# push payload ({"aps": {}, **payload} in _send_voip), and Apple rejects any
+# notification over 4096 bytes with HTTP 413. POST /schedule persists the
+# reason for the scheduler to fire later, so an oversized reason meant:
+# persisted fine -> fire time -> APNs 413 -> retry 10x -> silently dropped —
+# the exact silent-never class the at_iso guard (1f-bis) closed, via the
+# payload-SIZE seam. Both write surfaces (/call, /schedule) therefore validate
+# BEFORE anything fires or persists. 3500 bytes leaves >500 bytes of envelope
+# headroom under the 4096 hard limit.
+MAX_REASON_BYTES = 3500
+MAX_SCHEDULED_BY_CHARS = 200
+
+
+def _validate_push_text(reason: str, scheduled_by: str | None) -> str:
+    """Return the cleaned reason; 400 with a pinned detail on violation.
+    Pinned offline + live by scripts/check_bridge_contract.py
+    (guard probes /call#empty /call#huge /schedule#huge)."""
+    r = (reason or "").strip()
+    if not r:
+        raise HTTPException(status_code=400,
+                            detail="reason must not be empty — it is what the call screen shows")
+    rbytes = len(r.encode("utf-8"))
+    if rbytes > MAX_REASON_BYTES:
+        raise HTTPException(status_code=400,
+                            detail=f"reason too long ({rbytes} bytes UTF-8 > {MAX_REASON_BYTES} limit) — APNs rejects any notification payload over 4096 bytes, so this would burn 10 scheduler retries then silently drop the call")
+    if scheduled_by and len(scheduled_by) > MAX_SCHEDULED_BY_CHARS:
+        raise HTTPException(status_code=400,
+                            detail=f"scheduled_by too long ({len(scheduled_by)} > {MAX_SCHEDULED_BY_CHARS} chars) — it also rides the APNs payload")
+    return r
+
+
 class ScheduleReq(CallReq):
     at_iso: str
 
@@ -489,6 +520,10 @@ async def call(request: Request, x_bridge_sig: str = Header(default="")):
     raw = await request.body()
     _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
     req = CallReq(**json.loads(raw or b"{}"))
+    # Text guards (1g): reason rides the APNs payload — empty or oversized
+    # text 400s here instead of burning push attempts at Apple (see
+    # _validate_push_text for the full why).
+    req.reason = _validate_push_text(req.reason, req.scheduled_by)
     call_id = str(uuid.uuid4())[:8]
     device_token = _load_env().get("DEVICE_TOKEN", "")
     ok = _send_voip(device_token, {"reason": req.reason, "call_id": call_id, "scheduled_by": req.scheduled_by, "gateway_ws": "/voice-gw"})
@@ -517,6 +552,11 @@ async def schedule(request: Request, x_bridge_sig: str = Header(default="")):
     if due <= datetime.now(timezone.utc):
         raise HTTPException(status_code=400,
                             detail="at_iso is in the past (UTC) — refusing to schedule an instant call")
+    # Text guards (1g, same seam as /call): an oversized reason persists fine
+    # but can NEVER be delivered — at fire time APNs rejects the >4KB payload,
+    # the scheduler burns its 10 retries, and the call silently drops. Guarded
+    # BEFORE anything is persisted.
+    req.reason = _validate_push_text(req.reason, req.scheduled_by)
     item = {"call_id": str(uuid.uuid4())[:8], "at_iso": req.at_iso, "reason": req.reason,
             "scheduled_by": req.scheduled_by, "device_token": _load_env().get("DEVICE_TOKEN", "")}
     items = _load_schedule() + [item]

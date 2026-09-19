@@ -215,6 +215,24 @@ def main():
     st, out7 = req(base, "POST", "/register", {"x-bridge-sig": sig_for(a.secret, reg2)}, reg2)
     check("/register HMAC still 200", st == 200 and out7.get("token_len") == 64)
 
+    # reason text guards (1g) must bite on BOTH auth paths BEFORE the valid
+    # /call + /schedule probes above could have been shadowed by an
+    # unguarded write — empty and >3500-byte reasons 400 on /call and
+    # /schedule alike (APNs 413s payloads >4096 bytes at fire time)
+    empty_body = json.dumps({"reason": "   "}).encode()
+    huge_body = json.dumps({"reason": "x" * 5000}).encode()
+    huge_sched = json.dumps({"at_iso": "2033-01-01T00:00:00+00:00",
+                             "reason": "y" * 5000}).encode()
+    st, _ = req(base, "POST", "/call", {"Authorization": f"Bearer {token}"}, empty_body)
+    check("/call empty reason bearer 400", st == 400)
+    st, _ = req(base, "POST", "/call", {"x-bridge-sig": sig_for(a.secret, huge_body)}, huge_body)
+    check("/call huge reason HMAC 400", st == 400)
+    st, _ = req(base, "POST", "/schedule", {"Authorization": f"Bearer {token}"}, huge_sched)
+    check("/schedule huge reason bearer 400", st == 400)
+    st, _ = req(base, "POST", "/call", {"Authorization": f"Bearer {token}"}, good_body)
+    check("/call normal reason still 200 (guard not overzealous)",
+          st == 200 and out.get("call_id"))
+
 
     bad = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(bad)}/{len(results)} passed")

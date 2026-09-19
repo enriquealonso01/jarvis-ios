@@ -5,6 +5,13 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
 
 - `POST /call` `{reason, scheduled_by?}` -> `{call_id, pushed}`. Fires VoIP push now.
   `pushed:false` = APNs p8 not yet configured (bridge still queues/logs).
+  VALIDATED (2026-09-19, 1g): `reason` must be non-empty and ≤3500 bytes UTF-8,
+  `scheduled_by` ≤200 chars — both ride INSIDE the APNs payload and Apple rejects
+  any notification over 4096 bytes, so oversized text would burn push attempts at
+  send time (or, via /schedule, persist fine and silently drop after 10 scheduler
+  retries at fire time). Violations get `400 {detail}` and nothing fires/persists.
+  Pinned + live-probed by `scripts/check_bridge_contract.py` (/call#empty/#huge),
+  mirrored client-side in `scripts/call_enrique.py`.
 - `POST /schedule` `{at_iso (ISO-8601, prefer +00:00), reason, scheduled_by?}` -> `{call_id, at}`.
   Internal scheduler fires when due (20s tick). VALIDATED (2026-09-19):
   `at_iso` must parse as ISO-8601 AND be in the future (UTC) — garbage or past
@@ -12,6 +19,10 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   persisted entry the moment it is due, so a past `at_iso` would ring
   instantly; pinned + live-probed by `scripts/check_bridge_contract.py`,
   mirrored client-side in `scripts/call_enrique.py`).
+  ALSO VALIDATED (2026-09-19, 1g): same `reason`/`scheduled_by` text-size
+  guards as `/call` — an oversized reason persisted fine but could NEVER be
+  delivered (APNs 413 at fire time → 10 retries → silent drop; probed live as
+  /schedule#huge).
 - `POST /register` `{device_token, bundle_id?}` -> `{registered, token_len}`.
   App calls this on launch with its APNs token. Persisted as `DEVICE_TOKEN=...` in
   /opt/jarvis-ios-bridge/apns.env (0600) and auto-injected into every /call push and

@@ -1,3 +1,63 @@
+## 2026-09-19 ~21:00 UTC (build-loop run) — 1g-bis: the LAST unguarded bridge write surfaces closed — POST /call + POST /schedule accepted an UNBOUNDED `reason` (it rides INSIDE the APNs payload; Apple rejects any notification over 4096 bytes, so an oversized /schedule entry persisted fine, burned 10 fire-time retries, then silently dropped the call — 1f-bis's silent-never class via payload SIZE); both surfaces now 400 empty/oversized text BEFORE firing/persisting, pinned offline + live, deployed to prod and live-verified
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (no app-code tag this run; the Swift
+  composer change below rides the NEXT tag).
+- The audit that found it: 1f-bis (at_iso) and 1f-ter (device_token) closed
+  their input seams; this run audited the SIBLING write surfaces for the
+  same class. POST /call and POST /schedule took `reason: str` (default
+  "JARVIS call") and `scheduled_by: str | None` with ZERO size validation.
+  The reason is serialized INTO the push payload (`{"aps": {}, **payload}`);
+  APNs hard-rejects any notification over 4096 bytes with HTTP 413. Two
+  failure shapes: /call with a huge reason = push attempts burn at Apple
+  (push_fail climbs, call never lands); WORSE, /schedule with a huge reason
+  persists cleanly, then at fire time APNs 413s, the scheduler burns its
+  capped 10 retries, and the call silently drops — the exact
+  persisted-then-never-delivered class 1f-bis killed for timestamps, via
+  the payload-SIZE seam instead.
+- Fixed bridge-side (server/push_bridge/main.py): shared
+  `_validate_push_text(reason, scheduled_by)` — 400 "reason must not be
+  empty — it is what the call screen shows"; 400 "reason too long (N bytes
+  UTF-8 > 3500 limit) — APNs rejects any notification payload over 4096
+  bytes, so this would burn 10 scheduler retries then silently drop the
+  call"; 400 "scheduled_by too long (N > 200 chars)". 3500 bytes leaves
+  >500 bytes of envelope headroom under Apple's 4096. Wired on BOTH /call
+  and /schedule, BEFORE anything fires or persists.
+- Client mirror (scripts/call_enrique.py): `call --reason` and
+  `schedule --reason` now fail at composition time (exit 1, zero network
+  calls) on empty/oversized text — the agent learns the moment it composes
+  the command, same convention as the 1f-bis at_iso mirror. iOS-side:
+  ScheduleCallSheet shows a live "Too long: N/3500 bytes" warning and
+  disables Schedule (reason.utf8.count > 3500).
+- Pinned in check_bridge_contract.py (1g-bis): offline — REASON_GUARDS
+  needles (the shared-guard def + all three 400 detail literals) plus a
+  BOTH-surfaces wiring count (`req.reason = _validate_push_text(...)`
+  must appear exactly twice); live — the throwaway instance is probed with
+  real empty/huge bodies (/call#empty /call#huge /schedule#huge) and must
+  answer 400 with the pinned details (`reason_guard_problems`; a 200 to any
+  probe fails the whole live layer). probe_call_bearer_live.py mirrors the
+  guard on both AUTH paths + a not-overzealous check (normal reason still
+  200) — 22/22. Selftest extended to 23/23 (T8c unwire caught, T8d
+  needle-vanish caught, T9a/T9b/T9c verdict bite).
+- COLLATERAL FIX the selftest caught: check_push_payload_contract.py's
+  `aps`-envelope needle was the bare literal `{"aps": {}, **payload}` —
+  my new guard COMMENT in _send_voip quotes that exact idiom, so T4's
+  tamper (real send replaced by `json=dict(payload)`) read GREEN off the
+  comment text. Needles now anchor the closing `)` of the real c.post
+  statement; 1h selftest 10/10 again, lesson pinned in ARCHITECTURE.md.
+- Deployed via the documented sequence: py_compile OK -> LKG byte-synced ->
+  systemctl restart -> /health ok:true (push_ok:0 untouched). Prod
+  live-verified with direct HMAC-signed probes: empty 400 + huge 400 on
+  /call, huge 400 on /schedule with the pinned details; normal reason
+  still 200; health unpolluted, schedule still [] (invalid bodies persist
+  nothing). check_deploy_parity ALL GREEN.
+- Docs: API.md /call + /schedule entries document the validation;
+  ARCHITECTURE.md 1f ladder entry extended (1g-bis) + 1h A2-anchoring note.
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
 ## 2026-09-19 ~20:20 UTC (build-loop run) — 1f-ter: the /register input hole CLOSED — the bridge persisted ANY device_token ≥20 chars unvalidated (a prose "token" overwrote the real registration silently: device_registered stays true, every future /call + /schedule push fires at a dead token, push_fail climbs, no error anywhere); now format-guarded bridge-side (≥64 lowercase hex, PushKit's exact wire format), pinned offline + live in 1f + probe_call_bearer_live, deployed to prod and live-verified
 
 - Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30

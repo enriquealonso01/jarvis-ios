@@ -297,6 +297,14 @@ struct ScheduleCallSheet: View {
                 Section("Reason") {
                     TextField("What should JARVIS call about?", text: $reason, axis: .vertical)
                         .lineLimit(2...4)
+                    // Bridge 400s an oversized reason (1g text guard): the
+                    // reason rides the APNs payload and Apple rejects
+                    // payloads over 4096 bytes, so stop the composer here.
+                    if reason.utf8.count > 3500 {
+                        Text("Too long: \(reason.utf8.count)/3500 bytes — the call would be rejected at push time.")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
                 Section {
                     // /schedule expects ISO-8601; keep the picker honest.
@@ -322,13 +330,14 @@ struct ScheduleCallSheet: View {
                         ProgressView()
                     } else {
                         Button("Schedule") {
+                            guard reason.utf8.count <= 3500 else { return }
                             busy = true
                             Task {
                                 await onSchedule(when, reason.trimmingCharacters(in: .whitespaces))
                                 busy = false
                             }
                         }
-                        .disabled(reason.isEmpty)
+                        .disabled(reason.isEmpty || reason.utf8.count > 3500)
                     }
                 }
             }

@@ -133,6 +133,24 @@ REGISTER_GUARDS = [
      "400 detail for non-hex device_token"),
 ]
 
+# reason/text-size guards (1g, 2026-09-19): the reason rides INSIDE the APNs
+# push payload and Apple rejects payloads over 4096 bytes — so both write
+# surfaces (/call fires now, /schedule persists for the scheduler) must 400
+# an empty or oversized reason BEFORE anything fires or persists. An
+# oversized scheduled /schedule entry was the worst shape: persisted fine,
+# then at fire time APNs 413s, the scheduler burns its 10 retries and
+# silently drops the call (1f-bis's silent-never class, via payload SIZE).
+REASON_GUARDS = [
+    ("def _validate_push_text(reason: str, scheduled_by: str | None) -> str:",
+     "shared text-guard function exists and is wired for both surfaces"),
+    ("reason must not be empty — it is what the call screen shows",
+     "400 detail for empty reason"),
+    ("reason too long (",
+     "400 detail for oversized reason"),
+    ("scheduled_by too long (",
+     "400 detail for oversized scheduled_by"),
+]
+
 SCHED_LIST_KEY = "scheduled"
 
 
@@ -174,6 +192,14 @@ def check_offline(bridge_src: Path | None = None,
     for needle, label in REGISTER_GUARDS:
         if needle not in src:
             problems.append(f"POST /register token guard missing: {label}")
+    # reason/text-size guards (1g): empty or >4KB-ish reason rides the APNs
+    # payload — Apple 413s it at send time, the scheduler burns 10 retries,
+    # the call silently drops. Both write surfaces must keep the guard.
+    for needle, label in REASON_GUARDS:
+        if needle not in src:
+            problems.append(f"reason text guard missing: {label}")
+        if src.count("req.reason = _validate_push_text(req.reason") != 2:
+            problems.append("reason text guard not wired on BOTH /call and /schedule")
     for fname, structs in SWIFT_STRUCTS.items():
         f = (app_dir or APP) / fname
         if not f.exists():
@@ -354,6 +380,25 @@ def call_endpoints(base, token):
                    {"device_token": "a" * 64, "bundle_id": "probe.bundle"})
     out.append(("POST", "/register", None, f"HTTP {st}"))  # status-only
 
+    # reason text guards (1g): empty / oversized reason must 400 with the
+    # pinned details on the FIRE-NOW surface, BEFORE the valid probe — a 200
+    # to any of these is the APNs-413-at-fire-time regression class (silent
+    # retry burn + drop)
+    st, body = req(base, "POST", "/call", token,
+                   {"reason": "   ", "scheduled_by": "contract-probe"})
+    out.append(("POST", "/call#empty", _doc(st, body, 400), f"HTTP {st}"))
+    st, body = req(base, "POST", "/call", token,
+                   {"reason": "x" * 5000, "scheduled_by": "contract-probe"})
+    out.append(("POST", "/call#huge", _doc(st, body, 400), f"HTTP {st}"))
+    # ... and on the PERSIST surface: an oversized reason would persist fine
+    # and only die at fire time (10 retries then silent drop)
+    st, body = req(base, "POST", "/schedule", token,
+                   {"at_iso": "2033-01-01T00:00:00+00:00",
+                    "reason": "y" * 5000, "scheduled_by": "contract-probe"})
+    out.append(("POST", "/schedule#huge", _doc(st, body, 400), f"HTTP {st}"))
+    reason_docs = [doc for m, p, doc, _ in out
+                   if p in ("/call#empty", "/call#huge", "/schedule#huge")]
+
     st, body = req(base, "GET", "/schedule/list", token)  # envelope (may be [])
     out.append(("GET", "/schedule/list", _doc(st, body, 200), f"HTTP {st}"))
 
@@ -390,7 +435,7 @@ def call_endpoints(base, token):
     st, body = req(base, "POST", "/call", token,
                    {"reason": "contract-probe", "scheduled_by": "contract-probe"})
     out.append(("POST", "/call", _doc(st, body, 200), f"HTTP {st}"))
-    return out, guard_docs, reg_docs
+    return out, guard_docs, reg_docs, reason_docs
 
 
 def shadow_decode(doc, spec) -> str:
@@ -433,6 +478,28 @@ def shadow_decode(doc, spec) -> str:
                         probs.append(f"{coll['key']}[{i}]: missing optional "
                                      f"'{rk}' (UI degrades)")
     return "; ".join(probs)
+
+
+def reason_guard_problems(reason_docs) -> list[str]:
+    """Verdict the /call#empty /call#huge /schedule#huge probe docs (1g): each
+    must be a 200-free JSON body carrying the pinned 400 detail. A 200 here is
+    the APNs-413-at-fire-time class: the reason rides INSIDE the push payload,
+    Apple rejects payloads over 4096 bytes, so an oversized /schedule entry
+    persisted fine, burned its 10 scheduler retries at fire time, and then
+    silently dropped the call — no error anywhere (1f-bis's silent-never class
+    via the payload-SIZE seam)."""
+    probs = []
+    for doc in reason_docs:
+        detail = (doc or {}).get("detail", "") if isinstance(doc, dict) else ""
+        if ("__http_error__" not in (doc or {})
+                and ("reason must not be empty" in detail
+                     or "reason too long (" in detail
+                     or "scheduled_by too long (" in detail)):
+            print(f"LIVE reason guard: 400 with detail OK ({detail[:60]})")
+        else:
+            probs.append(f"reason guard probe did not 400 with the pinned "
+                         f"detail: {doc!r}")
+    return probs
 
 
 def at_iso_guard_problems(guard_docs) -> list[str]:
@@ -480,16 +547,21 @@ def check_live() -> bool:
         return True
     inst = Instance()
     token = mint_bearer(secret_bytes)
-    results, guard_docs, reg_docs = call_endpoints(inst.base, token)
+    results, guard_docs, reg_docs, reason_docs = call_endpoints(inst.base, token)
 
-    # guard verdicts FIRST: a 200 to either at_iso probe is the instant-fire
-    # regression class; a 200 to either register probe is the
-    # dead-registration class — both must fail the whole live layer loudly
+    # guard verdicts FIRST: a 200 to any at_iso probe is the instant-fire
+    # regression class; a 200 to any register probe is the dead-registration
+    # class; a 200 to any empty/huge reason probe is the APNs-413-at-fire-time
+    # class (an oversized persisted reason burns 10 retries then silently
+    # drops the call) — every one must fail the whole live layer loudly
     all_ok = True
     for p in at_iso_guard_problems(guard_docs):
         print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
         all_ok = False
     for p in register_guard_problems(reg_docs):
+        print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
+        all_ok = False
+    for p in reason_guard_problems(reason_docs):
         print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
         all_ok = False
 
@@ -502,8 +574,9 @@ def check_live() -> bool:
 
     list_samples = []  # (label, doc, coll) for every /schedule/list sample
     for method, path, doc, status_desc in results:
-        if path.endswith(("#bad", "#past", "#short", "#nonhex")):
-            continue  # at_iso + register guard probes — verdicted above
+        if path.endswith(("#bad", "#past", "#short", "#nonhex",
+                          "#empty", "#huge")):
+            continue  # at_iso + register + reason guard probes — verdicted above
         spec = spec_for(method, path)
         if spec is None:
             print(f"BRIDGE-CONTRACT-FAIL (live): {method} {path} has no "
@@ -711,6 +784,37 @@ def selftest() -> int:
     check("T8b offline register-guard-vanish caught",
           any("register token guard missing" in p for p in offline_problems()))
     shutil.copy2(BRIDGE_SRC, bridge_copy)
+    # 1g: removing the reason text guard must fail the offline pin too (both
+    # the detail needle and the BOTH-surfaces wiring count)
+    edit(bridge_copy, lambda t: t.replace(
+        'req.reason = _validate_push_text(req.reason, req.scheduled_by)',
+        "pass  # guard unwired", 1))
+    check("T8c offline reason-guard-unwire caught",
+          any("not wired on BOTH /call and /schedule" in p
+              for p in offline_problems()))
+    shutil.copy2(BRIDGE_SRC, bridge_copy)
+    edit(bridge_copy, lambda t: t.replace(
+        "detail=\"reason must not be empty", "detail=\"X", 1))
+    check("T8d offline reason-guard-needle-vanish caught",
+          any("reason text guard missing" in p for p in offline_problems()))
+    shutil.copy2(BRIDGE_SRC, bridge_copy)
+
+    # 1g: the live reason-guard verdict must BITE the same way
+    good_empty = {"detail": "reason must not be empty — it is what the call "
+                            "screen shows"}
+    good_huge = {"detail": "reason too long (5000 bytes UTF-8 > 3500 limit) — "
+                           "APNs rejects any notification payload over 4096 "
+                           "bytes, so this would burn 10 scheduler retries "
+                           "then silently drop the call"}
+    check("T9a reason guard accepts pinned 400 details",
+          reason_guard_problems([good_empty, good_huge]) == [])
+    check("T9b reason guard caught: probe returned 200",
+          any("did not 400" in p for p in
+              reason_guard_problems([{"call_id": "x", "pushed": True}])))
+    check("T9c reason guard caught: wrong/no detail",
+          any("did not 400" in p for p in
+              reason_guard_problems(
+                  [{"__http_error__": 413, "__body__": "payload too large"}])))
 
     # clean tree must be CLEAN (no false positives from the tampering above)
     check("clean tree offline pins pass", offline_problems() == [])

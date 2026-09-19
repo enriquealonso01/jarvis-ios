@@ -94,7 +94,21 @@ def main() -> None:
         sys.exit(1)
 
     if a.cmd == "call":
-        body: dict = {"reason": a.reason}
+        # Client-side mirror of the bridge's 2026-09-19 reason text guards
+        # (1g): the reason rides the APNs payload, so empty or >3500-byte
+        # text fails HERE at composition time (exit 1, no network call)
+        # instead of a 400 after the fact.
+        reason = (a.reason or "").strip()
+        if not reason:
+            print("--reason must not be empty (it is what the call screen "
+                  "shows)", file=sys.stderr)
+            sys.exit(1)
+        if len(reason.encode("utf-8")) > 3500:
+            print(f"--reason too long ({len(reason.encode('utf-8'))} bytes "
+                  f"UTF-8 > 3500; the bridge 400s it — APNs rejects payloads "
+                  f"over 4096 bytes)", file=sys.stderr)
+            sys.exit(1)
+        body: dict = {"reason": reason}
         if a.by:
             body["scheduled_by"] = a.by
         out = _request("POST", "/call", body)
@@ -119,7 +133,14 @@ def main() -> None:
                   f"400s past timestamps; a schedule must be in the future).",
                   file=sys.stderr)
             sys.exit(1)
-        body = {"at_iso": a.at_iso, "reason": a.reason}
+        body = {"at_iso": a.at_iso, "reason": (a.reason or "").strip()}
+        if len(body["reason"].encode("utf-8")) > 3500:
+            print(f"--reason too long ({len(body['reason'].encode('utf-8'))} "
+                  f"bytes UTF-8 > 3500; the bridge 400s it — an oversized "
+                  f"reason could never be delivered (APNs rejects payloads "
+                  f"over 4096 bytes, so it would burn 10 retries then "
+                  f"silently drop)", file=sys.stderr)
+            sys.exit(1)
         if a.by:
             body["scheduled_by"] = a.by
         out = _request("POST", "/schedule", body)

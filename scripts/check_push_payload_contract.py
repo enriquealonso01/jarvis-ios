@@ -144,10 +144,14 @@ def check_offline(bridge_src: Path = BRIDGE_SRC, callmanager: Path = CALLMANAGER
                 f"fire site '{site}' builds {sorted(sites[site])}, contract is "
                 f"{sorted(want)} (one-sided rename?)")
 
-    # A2. aps envelope at top level
+    # A2. aps envelope at top level. Both needles anchor the closing `)` of the
+    # real `r = c.post(..., json={"aps": {}, **payload})` statement: a bare
+    # literal needle would let a COMMENT mentioning the idiom mask a real
+    # vanish (found live 2026-09-19 — the 1g guard comment in _send_voip
+    # quoted the idiom and T4's tamper read green until the anchor landed).
     if APS_ENVELOPE and not re.search(
-            r'json\s*=\s*\{\s*"aps"\s*:\s*\{\}\s*,\s*\*\*payload\s*\}', bridge_text):
-        if not re.search(r'\{\s*"aps"\s*:\s*\{\}\s*,\s*\*\*payload\s*\}', bridge_text):
+            r'json\s*=\s*\{\s*"aps"\s*:\s*\{\}\s*,\s*\*\*payload\s*\}\s*\)', bridge_text):
+        if not re.search(r'\{\s*"aps"\s*:\s*\{\}\s*,\s*\*\*payload\s*\}\s*\)', bridge_text):
             problems.append('bridge no longer sends {"aps": {}, **payload} '
                             '(top-level envelope vanish)')
 

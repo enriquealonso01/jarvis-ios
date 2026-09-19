@@ -159,7 +159,13 @@ it ships in a build:
   device_token FORMAT GUARDS (offline needles + live 400s for
   short/non-hex tokens on both auth paths) — a malformed token persisted
   over the real one silently kills every future push while
-  `device_registered` stays true; selftest 18/18.
+  `device_registered` stays true; since 2026-09-19 (1g-bis) likewise the
+  REASON TEXT-SIZE GUARDS on POST /call + POST /schedule (offline needles +
+  live 400s: /call#empty /call#huge /schedule#huge) — the reason rides
+  INSIDE the APNs payload, Apple 413s payloads over 4096 bytes, so an
+  oversized /schedule entry persisted fine and then silently dropped after
+  10 fire-time retries (1f-bis's silent-never class via payload SIZE);
+  selftest 23/23.
 - **1g chat send** (`check_chat_contract.py`): the app's WRITE path —
   POST `/api/control/work/{id}/chat`, POST `/api/control/project/task`, GET
   `/api/control/work/{id}/history` — routes, Swift models, AND the pre-LLM
@@ -185,6 +191,10 @@ it ships in a build:
   keeps the silent-fallback class impossible: a bridge key rename would
   otherwise be masked by the app's `?? "JARVIS call"` / `?? "/voice-gw"`
   defaults — the phone rings, nothing errors, the reason is just blank.
+  Since 2026-09-19 (1g-bis) the `aps`-envelope needles anchor the closing
+  `)` of the real `c.post(...)` statement: a bare-literal needle let a
+  COMMENT quoting the idiom (the new 1g guard comment in `_send_voip`) mask
+  a real vanish — T4's tamper read green until the anchor landed.
 
 ## The ship gate (step 8: a run can't end believing a lie about shipping)
 Step 7 (parity) proves nothing is unpushed; step 8 proves the thing that WAS
