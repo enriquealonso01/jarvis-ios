@@ -1,3 +1,45 @@
+## 2026-09-19 04:30 UTC (build-loop run) — day-one registration seam closed in the app: PushKit token persisted + /register RE-KICKED the moment auth flips (login or manual token), so "open build 1 once" now actually flips device_registered instead of waiting for a second cold launch
+
+- Audit this run (holding pattern; both blockers still Enrique-side) traced
+  the day-one critical path end-to-end and found a real timing seam in
+  CallManager: the /register retry loop (5 attempts, 2/4/8/16s backoff ≈ 30s)
+  starts at LAUNCH — but a fresh install launches into Setup → Login, so all
+  five attempts fire UNAUTHENTICATED (401s) and exhaust while the user is
+  still typing credentials. The login round trip then takes minutes; without
+  a re-kick the bridge never learns the PushKit token until the NEXT cold
+  launch. Concretely: Enrique accepts the invite, opens build 1, signs in —
+  and device_registered STAYS false, "ring this phone" is dead on day one,
+  and the device-watch keeps announcing nothing. The exact flip the whole
+  watch/sentinel apparatus is waiting on had a hole in it.
+- FIX (3 files): (1) CallManager persists every PushKit token to
+  UserDefaults (jarvis.push.voiptoken) BEFORE the first registration attempt
+  — token rotation just overwrites + re-registers. (2) New
+  retryDeviceRegistration() re-kicks /register from the STORED token; wired
+  to RootTabView.task (fires exactly when isAuthed flips true via password
+  login, and on cold-launch-already-authed) and to AuthStore.applyManualToken
+  (Settings lives INSIDE the already-visible RootTabView, so its .task never
+  re-fires — that route needs its own kick). Every attempt re-reads the
+  CURRENT access token, so the re-kick lands the registration the moment
+  auth exists. Server side already idempotent (/register upserts the token
+  file) — bridge untouched, no restart.
+- Proven: swift_sanity gained required-guard pins on all three pieces
+  (tokenKey + persist + retryDeviceRegistration in CallManager, the .task
+  hook in JarvisApp, the applyManualToken kick in AuthStore) and the pin was
+  NEGATIVE-TESTED — tampering the symbol out of CallManager makes sanity
+  exit 1 with "REQUIRED pin missing", restore makes it exit 0. No Swift
+  toolchain here, so structural balance + pins + full verify_all (34+1 doc
+  contracts, sentinel 18/18, live health, native WebRTC e2e vs the live
+  gateway) are the verification stack; ALL GREEN after the change. Committed
+  to master; next tag build (ios-v2) picks it up — no rebuild needed for
+  build 1's verdict.
+- Live state unchanged: device_registered:false, push_ok:0, probe verdict
+  still 403 InvalidProviderToken, build 1 VALID + IN_BETA_TESTING. NEEDS
+  ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py), (2)
+  phone — TestFlight, invite, open build 1, sign in. Both flips announce
+  within 15 min; with the app fix riding the repo, opening + signing in once
+  is now genuinely sufficient for flip 2.
+
+
 ## 2026-09-19 03:50 UTC (build-loop run) — success-was-paged-as-a-loss seam closed in the watch-sentinel: GONE verdicts are now health-ARBITRATED (device_registered:true AND push_ok>=1 = QUIET stand-down), so the mission-complete self-remove can never fire a false "announcer lost" alert
 
 - Audit this run swept for drift with both blockers still Enrique-side and

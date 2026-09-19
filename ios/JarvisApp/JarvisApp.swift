@@ -39,6 +39,14 @@ struct RootTabView: View {
             CallsView()
                 .tabItem { Label("Calls", systemImage: "phone.fill") }
         }
+        // Reaching this view means isAuthed just flipped true (password login,
+        // manual token) OR the app cold-launched already authed. Either way,
+        // re-kick /register with the stored PushKit token: on a fresh install
+        // the launch-time retry loop exhausted BEFORE login existed, so this
+        // is the call that actually lands the device registration (day-one
+        // "ring this phone"). Idempotent on the server; every attempt re-reads
+        // the current access token.
+        .task { await CallManager.shared.retryDeviceRegistration() }
     }
 }
 

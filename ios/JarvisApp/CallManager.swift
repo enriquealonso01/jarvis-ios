@@ -69,6 +69,29 @@ final class CallManager: NSObject, ObservableObject {
     }
     private var voipRegistry: PKPushRegistry?
 
+    /// Last PushKit token seen, persisted so registration can be RE-KICKED
+    /// after the launch-time retry loop has burned out (see
+    /// retryDeviceRegistration — the fresh-install day-one seam).
+    private static let tokenKey = "jarvis.push.voiptoken"
+
+    /// Re-attempt /register using the STORED PushKit token. Called when
+    /// isAuthed flips true (password login OR manual token in Settings).
+    ///
+    /// Why this exists: on a fresh install the PushKit token arrives at
+    /// launch — while the user is still on Setup/Login, BEFORE any Bearer
+    /// exists — so the launch-time retry loop (5 attempts, ~30s) exhausts
+    /// unauthenticated and gives up. The user then spends minutes on the
+    /// login round trip; without this re-kick the bridge never learns the
+    /// token until the NEXT cold launch, `device_registered` stays false,
+    /// and "ring this phone" is dead on day one even though the user did
+    /// everything right. Each attempt re-reads the CURRENT access token, so
+    /// this call lands the registration the moment auth exists.
+    func retryDeviceRegistration() async {
+        guard let token = UserDefaults.standard.string(forKey: Self.tokenKey),
+              !token.isEmpty else { return }
+        await sendDeviceToken(token)
+    }
+
     // MARK: Incoming push (called from AppDelegate)
 
     func handleVoIPPayload(_ payload: [AnyHashable: Any], onReported: (() -> Void)? = nil) {
@@ -334,6 +357,10 @@ extension CallManager: PKPushRegistryDelegate {
     nonisolated func pushRegistry(_ registry: PKPushRegistry, didUpdate credentials: PKPushCredentials, for type: PKPushType) {
         let token = credentials.token.map { String(format: "%02x", $0) }.joined()
         guard !token.isEmpty else { return }
+        // Persist BEFORE registering: retryDeviceRegistration() re-kicks from
+        // this stored copy when auth flips later in the session (rotation —
+        // PushKit reissuing a token — just overwrites it and re-registers).
+        UserDefaults.standard.set(token, forKey: Self.tokenKey)
         Task { await self.sendDeviceToken(token) }
     }
 

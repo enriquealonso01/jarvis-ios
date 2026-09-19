@@ -144,7 +144,20 @@ required_guard_pins = [
     # Device-token /register must retry (fresh install: push token arrives
     # before login, so the first attempt 401s) — a revert to the fire-and-
     # forget single POST leaves "ring this phone" dead until next launch.
-    ("CallManager.swift", ["for attempt in 0..<5"]),
+    ("CallManager.swift", ["for attempt in 0..<5",
+                           # Post-login re-kick: the launch retry loop exhausts
+                           # ~30s in, while the user is STILL on Setup/Login —
+                           # token must be persisted + re-kicked when auth
+                           # flips, or device_registered stays false until the
+                           # NEXT cold launch (day-one ring dead).
+                           "private static let tokenKey",
+                           "UserDefaults.standard.set(token, forKey: Self.tokenKey)",
+                           "func retryDeviceRegistration"]),
+    ("JarvisApp.swift", ["retryDeviceRegistration"]),
+    ("AuthStore.swift", ["static func serverURL(_ base: String, _ path: String) -> URL?",
+                         # Manual-token route re-kicks /register too (Settings
+                         # is INSIDE RootTabView — its .task never re-fires).
+                         "retryDeviceRegistration"]),
     # HomeView per-endpoint resilience: load1 + try? keeps one failing CC
     # endpoint from blanking the whole Home tab (all-or-nothing tuple throw).
     ("HomeView.swift", ["try? load1", "vitals = v2 ?? vitals",

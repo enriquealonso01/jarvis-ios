@@ -179,6 +179,10 @@ final class AuthStore: ObservableObject {
         }
         lastError = nil
         isAuthed = true
+        // Manual-token path: RootTabView is already on screen (Settings lives
+        // inside it), so its .task won't re-fire — re-kick /register here so
+        // this auth route also lands the device registration.
+        Task { await CallManager.shared.retryDeviceRegistration() }
     }
 
     enum AuthError: LocalizedError {
