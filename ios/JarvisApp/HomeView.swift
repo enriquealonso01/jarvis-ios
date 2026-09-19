@@ -103,6 +103,13 @@ struct HomeView: View {
                         // (scripts/swap_apns_key.py, docs/BUILD.md).
                         Text("· APNs: \(lpe)").font(.caption2).foregroundStyle(.secondary)
                     }
+                    if let dc = bridgeHealth?.dropped_calls, dc > 0 {
+                        // 1k: the bridge gave up on scheduled calls (dead
+                        // token / broken key when they came due). Visible
+                        // here; the full log lives on the Calls tab.
+                        Text("· \(dc) scheduled call\(dc == 1 ? "" : "s") dropped")
+                            .font(.caption2).foregroundStyle(.red)
+                    }
                     if bridgeHealth?.device_registered == false {
                         // This phone hasn't completed /register yet (fresh
                         // install, or push woke us before login). Server-side

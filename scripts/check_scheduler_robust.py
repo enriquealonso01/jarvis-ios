@@ -110,6 +110,51 @@ def main():
     check("scheduler loop guards ticks with try/except",
           "except Exception as e:" in src and "scheduler tick error" in src)
 
+    # 6 (1k): a gave-up entry (10 failed pushes) is RECORDED in the drop log
+    m._send_voip = lambda devtok, payload: False
+    m.DROPS_PATH.write_text("[]")
+    sp.write_text(json.dumps([
+        {"call_id": "giveup", "at_iso": (now - timedelta(minutes=1)).isoformat(),
+         "reason": "never rings", "failures": 9},
+    ]))
+    m._run_scheduler_tick()
+    drops = json.loads(m.DROPS_PATH.read_text())
+    gave_up = [d for d in drops if d["call_id"] == "giveup"]
+    check("gave-up entry recorded in drop log",
+          len(gave_up) == 1 and "gave up" in gave_up[0]["why"]
+          and gave_up[0]["reason"] == "never rings"
+          and gave_up[0]["at_iso"])
+    check("gave-up entry removed from pending schedule",
+          json.loads(sp.read_text()) == [])
+    check("health surfaces dropped_calls count",
+          m._load_drops and "dropped_calls" in src)
+
+    # 6b (1k): a MALFORMED entry (unparseable at_iso) is recorded too
+    m.DROPS_PATH.write_text("[]")
+    sp.write_text(json.dumps([
+        {"call_id": "malformed", "at_iso": "garbage-time", "reason": "x"},
+    ]))
+    m._run_scheduler_tick()
+    drops = json.loads(m.DROPS_PATH.read_text())
+    mal = [d for d in drops if d["call_id"] == "malformed"]
+    check("malformed entry recorded in drop log",
+          len(mal) == 1 and mal[0]["why"].startswith("malformed entry:"))
+
+    # 6c (1k): a SUCCESSFUL fire must NOT land in the drop log
+    m._send_voip = lambda devtok, payload: True
+    m.DROPS_PATH.write_text("[]")
+    sp.write_text(json.dumps([
+        {"call_id": "fires", "at_iso": (now - timedelta(minutes=1)).isoformat(),
+         "reason": "rings fine"},
+    ]))
+    m._run_scheduler_tick()
+    check("successful fire never recorded as drop",
+          json.loads(m.DROPS_PATH.read_text()) == [])
+
+    # 6d (1k): the drop ring buffer stays capped at DROPS_MAX
+    check("drop ring buffer capped",
+          "drops[-DROPS_MAX:]" in src and "DROPS_MAX = 50" in src)
+
     print()
     if not all(results):
         raise SystemExit(1)

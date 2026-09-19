@@ -177,6 +177,15 @@ def main():
     check("/schedule/list strips device_token + failures",
           st == 200 and entries and
           all("device_token" not in i and "failures" not in i for i in entries))
+    # 1k: the scheduler drop log rides along as a list (empty here — no drops
+    # on a fresh instance — but the KEY must exist and be typed right, or the
+    # app's DroppedCall section silently loses its data source)
+    check("/schedule/list carries dropped list (1k)",
+          st == 200 and isinstance(out4.get("dropped"), list))
+    # 1k: /health carries the dropped_calls counter
+    st_h, out_h = req(base, "GET", "/health")
+    check("/health carries dropped_calls (1k)",
+          st_h == 200 and isinstance(out_h.get("dropped_calls"), int))
 
     # cancel that entry via bearer
     cancel_body = json.dumps({"call_id": sched_id}).encode()

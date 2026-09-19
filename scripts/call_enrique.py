@@ -147,8 +147,19 @@ def main() -> None:
         if a.by:
             body["scheduled_by"] = a.by
         out = _request("POST", "/schedule", body)
-    elif a.cmd == "list":
+    if a.cmd == "list":
         out = _request("GET", "/schedule/list")
+        # 1k: surface the scheduler drop log — these calls will NEVER fire
+        # (bridge gave up: 10 failed pushes, or the entry was malformed).
+        # Kept on stderr + rc so machine consumers of the JSON see the truth.
+        for d in out.get("dropped", []) or []:
+            print(f"DROPPED {d.get('call_id')} at {d.get('at_iso')}: "
+                  f"{d.get('why')} — never fired (reason: {d.get('reason')})",
+                  file=sys.stderr)
+        if out.get("dropped"):
+            print(f"NOTE: {len(out['dropped'])} scheduled call(s) were DROPPED "
+                  f"and never fired (full log: /schedule/list .dropped).",
+                  file=sys.stderr)
     else:
         # Cancel guard (1j, mirrored bridge-side): a whitespace-only --id must
         # fail HERE — it used to reach the bridge as a truthy-but-unmatchable

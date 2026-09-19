@@ -22,10 +22,12 @@ def check(name, ok):
 
 # 1. docs/API.md /schedule/list entry shape must NOT include device_token —
 #    the push-delivery secret is stripped from responses (PROGRESS 13:20).
+#    1k: the shape now ALSO carries the scheduler drop log (dropped: [...]);
+#    the regex matches the scheduled shape up to the first `]` either way.
 api = open(os.path.join(ROOT, "docs", "API.md")).read()
 i = api.find("- `GET /schedule/list`")
 seg = api[i:api.find("\n- `POST", i)] if i >= 0 else ""
-shapes = re.findall(r"\{scheduled: \[[^\]]*\]\}", seg)
+shapes = re.findall(r"\{scheduled: \[[^\]]*\]", seg)
 check("API.md /schedule/list shape exists", bool(shapes))
 check("API.md /schedule/list shape excludes device_token",
       bool(shapes) and "device_token" not in shapes[0])
@@ -35,6 +37,21 @@ check("API.md documents the strip (STRIPPED note present)", "STRIPPED" in seg)
 bridge = open(os.path.join(ROOT, "server", "push_bridge", "main.py")).read()
 check("bridge /schedule/list strips device_token + failures",
       'if k not in ("device_token", "failures")' in bridge)
+
+# 2b. Scheduler drop log (1k, 2026-09-19): API.md must document BOTH
+# surfacing keys (health dropped_calls, list dropped) and the bridge must
+# keep them wired — a silent drop (the silent-never class) must be visible
+# in docs AND code or the next agent debugs a ghost.
+check("API.md documents dropped_calls in /health",
+      "dropped_calls" in api)
+check("API.md /schedule/list documents the dropped log",
+      re.search(r"dropped: \[", api) is not None)
+check("bridge /schedule/list returns the dropped log",
+      'return {"scheduled": public, "dropped": _load_drops()}' in bridge)
+check("bridge /health returns dropped_calls",
+      '"dropped_calls": len(_load_drops())' in bridge)
+check("bridge records scheduler drops (both sites)",
+      bridge.count("_record_drop(") >= 3)
 
 # 3. Gateway doc contract: VoIP payload always carries gateway_ws "/voice-gw"
 #    (docs/API.md note + bridge code must match).

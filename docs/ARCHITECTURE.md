@@ -222,6 +222,27 @@ ios-v26 = run 28 concluded failure), T4 missing git credentials (loud config
 failure, no traceback — which the selftest caught as a real gate bug on its
 first authoring run).
 
+## The scheduler drop log (1k, 2026-09-19)
+The scheduler could give up on a scheduled call — 10 failed push attempts at
+fire time (dead token, broken key, transport outage) or a malformed entry —
+and the only trace was one container log line. `/health` kept saying
+`scheduled:N` and every client kept believing the call would come: the
+silent-never class, post-persistence. Now every drop is appended to
+`dropped_calls.json` (ring buffer, capped at 50) by `_record_drop`, and
+surfaced twice: `GET /health` carries `dropped_calls` (count), and
+`GET /schedule/list` carries the full `dropped: [...]` log with per-entry
+`why` + `dropped_at`. Surfaced in the app (Home warning card line, Calls tab
+"Dropped (N)" section) and in `call_enrique.py list` (stderr DROPPED lines).
+Pinned four ways: offline needles + wiring count (check_bridge_contract.py
+DROP_LOG_GUARDS), behavioral tick tests with a failing push
+(check_scheduler_robust.py 6/6b/6c/6d), live bearer probe on a throwaway
+instance with a SEEDED drop fixture (the dropped element shadow is exercised
+every run — probe_call_bearer_live.py), and doc-contract pins
+(check_doc_contracts.py 2b). Checker-side lesson: `struct_body`'s
+column-0 `struct` lookahead swallowed NESTED sibling structs (DroppedCall
+inside CallsView), so a field rename in ScheduledCall read green — the
+lookahead now tolerates indentation.
+
 ## What only Enrique can do (the gated ladder)
 Xcode build on the Mac → TestFlight upload (fastlane lane or manual) → create
 the APNs p8 key and hand it over for install. See docs/BUILD.md, FASTLANE.md,

@@ -4,7 +4,7 @@ JARVIS iOS push bridge — places calls to Enrique's iPhone via APNs VoIP pushes
 Endpoints (LAN-only via systemd socket binding + HMAC auth header):
   POST /call        {reason, scheduled_by?}  -> fires VoIP push now; returns call_id
   POST /schedule    {at_iso, reason}         -> registers a future call (in-proc + json persistence)
-  GET  /health                               -> ok
+  GET  /health                               -> ok, incl. dropped_calls (1k scheduler drop log)
 
 The VoIP push payload carries {reason, gateway_ws, call_id}; the app wakes,
 shows CallKit UI, and connects its WebRTC view to the voice gateway using
@@ -23,6 +23,7 @@ from pydantic import BaseModel
 STATE_DIR = Path(os.environ.get("BRIDGE_STATE_DIR", "/opt/jarvis-ios-bridge"))
 ENV_PATH = STATE_DIR / "apns.env"
 SCHEDULE_PATH = STATE_DIR / "scheduled_calls.json"
+DROPS_PATH = STATE_DIR / "dropped_calls.json"      # scheduler drop log (1k): calls the bridge gave up on
 SECRETS_PATH = STATE_DIR / "secrets.json"          # values live here, root-only, never served back
 COUNTERS_PATH = STATE_DIR / "push_counters.json"   # push success/failure counters (dev-observability)
 DASH_CONFIG_PATH = Path(os.environ.get("BRIDGE_DASH_CONFIG", "/root/.hermes/config.yaml"))
@@ -227,7 +228,12 @@ def health():
             "last_push_error": cfg.get("LAST_PUSH_ERROR", ""),
             "push_ok": int(counters.get("push_ok", 0)),
             "push_fail": int(counters.get("push_fail", 0)),
-            "scheduled": len(_load_schedule())}
+            "scheduled": len(_load_schedule()),
+            # Scheduler drop log (1k): how many scheduled calls the bridge has
+            # GIVEN UP on are still in the log (ring buffer, capped). 0 means
+            # nothing dropped SINCE the log was last cleared — never proof a
+            # call fired (push_ok >= 1 remains the only delivery evidence).
+            "dropped_calls": len(_load_drops())}
 
 
 def _load_schedule() -> list:
@@ -251,6 +257,45 @@ def _save_schedule(items: list) -> None:
     SCHEDULE_PATH.write_text(json.dumps(items, indent=1))
 
 
+# ------------------------------------------------- scheduler drop log (1k) ---
+# A scheduled call the bridge gives up on used to vanish with ONLY a container
+# log line: after 10 failed push attempts (dead token, broken key, transport
+# outage) the entry was removed and /health kept reporting scheduled:N with no
+# trace, so "call me at 10am" could silently never happen and nobody could
+# tell. Every drop is now appended to dropped_calls.json (capped ring buffer)
+# and surfaced by GET /health as dropped_calls + GET /schedule/list as
+# dropped: [...]. Best-effort writes: observability must never kill the tick.
+DROPS_MAX = 50
+
+
+def _record_drop(item: dict, why: str) -> None:
+    """Append one drop entry (best-effort; never raises into the tick)."""
+    try:
+        try:
+            drops = json.loads(DROPS_PATH.read_text() or "[]")
+        except Exception:
+            drops = []
+        drops.append({
+            "call_id": str(item.get("call_id", "?")),
+            "reason": str(item.get("reason", "")),
+            "at_iso": str(item.get("at_iso", "")),
+            "scheduled_by": item.get("scheduled_by"),
+            "dropped_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "why": why,
+        })
+        DROPS_PATH.write_text(json.dumps(drops[-DROPS_MAX:], indent=1))
+    except Exception as e:
+        print(f"[bridge] drop-log write failed (non-fatal): {e}")
+
+
+def _load_drops() -> list:
+    try:
+        drops = json.loads(DROPS_PATH.read_text() or "[]")
+        return drops if isinstance(drops, list) else []
+    except Exception:
+        return []
+
+
 def _run_scheduler_tick() -> None:
     """One scheduler pass. Robustness contract (PROGRESS 2026-09-18 09:50):
     a malformed entry is dropped, a failed push retries up to 10 ticks then
@@ -270,8 +315,11 @@ def _run_scheduler_tick() -> None:
             payload = {"reason": item["reason"], "call_id": item["call_id"],
                        "scheduled_by": item.get("scheduled_by"), "gateway_ws": "/voice-gw"}
         except Exception as e:
-            # Malformed entry (bad/missing at_iso etc.) — never fixable, drop it.
+            # Malformed entry (bad/missing at_iso etc.) — never fixable, drop
+            # it — and LOG it (1k): a silent drop is indistinguishable from
+            # "the call happened" everywhere else.
             print(f"[bridge] scheduler: dropping malformed entry {item.get('call_id', '?')}: {e}")
+            _record_drop(item, f"malformed entry: {e}")
             continue
         try:
             # Fire-time token: ALWAYS prefer the bridge's CURRENT registered
@@ -294,6 +342,9 @@ def _run_scheduler_tick() -> None:
                 remaining.append(item)
                 print(f"[bridge] scheduler: {item.get('call_id')} push failed (attempt {item['failures']}/10, retrying)")
             else:
+                # Gave up for good (1k): record it in the drop log — removal
+                # from the schedule must never be silent again.
+                _record_drop(item, f"push failed {item['failures']} times — gave up")
                 print(f"[bridge] scheduler: {item.get('call_id')} dropped after 10 failed push attempts")
     if len(remaining) != len(items):
         _save_schedule(remaining)
@@ -490,7 +541,10 @@ async def schedule_list(request: Request, x_bridge_sig: str = Header(default="")
     for item in _load_schedule():
         entry = {k: v for k, v in item.items() if k not in ("device_token", "failures")}
         public.append(entry)
-    return {"scheduled": public}
+    # 1k: the scheduler drop log rides along — a call the bridge gave up on
+    # (10 failed pushes, malformed entry) is visible here instead of only in
+    # container logs. Same auth, same response; the pending list is untouched.
+    return {"scheduled": public, "dropped": _load_drops()}
 
 
 @app.post("/schedule/cancel")

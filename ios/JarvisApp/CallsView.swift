@@ -11,10 +11,25 @@ struct CallsView: View {
         var id: String { call_id }
     }
 
+    /// One entry of the bridge's scheduler drop log (1k): a call the bridge
+    /// GAVE UP on — 10 failed push attempts or a malformed entry — so it will
+    /// never fire. Not an error state of THIS request; history that used to
+    /// live only in container logs.
+    struct DroppedCall: Identifiable, Decodable {
+        let call_id: String
+        let reason: String
+        let at_iso: String
+        let scheduled_by: String?
+        let dropped_at: String
+        let why: String
+        var id: String { call_id }
+    }
+
     @ObservedObject private var mgr = CallManager.shared
     // Persistent log (survives restarts; incoming pushes land here too).
     @ObservedObject private var callLog = CallLogStore.shared
     @State private var scheduled: [ScheduledCall] = []
+    @State private var dropped: [DroppedCall] = []
     @State private var loadFailed = false
     @State private var calling = false
     @State private var status: String?
@@ -147,6 +162,32 @@ struct CallsView: View {
                 } header: {
                     Text("Scheduled")
                 }
+
+                Section {
+                    // 1k: calls the bridge GAVE UP on (10 failed pushes /
+                    // malformed entry) — they will never fire. This used to
+                    // be invisible: the entry left the schedule, and only a
+                    // container log line remembered it. "Never fired" must be
+                    // readable, not discoverable by waiting for a call that
+                    // never comes.
+                    if !dropped.isEmpty {
+                        Text("These calls were dropped by the bridge and NEVER fired.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(dropped) { d in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(d.reason.isEmpty ? "(no reason)" : d.reason)
+                                .font(.callout)
+                            Text("\(Self.whenLabel(d.at_iso)) — dropped \(Self.whenLabel(d.dropped_at))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                            Text(d.why).font(.caption2).foregroundStyle(.red.opacity(0.8))
+                        }
+                    }
+                } header: {
+                    // The count is the headline; red only when non-empty.
+                    Text(dropped.isEmpty ? "Dropped" : "Dropped (\(dropped.count))")
+                        .foregroundStyle(dropped.isEmpty ? .secondary : .red)
+                }
             }
             .navigationTitle("Calls")
             .refreshable { await loadScheduled() }
@@ -206,13 +247,18 @@ struct CallsView: View {
     @MainActor
     private func loadScheduled() async {
         // GET /schedule/list accepts the app's dashboard Bearer (_auth_dual),
-        // same as every other call endpoint.
-        struct ListResp: Decodable { let scheduled: [ScheduledCall] }
+        // same as every other call endpoint. 1k: the response also carries
+        // `dropped` — the bridge's scheduler drop log.
+        struct ListResp: Decodable {
+            let scheduled: [ScheduledCall]
+            var dropped: [DroppedCall]?
+        }
         do {
             let resp = try await CCClient.shared.get(
                 ServerConfig.shared.config.bridgeBaseURL + "/schedule/list",
                 as: ListResp.self)
             scheduled = resp.scheduled
+            dropped = resp.dropped ?? []
             loadFailed = false
         } catch {
             // Keep last-known-good entries: a transient bridge outage must not

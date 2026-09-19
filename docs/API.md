@@ -34,12 +34,19 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   value would silently overwrite the device's real registration (every future
   push would fire at a dead token with `device_registered` still true).
   Pinned + live-probed by `scripts/check_bridge_contract.py`.
-- `GET /schedule/list` -> `{scheduled: [{call_id, at_iso, reason, scheduled_by}]}`.
+- `GET /schedule/list` -> `{scheduled: [{call_id, at_iso, reason, scheduled_by}],
+  dropped: [{call_id, reason, at_iso, scheduled_by, dropped_at, why}]}`.
   (The snapshotted `device_token` and the internal `failures` counter are
   STRIPPED from every entry — the push-delivery secret is only used by the
   scheduler fire path, never returned to clients. Fixed 2026-09-18.)
+  `dropped` (1k, 2026-09-19) is the scheduler DROP LOG: calls the bridge GAVE
+  UP on — 10 failed push attempts (dead token, broken key, transport outage)
+  or a malformed entry — so they will NEVER fire. Each entry carries `why`
+  ("push failed 10 times — gave up" / "malformed entry: …") and `dropped_at`.
+  Ring buffer, capped at 50. These calls are NOT pending; they are history
+  that used to live only in container logs.
   GETs authenticate via HMAC over an empty body (`sig = HMAC-SHA256(secret, b"")`)
-  OR the iOS app's `Authorization: Bearer <dashboard token>` (added with backlog #4).
+  OR the iOS app's `Authorization: Bearer *** token>` (added with backlog #4).
 - `POST /schedule/cancel` `{call_id}` -> `{cancelled: 1}` — cancels that one;
   `{}` (cancel-ALL) -> 400 unless `{"confirm": true}` is present: it wipes
   every pending call and cannot be undone (1j, 2026-09-19). A whitespace-only
@@ -48,7 +55,7 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   `call_enrique.py` mirrors this: cancel-one is `cancel --id <id>`;
   cancel-all is `cancel --yes`.
 - `GET /health` -> `{ok, apns_configured, device_registered, last_push_error,
-  push_ok, push_fail, scheduled}`.
+  push_ok, push_fail, scheduled, dropped_calls}`.
   `device_registered` = the phone has completed POST /register (boolean
   presence signal only — the token itself is never exposed here).
   `last_push_error` records every APNs non-200 (`"<code> <reason> at <ts>"`)
@@ -63,6 +70,10 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   only "nothing failed recently". The device-watch MISSION-COMPLETE message
   verifies its endgame push through these counters (push_ok incremented by a
   real verification call) before declaring the delivery path proven.
+  `dropped_calls` (1k, 2026-09-19) = how many scheduler DROPS are in the log
+  (see /schedule/list `dropped`): scheduled calls the bridge gave up on, so
+  they never fired. 0 = nothing dropped since the log was last cleared —
+  never proof a call fired (that remains push_ok >= 1).
 
 ## Named secrets (backlog #3, added 2026-09-18)
 

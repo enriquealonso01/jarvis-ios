@@ -78,7 +78,7 @@ CONTRACT = [
      [], ["ok", "deleted"], None),
     ("POST", "/register", "CallManager.swift", "", ["device_token"], [], None),
     ("GET", "/schedule/list", "CallsView.swift", "ListResp",
-     ["scheduled"], [],
+     ["scheduled"], ["dropped"],
      {"key": "scheduled", "elem": "ScheduledCall",
       "req": ["call_id", "at_iso", "reason"], "opt": ["scheduled_by"]}),
     ("POST", "/schedule", "CallsView.swift", "SchedResp",
@@ -93,7 +93,7 @@ CONTRACT = [
 # models both tabs build lists from).
 SWIFT_STRUCTS = {
     "SecretsView.swift": ["SecretMeta", "SecretsListResp", "SecretWriteResp"],
-    "CallsView.swift": ["ScheduledCall", "CancelResp", "CallResp"],
+    "CallsView.swift": ["ScheduledCall", "DroppedCall", "CancelResp", "CallResp"],
     "CallManager.swift": [],
 }
 
@@ -170,7 +170,44 @@ CANCEL_GUARDS = [
      "the confirm gate itself (an absent/false confirm must never wipe)"),
 ]
 
+# Scheduler drop log (1k, 2026-09-19): a scheduled call the bridge gives up on
+# (10 failed push attempts, malformed entry) used to vanish with ONLY a
+# container log line — /health kept saying scheduled:N and every client kept
+# believing the call would come. The drop must be RECORDED (dropped_calls.json,
+# capped ring buffer) and SURFACED (GET /health dropped_calls, GET
+# /schedule/list dropped). Pinned offline: the record call at BOTH drop sites
+# (malformed + gave-up), the store helpers, and both surfacing keys.
+DROP_LOG_GUARDS = [
+    ("_record_drop(item, f\"malformed entry:",
+     "malformed-entry drop site records to the drop log"),
+    ("_record_drop(item, f\"push failed {item['failures']} times — gave up\")",
+     "gave-up drop site (10 failed pushes) records to the drop log"),
+    ("def _record_drop(item: dict, why: str) -> None:",
+     "drop-log store helper exists"),
+    ("DROPS_PATH = STATE_DIR / \"dropped_calls.json\"",
+     "drop-log state file path"),
+    ("\"dropped_calls\": len(_load_drops())",
+     "GET /health surfaces dropped_calls"),
+    ("return {\"scheduled\": public, \"dropped\": _load_drops()}",
+     "GET /schedule/list surfaces the dropped log"),
+]
+
 SCHED_LIST_KEY = "scheduled"
+
+# 1k: the `dropped` collection (scheduler drop log) in /schedule/list — every
+# element field the app's DroppedCall struct reads. `why`/`dropped_at` are the
+# whole point of the log (WHY it never fired, WHEN it was dropped), so they are
+# pinned required, exactly as the Swift struct declares them.
+DROPPED_COLL = {"key": "dropped", "elem": "DroppedCall",
+                "req": ["call_id", "reason", "at_iso", "dropped_at", "why"],
+                "opt": ["scheduled_by"]}
+
+# Seed fixture written into the throwaway instance's state dir so the live
+# `dropped` element shadow is never vacuous (an empty log proves nothing).
+DROP_SEED = {"call_id": "dropseed", "at_iso": "2032-01-01T00:00:00+00:00",
+             "reason": "contract-probe drop fixture", "scheduled_by": "contract-probe",
+             "dropped_at": "2032-01-01T00:05:00Z",
+             "why": "push failed 10 times — gave up"}
 
 
 
@@ -180,7 +217,11 @@ def struct_body(fname: str, struct: str, app_dir: Path | None = None) -> str | N
     if not f.exists():
         return None
     text = f.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"struct\s+%s\b.*?(?=\nstruct\s|\nextension\s|\n\n\n|\Z)"
+    # `\s*struct` in the lookahead: Swift view structs nest (ScheduledCall ->
+    # DroppedCall inside CallsView), so the boundary may be INDENTED — the old
+    # column-0-only lookahead swallowed every following sibling struct, and a
+    # rename inside ScheduledCall read as still-present (T4b false-green).
+    m = re.search(r"struct\s+%s\b.*?(?=\n\s*struct\s|\nextension\s|\n\n\n|\Z)"
                   % re.escape(struct), text, re.S)
     return m.group(0) if m else None
 
@@ -225,6 +266,14 @@ def check_offline(bridge_src: Path | None = None,
     for needle, label in CANCEL_GUARDS:
         if needle not in src:
             problems.append(f"cancel guard missing: {label}")
+    # scheduler drop log (1k): drops must be recorded and surfaced — a
+    # regression to silent drops (the silent-never class) can't read green.
+    for needle, label in DROP_LOG_GUARDS:
+        if needle not in src:
+            problems.append(f"scheduler drop-log pin missing: {label}")
+    if src.count("_record_drop(") < 3:
+        problems.append("scheduler drop log not wired at BOTH drop sites "
+                        "(malformed entry + gave-up after 10 failures)")
     for fname, structs in SWIFT_STRUCTS.items():
         f = (app_dir or APP) / fname
         if not f.exists():
@@ -344,6 +393,12 @@ class Instance:
         atexit.register(self.kill)
         signal.signal(signal.SIGTERM, lambda *_: (self.kill(), sys.exit(143)))
         signal.signal(signal.SIGINT, lambda *_: (self.kill(), sys.exit(130)))
+        # 1k: seed the drop log BEFORE the app loads so /schedule/list always
+        # returns a non-empty `dropped` collection — the element shadow must
+        # be exercised every run, not only after a real (unfakeable-in-test)
+        # scheduler drop.
+        Path(self.state_dir, "dropped_calls.json").write_text(
+            json.dumps([DROP_SEED]))
         for _ in range(60):
             try:
                 with urllib.request.urlopen(self.base + "/health",
@@ -673,6 +728,23 @@ def check_live() -> bool:
         # non-vacuous: an EMPTY list proves the envelope but not the element
         if spec[6] and path.split("#")[0] == "/schedule/list":
             list_samples.append((path, doc, spec[6]))
+            # 1k: the drop-log element shadow, decoded with the same strictness
+            dropped_doc = doc.get("dropped") if isinstance(doc, dict) else None
+            if not isinstance(dropped_doc, list):
+                print(f"BRIDGE-CONTRACT-FAIL (live): GET {path} 'dropped' is "
+                      f"not a list (drop log vanished?)")
+                all_ok = False
+            else:
+                dverdict = shadow_decode({"dropped": dropped_doc},
+                                         ("ListResp", [], ["dropped"],
+                                          DROPPED_COLL))
+                if dropped_doc:
+                    print(f"LIVE drop-log decode: {len(dropped_doc)} dropped "
+                          f"element(s) decoded OK")
+                if dverdict:
+                    print(f"BRIDGE-CONTRACT-FAIL (live): GET {path} dropped "
+                          f"decode: {dverdict}")
+                    all_ok = False
         if verdict:
             print(f"BRIDGE-CONTRACT-FAIL (live): {method} {path} decode: "
                   f"{verdict}")
@@ -691,6 +763,20 @@ def check_live() -> bool:
         all_ok = False
     else:
         print(f"LIVE element shadows exercised: {n_elem} element(s) decoded")
+    # 1k: the seeded drop fixture must have made it through the whole stack
+    # (state file -> _load_drops -> response) — proves the log is actually
+    # read, not just a tolerated-absent key.
+    seeded_seen = any(
+        isinstance(doc, dict)
+        and any(e.get("call_id") == "dropseed"
+                for e in (doc.get("dropped") or []))
+        for _, doc, _ in list_samples)
+    if not seeded_seen:
+        print("BRIDGE-CONTRACT-FAIL (live): seeded drop fixture never "
+              "surfaced by /schedule/list — drop log is not being read")
+        all_ok = False
+    else:
+        print("LIVE drop-log surfacing: seeded fixture visible in response")
     return all_ok
 
 
@@ -766,7 +852,10 @@ def selftest() -> int:
               for p in offline_problems()))
     shutil.copy2(APP / "CallsView.swift", app_copy / "CallsView.swift")
 
-    # T4b element-field-rename (offline, tmp copy)
+    # T4b element-field-rename (offline, tmp copy) — anchored INSIDE the
+    # ScheduledCall struct: DroppedCall (1k) also declares `let reason`, so a
+    # first-occurrence replace would rename the wrong struct and the tamper
+    # would bite nothing
     edit(app_copy / "CallsView.swift",
          lambda t: t.replace("let reason: String", "let reasonText: String",
                              1))
@@ -906,6 +995,33 @@ def selftest() -> int:
     check("T10d offline cancel-guard-vanish caught",
           any("cancel guard missing" in p for p in offline_problems()))
     shutil.copy2(BRIDGE_SRC, bridge_copy)
+
+    # 1k: removing the drop-log record at the gave-up site must fail the
+    # offline pin (the wiring-count pin bites too — needle search drops to 2)
+    edit(bridge_copy, lambda t: t.replace(
+        '_record_drop(item, f"push failed {item[\'failures\']} times — gave up")',
+        "pass  # drop unrecorded", 1))
+    check("T11a offline drop-log-unwrap caught",
+          any("drop-log pin missing" in p for p in offline_problems()))
+    shutil.copy2(BRIDGE_SRC, bridge_copy)
+    # 1k: unsurfacing the log from /schedule/list must fail offline as well
+    edit(bridge_copy, lambda t: t.replace(
+        'return {"scheduled": public, "dropped": _load_drops()}',
+        'return {"scheduled": public}', 1))
+    check("T11b offline drop-log-unsurface caught",
+          any("drop-log pin missing" in p for p in offline_problems()))
+    shutil.copy2(BRIDGE_SRC, bridge_copy)
+    # 1k: the dropped-element decode verdict must BITE on a server-side
+    # element field drop (`why` is the whole point of the log)
+    v = shadow_decode({"dropped": [{"call_id": "x", "reason": "r",
+                                    "at_iso": "t", "dropped_at": "d"}]},
+                      ("ListResp", [], ["dropped"], DROPPED_COLL))
+    check("T11c dropped-element keyNotFound caught", "keyNotFound 'why'" in v)
+    # a server response missing the `dropped` key must be flagged (the app
+    # tolerates it — Swift `T?` — but the checker reports the UI degradation)
+    check("T11d dropped-envelope keyNotFound caught",
+          "missing optional 'dropped'" in shadow_decode(
+              {"scheduled": []}, ("ListResp", ["scheduled"], ["dropped"], None)))
 
     # clean tree must be CLEAN (no false positives from the tampering above)
     check("clean tree offline pins pass", offline_problems() == [])

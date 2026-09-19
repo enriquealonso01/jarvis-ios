@@ -138,6 +138,10 @@ struct BridgeHealth: Decodable {
     /// Last APNs rejection recorded by the bridge ("403 InvalidProviderToken
     /// at …" when the installed .p8 can't sign pushes). Empty = healthy.
     let last_push_error: String?
+    /// Scheduler drop log count (1k): scheduled calls the bridge GAVE UP on
+    /// (10 failed pushes / malformed entry) still in its log. 0 = none
+    /// recorded; the entries themselves are listed on the Calls tab.
+    let dropped_calls: Int?
     let scheduled: Int?
 }
 
