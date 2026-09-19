@@ -19,8 +19,22 @@ exactly those calls:
 (The bridge /health + /secrets surfaces are structure-pinned only; their live
 behavior is covered by probe_call_bearer_live.py's throwaway instance.)
 
-Usage: python3 scripts/check_cc_contract.py [--offline-only]
+Usage: python3 scripts/check_cc_contract.py [--offline-only] [--selftest]
 Exit 0 iff all pins pass (or the live layer is skipped cleanly).
+
+1e-bis — collection ELEMENT structs are now pinned OFFLINE too, closing the
+blind spot 1f called out when it landed for the bridge. Layer A used to pin
+only each model's TOP-LEVEL fields; the nested structs a list actually
+renders (Overview.Project, ZaiUsage.Window, Automations.Item, Activity.Session,
+Attention.Alert, Overview.Bridge, and ChatsView's Board.Thread/Board.Item)
+were checked only on the LIVE payload side. A Swift-side rename of
+Automations.Item.name would have left BOTH layers green while the app decoded
+blank rows forever. Now each element struct is brace-extracted from its real
+.swift file and its required/optional split verified in BOTH directions
+(req pinned => must be declared non-optional; opt pinned => must be declared
+`T?` — the under-pin direction leaves decode-breaking fields unprotected).
+`--selftest` negative-tests 7 ways on tmp copies (the real tree is never
+touched), same convention as 1f/1g/1h.
 """
 import json
 import re
@@ -110,6 +124,69 @@ SWIFT_STRUCTS = {
     "ChatsView.swift": ["Board"],
 }
 
+# 1e-bis: collection ELEMENT structs, pinned OFFLINE (Layer A) in BOTH
+# directions — a req-pinned field must be declared non-optional (`let x: T`),
+# an opt-pinned field must be declared `T?`. Layer A used to pin only
+# top-level fields, so a Swift-side rename of Automations.Item.name left BOTH
+# layers green while the app decoded blank rows forever (the blind spot 1f
+# closed for the bridge; this closes it for the dashboard surface).
+# Keys are "Parent.Element"; ChatsView's Board is nested inside the load()
+# function — brace extraction finds it all the same.
+ELEMENT_STRUCTS = {
+    "Overview.Bridge":  {"file": "CCClient.swift",
+                         "req": [],
+                         "opt": ["configured", "reachable", "latency_ms"]},
+    "Overview.Project": {"file": "CCClient.swift",
+                         "req": ["name"],
+                         "opt": ["domain", "description"]},
+    "ZaiUsage.Window":  {"file": "CCClient.swift",
+                         "req": ["key", "label"],
+                         "opt": ["used", "limit", "remaining", "percent",
+                                 "reset_in_seconds"]},
+    "Automations.Item": {"file": "CCClient.swift",
+                         "req": ["name"],
+                         "opt": ["domain", "cadence", "status",
+                                 "next_seconds", "last_status"]},
+    "Activity.Session": {"file": "CCClient.swift",
+                         "req": ["id"],
+                         "opt": ["title", "source", "model", "messages",
+                                 "ago_seconds", "active"]},
+    "Attention.Alert":  {"file": "CCClient.swift",
+                         "req": ["severity", "title"],
+                         "opt": ["msg", "kind", "ref"]},
+    "Board.Thread":     {"file": "ChatsView.swift",
+                         "req": ["slug", "title"],
+                         "opt": ["project", "open_count", "items"]},
+    "Board.Item":       {"file": "ChatsView.swift",
+                         "req": [],
+                         "opt": ["message", "ago_seconds"]},
+}
+
+
+def extract_struct_body(text, name):
+    """Brace-aware body of `struct <name> ... { ... }` (first match).
+
+    Returns the text from the opening brace through its MATCHING closing
+    brace, so nested structs (Board.Thread inside Board) don't truncate it.
+    An unbalanced brace in a string/comment can only over-count depth ->
+    truncated body -> missing field -> loud FAIL, never a silent pass.
+    """
+    m = re.search(r"struct\s+%s\b" % re.escape(name), text)
+    if not m:
+        return None
+    try:
+        i = text.index("{", m.end())
+    except ValueError:
+        return None
+    depth, j = 1, i + 1
+    while j < len(text) and depth:
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+        j += 1
+    return text[i + 1:j - 1] if depth == 0 else None
+
 
 def fail(msg):
     print(f"CC-CONTRACT-FAIL: {msg}")
@@ -156,6 +233,37 @@ def check_offline():
             if not re.search(r"let\s+%s\s*:" % re.escape(field), body):
                 problems.append(f"{route}: required field '{field}' missing "
                                 f"from struct {spec['model_required'][0]}")
+    # 4. (1e-bis) collection ELEMENT structs, BOTH directions: req-pinned
+    # must be non-optional; opt-pinned must be `T?` (under-pinning an opt
+    # leaves a decode-breaking field unprotected — 1f's lesson).
+    file_cache = {}
+    for qname, spec in ELEMENT_STRUCTS.items():
+        fname = spec["file"]
+        if fname not in file_cache:
+            f = APP / fname
+            file_cache[fname] = (f.read_text(encoding="utf-8", errors="replace")
+                                 if f.exists() else None)
+        text = file_cache[fname]
+        if text is None:
+            problems.append(f"swift file missing: {fname}")
+            continue
+        parent, elem = qname.split(".", 1)
+        body = extract_struct_body(text, elem)
+        if body is None:
+            problems.append(f"{fname}: cannot locate element struct {qname}")
+            continue
+        for field in spec["req"]:
+            if not re.search(r"let\s+%s\s*:\s*[A-Za-z\[\]]+\s*$" % re.escape(field),
+                             body, re.M):
+                problems.append(
+                    f"{qname}: req-pinned '{field}' missing or declared "
+                    f"Optional (must be non-optional `let {field}: T`)")
+        for field in spec["opt"]:
+            if not re.search(r"let\s+%s\s*:\s*[A-Za-z\[\]]+\?\s*$" % re.escape(field),
+                             body, re.M):
+                problems.append(
+                    f"{qname}: opt-pinned '{field}' missing or NOT declared "
+                    f"Optional (must be `let {field}: T?`)")
     return problems
 
 
@@ -250,7 +358,111 @@ def check_live():
     return all_ok
 
 
+def _tmp_app(tmp):
+    """Point the checker's APP dir at a tmp tree (selftest only)."""
+    global APP
+    APP = tmp
+
+
+def selftest():
+    """7 negative tests on a throwaway copy of the real tree.
+
+    The REAL ios/JarvisApp is never touched: each case copies both Swift
+    files to a temp dir, tampers the COPY, points APP at it, and demands
+    check_offline() fail with the exact pin class. A clean copy must produce
+    ZERO problems (no-false-positive guard).
+    """
+    import shutil
+    import tempfile
+    root = Path(tempfile.mkdtemp(prefix="cc1e_selftest_"))
+    results = []
+
+    def fresh_tree():
+        d = root / f"case{len(results)}"
+        d.mkdir()
+        for fname in ("CCClient.swift", "ChatsView.swift"):
+            shutil.copy(APP / fname, d / fname)
+        return d
+
+    # helper that actually runs a case
+    def run_case(name, fname, old, new, needle, want_empty=False):
+        d = fresh_tree()
+        f = d / fname
+        text = f.read_text()
+        if old is not None:
+            if old not in text:
+                results.append((name, False, "tamper anchor not found"))
+                return
+            f.write_text(text.replace(old, new, 1))
+        old_app = APP
+        _tmp_app(d)
+        try:
+            probs = check_offline()
+        finally:
+            _tmp_app(old_app)
+        if want_empty:
+            ok = not probs
+            detail = "clean" if ok else f"unexpected: {probs[:2]}"
+        else:
+            ok = any(needle in p for p in probs)
+            detail = (f"caught: {[p for p in probs if needle in p][0][:80]}"
+                      if ok else f"MISSED ({len(probs)} other: {probs[:2]})")
+        results.append((name, ok, detail))
+
+    run_case(
+        "T1 element req-field rename (Automations.Item.name -> title)",
+        "CCClient.swift",
+        "    struct Item: Decodable {\n        let name: String",
+        "    struct Item: Decodable {\n        let title: String",
+        "Automations.Item: req-pinned 'name'")
+    run_case(
+        "T2 req field declared Optional (Attention.Alert.severity -> String?)",
+        "CCClient.swift",
+        "        let severity: String\n        let title: String",
+        "        let severity: String?\n        let title: String",
+        "Attention.Alert: req-pinned 'severity'")
+    run_case(
+        "T3 opt field loses its ? (Bridge.latency_ms)",
+        "CCClient.swift",
+        "let latency_ms: Double?",
+        "let latency_ms: Double",
+        "Overview.Bridge: opt-pinned 'latency_ms'")
+    run_case(
+        "T4 element struct vanish (Automations.Item removed)",
+        "CCClient.swift",
+        "    struct Item: Decodable {\n        let name: String\n        let domain: String?\n        let cadence: String?\n        let status: String?\n        let next_seconds: Int?\n        let last_status: String?\n    }\n",
+        "",
+        "cannot locate element struct Automations.Item")
+    run_case(
+        "T5 opt field vanish (Board.Item.ago_seconds)",
+        "ChatsView.swift",
+        "                    let ago_seconds: Int?",
+        "",
+        "Board.Item: opt-pinned 'ago_seconds'")
+    run_case(
+        "T6 top-level req pin still armed (ZaiUsage.windows)",
+        "CCClient.swift",
+        "    let windows: [Window]",
+        "    let windows_old: [Window]",
+        "required field 'windows' missing")
+    run_case(
+        "T7 clean tree -> zero problems (no false positives)",
+        "CCClient.swift", None, None, None, want_empty=True)
+
+    shutil.rmtree(root, ignore_errors=True)
+    failed = [r for r in results if not r[1]]
+    for name, ok, detail in results:
+        print(f"{'PASS' if ok else 'FAIL'} {name}: {detail}")
+    if failed:
+        print(f"SELFTEST: {len(failed)}/{len(results)} FAILED")
+        sys.exit(1)
+    print(f"SELFTEST: {len(results)}/{len(results)} PASS")
+
+
 def main():
+    if "--selftest" in sys.argv:
+        selftest()
+        return
     offline_only = "--offline-only" in sys.argv
     problems = check_offline()
     if problems:

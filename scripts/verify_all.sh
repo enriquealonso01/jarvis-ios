@@ -46,6 +46,7 @@ if python3 scripts/check_login_contract.py; then :; else FAIL=1; fi
 
 step "1e/6 CC-API contract (Home/Chats endpoints vs the app's Swift models)"
 if python3 scripts/check_cc_contract.py; then :; else FAIL=1; fi
+if python3 scripts/check_cc_contract.py --selftest; then :; else FAIL=1; fi
 
 step "1f/6 bridge contract (Secrets/Calls endpoints vs the app's Swift models)"
 if python3 scripts/check_bridge_contract.py; then :; else FAIL=1; fi

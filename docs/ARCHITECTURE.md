@@ -141,7 +141,12 @@ it ships in a build:
   trip against the live dashboard (authorize 302 + cookie, brokered password
   login shape, loopback-redirect boundary).
 - **1e CC reads** (`check_cc_contract.py`): the seven Home/Chats GETs decode
-  into the app's exact Swift models.
+  into the app's exact Swift models — top-level fields AND (1e-bis) every
+  collection ELEMENT struct (`Overview.Bridge/Project`, `ZaiUsage.Window`,
+  `Automations.Item`, `Activity.Session`, `Attention.Alert`, ChatsView's
+  `Board.Thread/Item`) pinned OFFLINE in both directions (req = non-optional,
+  opt = `T?`), closing the element blind spot 1f called out; selftest 7/7 on
+  tmp copies.
 - **1f bridge** (`check_bridge_contract.py`): all eight Secrets/Calls routes
   on the push bridge, decode + req/opt split both directions.
 - **1g chat send** (`check_chat_contract.py`): the app's WRITE path —

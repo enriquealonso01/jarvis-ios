@@ -1,3 +1,40 @@
+## 2026-09-19 ~16:20 UTC (build-loop run) — 1e-bis shipped: the CC-API checker's element-struct blind spot is CLOSED — collection element structs (Overview.Bridge/Project, ZaiUsage.Window, Automations.Item, Activity.Session, Attention.Alert, ChatsView's Board.Thread/Item) now pinned OFFLINE in both directions; selftest 7/7; verify_all ALL GREEN
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (no app-code change this run, no new
+  tag — zero user-facing delta). Bridge :9160 healthy, apns_configured:true,
+  device_registered:false (phone-side blockers unchanged).
+- The gap this run closed: 1f (bridge) pinned collection element structs in
+  BOTH directions when it landed, but 1e (dashboard surface) pinned only each
+  model's TOP-LEVEL fields offline; the nested structs every Home/Chats list
+  actually renders were checked only on the LIVE payload side. A Swift-side
+  rename of e.g. Automations.Item.name left both layers green while the app
+  decoded blank rows forever — the exact hazard class the checker ladder
+  exists to kill, on the most-used surface in the app.
+- New in scripts/check_cc_contract.py: ELEMENT_STRUCTS pins (8 element
+  structs, req/opt split per the REAL Swift declarations — Overview.Bridge is
+  all-opt because the app declares it Bool?/Bool?/Double?), a brace-aware
+  extract_struct_body() (Board.Thread/Item live NESTED inside Board inside
+  load(); naive regex-to-next-blank-line truncates them), and BOTH-direction
+  validation: req-pinned must be declared non-optional, opt-pinned must be
+  declared `T?` (the under-pin direction leaves decode-breaking fields
+  unprotected — 1f's lesson). The strict pin bit its author before it bit
+  the app, twice: my first pin declared Bridge.configured/reachable req
+  (the Swift says Bool? — offline layer models the Swift, live layer models
+  the payload), and T1's tamper anchor carried the wrong indentation.
+- --selftest 7/7 on tmp copies (real tree untouched): element req-field
+  rename, req field declared Optional (Attention.Alert.severity), opt field
+  loses its ?, element struct vanish, Board.Item opt-field vanish, top-level
+  req pin still armed, clean tree -> zero problems. Wired into verify_all as
+  a second line in step 1e (same convention as 1f/1g/1h); live layer re-proven
+  7/7 against the real dashboard in the same sweep. ARCHITECTURE.md's 1e
+  ladder entry updated.
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
+
 ## 2026-09-19 ~15:40 UTC (build-loop run) — bridge DEPLOY-PARITY gate shipped: the "prod is stale" phantom class killed at the root; setup-era /opt decoy removed (prod proven live-current); verify_all 5b-bis now pins repo == LKG == running process
 
 - Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
