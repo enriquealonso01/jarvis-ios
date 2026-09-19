@@ -52,7 +52,16 @@ route: `x-bridge-sig` HMAC-SHA256(secret, raw body) **or** dashboard Bearer
   auto-injected into every push.
 - `/secrets`, `/secrets/set`, `/secrets/delete` → named-secret store.
 Deployed code = repo working tree (systemd WorkingDirectory points here);
-restarts only after `py_compile` passes + `/health` verified.
+restarts only after `py_compile` passes + `/health` verified. Three copies
+exist by design — repo (serving), `/opt/jarvis-ios-bridge-lkg/main.py`
+(rollback), and the running process — and they are pinned equal by
+`scripts/check_deploy_parity.py` (verify_all step 5b-bis): unit must point
+at the repo, LKG must be byte-identical to the repo, and live `/health` must
+expose `push_ok` (a newest-code capability marker) so a stale running copy
+fails loudly. NO other copy of main.py may exist (the setup-era
+`/opt/jarvis-ios-bridge/main.py` — three commits behind, loaded by nothing —
+created a "prod is stale" phantom that cost the 2026-09-19 15:30 audit; it
+was removed, byte-identical to commit 40daafe).
 
 ### Voice gateway (`/opt/voice-gw/gateway.py`, systemd `jarvis-voice-gateway`, :9150)
 Same Pipecat pipeline for every surface (web orb, PWA, native app):

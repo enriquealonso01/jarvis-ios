@@ -1,3 +1,41 @@
+## 2026-09-19 ~15:40 UTC (build-loop run) — bridge DEPLOY-PARITY gate shipped: the "prod is stale" phantom class killed at the root; setup-era /opt decoy removed (prod proven live-current); verify_all 5b-bis now pins repo == LKG == running process
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (no app-code change this run, no new
+  tag — zero user-facing delta). Bridge :9160 healthy, apns_configured:true,
+  device_registered:false (phone-side blockers unchanged).
+- Incident that shaped this run: `systemctl is-active` under the wrong unit
+  name + `diff repo vs /opt/jarvis-ios-bridge/main.py` showed 89 drifted
+  lines → looked like prod was running code three feature-commits behind
+  (missing transport-guard, push counters, push_ok on /health — exactly what
+  the device-watch endgame depends on). Root truth: the unit's
+  WorkingDirectory IS the repo; the /opt file was a setup-era copy loaded by
+  NOTHING. Proof the live process is current: /health exposes push_ok /
+  push_fail — fields that exist only since commit 1c42850 (01:01 UTC), after
+  the 00:48 restart (tree edited pre-restart, committed after; the 09:04
+  repo mtime was a no-op touch — `git status` clean).
+- Removed /opt/jarvis-ios-bridge/main.py after proving (a) nothing loads it
+  (unit ExecStart runs from the repo dir; no script, cron, or doc references
+  it) and (b) it is byte-identical to commit 40daafe (sha256
+  f0105284...4c0429d04) — fully recoverable from git. Service untouched and
+  re-verified healthy after removal. Also confirmed: repo ==
+  /opt/jarvis-ios-bridge-lkg/main.py (the DOCUMENTED rollback copy, current).
+- New `scripts/check_deploy_parity.py` (verify_all step 5b-bis) turns the
+  prose deployment contract into pins: unit WorkingDirectory -> repo dir +
+  ExecStart runs uvicorn main:app; repo py_compiles; LKG byte-identical to
+  repo (a stale LKG = every future "safe rollback" is a lie); live /health
+  answers ok:true WITH push_ok (capability marker — a stale running copy or
+  stale .pyc shadow fails loudly); state files present.
+  `--selftest` negative-tests 5 ways (stale LKG, wrong/missing
+  WorkingDirectory, repo syntax error) on a fully synthesized tmp tree —
+  5/5 PASS, real tree never touched; live audit 7/7 PASS.
+- docs/ARCHITECTURE.md push-bridge section now records the three-copies
+  contract + the no-ghost-copies rule with this incident as the why.
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
 ## 2026-09-19 ~15:00 UTC (build-loop run) — BACKLOG FORMALLY CLOSED: all nine launch items audited against the codebase and verified done; docs/BACKLOG.md written as the durable 9/9 record with per-item evidence pointers — post-backlog mode begins (fresh increments + maintenance, not list-grinding)
 
 - Run-start sweep: verify_all ALL GREEN including the ship gate — ios-v28 ->

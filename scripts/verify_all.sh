@@ -101,6 +101,11 @@ if cmp -s server/voice_gateway/gateway.py /opt/voice-gw/gateway.py; then
 else
   echo "GATE-FAIL: repo gateway mirror drifted from deployed gateway"; FAIL=1
 fi
+# 5b-bis. push-bridge deployment parity (repo == LKG == running process):
+# catches stale LKG rollbacks, mis-pointed units, and stale running copies —
+# the "prod is stale" phantom class that cost the 2026-09-19 15:30 audit
+echo "--- bridge deploy parity ---"
+if python3 scripts/check_deploy_parity.py; then :; else FAIL=1; fi
 # 5c. device-watch wiring contract (the mission-complete path)
 echo "--- device-watch wiring ---"
 if python3 scripts/check_watch_wiring.py; then :; else FAIL=1; fi
