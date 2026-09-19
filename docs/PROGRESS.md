@@ -14,6 +14,12 @@
   ls-remote: origin/main == ab62426), then tag `ios-v28` + push → fires
   ios-release.yml (tag pattern ios-v*; build number = GitHub run number →
   this is BUILD 30) with the TEXT keepalive fix aboard.
+- Guard added so this class is structurally dead: verify_all step 7 now
+  does `git fetch` + rev-list against origin/main and FAILS the sweep if
+  any local commit is unpushed (negative-tested in a throwaway clone: a
+  tmp commit → "FAIL: 1 commit(s) ... NOT pushed" naming it; real tree →
+  PASS, full sweep ALL GREEN). A run can no longer end with unpushed
+  work surviving silently.
 - Next run MUST: read the Actions run status for tag ios-v28 (run list via
   authenticated API — anonymous /actions/runs is 404) and poll ASC for
   build 30 (upload row cfBundleVersion=30 COMPLETE → BUILD: 30 VALID +
