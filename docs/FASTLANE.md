@@ -29,14 +29,19 @@ git pull
 Or straight: `cd ios && fastlane testflight`.
 
 Build numbers: the `archive` lane stamps `CURRENT_PROJECT_VERSION` from
-`GITHUB_RUN_NUMBER` (local runs: a timestamp) via xcargs at archive time.
-XCODE 26 TRAP: the export step renumbers the build (CFBundleVersion -> 1)
-unless `manageAppVersionAndBuildNumber: false` is in the exportOptions — the
-Fastfile pins that AND verifies the stamp inside the produced .ipa (extracts
-Info.plist and compares CFBundleVersion to the requested number), failing the
-lane loudly instead of letting ASC reject the upload with -19232 "bundle
-version must be higher than the previously uploaded version". If you edit the
-lane, keep both the flag and the verification.
+`GITHUB_RUN_NUMBER` (local runs: a timestamp) via xcargs on the ARCHIVE step
+only, then verifies the number three times: in the .xcarchive, inside the
+exported .ipa's Info.plist, and before upload.
+XCODE 26 TRAP (hit on runs 35423491270 + 35423976015): gym appends xcargs to
+the -exportArchive command too, and build settings on -exportArchive switch
+xcodebuild into app-version management — the exported ipa then comes out
+CFBundleVersion=1 and ASC rejects the upload with -19232 ("bundle version
+must be higher than the previously uploaded version");
+manageAppVersionAndBuildNumber:false does NOT stop it in that state. The lane
+therefore archives with skip_package_ipa, exports by hand with a generated
+ExportOptions.plist and ZERO build settings on the export command, and fails
+loudly if the stamp did not survive. If you edit the lane, keep all three
+verification points and keep the export command free of build settings.
 
 ## Notes
 - First SPM resolve pulls the ~400MB WebRTC binary (see BUILD.md backlog-#4 note).

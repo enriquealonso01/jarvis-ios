@@ -54,31 +54,65 @@ platform :ios do
       profile_name:          "match AppStore #{APP_ID}"
     )
 
-    # TestFlight requires a unique build number per upload. Override at archive
-    # time via xcargs — project.yml pins CURRENT_PROJECT_VERSION at 1, so bumping
+    # TestFlight requires a unique build number per upload. Stamp it at archive
+    # time via xcargs — project.yml pins CURRENT_PROJECT_VERSION at 20, so bumping
     # the pbxproj would drift on the next xcodegen run.
+    #
+    # XCODE 26 TRAP (runs 35423491270 + 35423976015): gym appends xcargs to the
+    # -exportArchive command TOO, and passing build settings to -exportArchive
+    # switches xcodebuild into app-version management — with
+    # manageAppVersionAndBuildNumber:false the exported ipa comes out
+    # CFBundleVersion=1 no matter what was archived (ASC then rejects the
+    # upload with -19232). So the export is done HERE, by hand, with a plist we
+    # control and ZERO build settings on the command line: xcodebuild then
+    # copies the archive's Info.plist untouched, stamp intact.
     build_number = ENV["GITHUB_RUN_NUMBER"] || Time.now.strftime("%Y%m%d%H%M")
+    build_dir    = File.join(IOS_DIR, "build")
+    archive_path = File.join(build_dir, "JarvisApp.xcarchive")
+    export_path  = File.join(build_dir, "export")
+    FileUtils.rm_rf(archive_path)
+    FileUtils.rm_rf(export_path)
+    FileUtils.mkdir_p(build_dir)
+
+    # STEP 1 — archive ONLY (skip_package_ipa): the version rides THIS command.
     build_app(
-      project:       XCODEPROJ,
-      scheme:        SCHEME,
-      export_method: "app-store",
-      xcargs:        "CURRENT_PROJECT_VERSION=#{build_number} DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}",
-      export_options: {
-        provisioningProfiles: { APP_ID => "match AppStore #{APP_ID}" },
-        # XCODE 26 TRAP: -exportArchive now RENUMBERS the build (CFBundleVersion
-        # -> 1) unless this key is explicitly false — run 35423491270 archived
-        # with CURRENT_PROJECT_VERSION=24 and still shipped cfBundleVersion=1,
-        # and ASC rejected the upload with -19232 "bundle version must be
-        # higher than the previously uploaded version". Absence of the key is
-        # no longer safe; the false must be IN the exportOptions plist.
-        manageAppVersionAndBuildNumber: false
-      }
+      project:          XCODEPROJ,
+      scheme:           SCHEME,
+      archive_path:     archive_path,
+      skip_package_ipa: true,
+      xcargs:           "CURRENT_PROJECT_VERSION=#{build_number} DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}"
     )
 
-    # Verify the stamp SURVIVED export — fail the lane loudly instead of
-    # letting ASC reject a duplicate build number minutes later.
-    ipa = lane_context[SharedValues::IPA_OUTPUT_PATH]
-    UI.user_error!("gym produced no .ipa — cannot verify build number") unless ipa && File.exist?(ipa)
+    # Guard: the stamp must be IN the archive before exporting.
+    archived = sh(
+      "set -e; plutil -extract CFBundleVersion raw -o - " \
+      "#{File.join(archive_path, 'Products', 'Applications', "#{SCHEME}.app", 'Info.plist').shellescape}"
+    ).strip
+    UI.user_error!(
+      "archive has CFBundleVersion=#{archived}, expected #{build_number} — " \
+      "the xcargs stamp failed; do not upload"
+    ) unless archived == build_number.to_s
+
+    # STEP 2 — export with an explicit plist, no build settings on the CLI.
+    export_plist = File.join(build_dir, "ExportOptions.plist")
+    File.write(export_plist, {
+      "method"                          => "app-store",
+      "signingStyle"                    => "manual",
+      "teamID"                          => ENV.fetch("APPLE_TEAM_ID"),
+      "provisioningProfiles"            => { APP_ID => "match AppStore #{APP_ID}" },
+      # Explicit false: absence is not safe on Xcode 26 (default flipped).
+      "manageAppVersionAndBuildNumber"  => false
+    }.to_plist)
+    sh("xcrun -exportArchive -archivePath #{archive_path.shellescape} " \
+       "-exportPath #{export_path.shellescape} " \
+       "-exportOptionsPlist #{export_plist.shellescape}")
+
+    ipa = Dir[File.join(export_path, "*.ipa")].first
+    UI.user_error!("export produced no .ipa — cannot continue") unless ipa
+    Actions.lane_context[SharedValues::IPA_OUTPUT_PATH] = ipa
+
+    # STEP 3 — verify the stamp SURVIVED export; fail loudly instead of letting
+    # ASC reject a duplicate build number minutes later.
     stamped = sh(
       "set -e; rm -f /tmp/jarvis_info.plist; " \
       "unzip -p #{ipa.shellescape} Payload/#{SCHEME}.app/Info.plist > /tmp/jarvis_info.plist; " \
@@ -86,7 +120,7 @@ platform :ios do
     ).strip
     UI.user_error!(
       "export renumbered the build: ipa has CFBundleVersion=#{stamped}, " \
-      "expected #{build_number} — manageAppVersionAndBuildNumber must stay false"
+      "expected #{build_number} — check ExportOptions.plist and the -exportArchive args"
     ) unless stamped == build_number.to_s
     UI.success("build number verified in .ipa: CFBundleVersion=#{stamped}")
   end
