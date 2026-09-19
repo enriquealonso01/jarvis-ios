@@ -1378,3 +1378,55 @@
   fine on the same key).
 - Poller/watch unchanged: testflight-build-watch cron keeps pinging every 15m;
   verify_all.sh ALL GREEN re-confirmed this run (bridge 16/16, WebRTC e2e PASS).
+\n## 2026-09-19 ~18:40 UTC (build-loop run) — the device-watch ENDGAME is now behavior-proven BEFORE it can fire in prod: scripts/check_watch_endgame.py drives the REAL watch script through both flips, the mission-complete verification call, and the self-remove in a full sandbox (fake bridge/probe/call/hermes); the suite caught a REAL prod bug pre-emptively — a failed endgame would have re-fired a REAL call + URGENT every 15 minutes forever — fixed with a fires-once latch, verify_all 5c-ter
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (no app-code change this run, no new
+  tag — zero user-facing delta). Bridge :9160 healthy, apns_configured:true,
+  device_registered:false (phone-side blockers unchanged). Watch + sentinel
+  both ticking (18:15/18:18 outputs silent = healthy).
+- The gap this run closed: backlog closed at 15:00, so this run audited what
+  happens AFTER Enrique's two blockers land. The device-watch — the ONLY
+  announcer left after tonight's 23:00 sunset — had NEVER been executed: its
+  endgame block (both flips -> read push_ok -> fire a REAL verification call
+  via call_enrique.py -> push_ok must increment -> self-remove the cron) would
+  have run for the first time ever at flip time, untested, in prod. Reading it
+  closely also found a REAL BUG: on a failed verification the comment claimed
+  "fires once", but the state bits stayed set and NOTHING gated a retry —
+  every 15m tick would have re-fired a real ring to Enrique's phone + a
+  fresh URGENT, indefinitely.
+- Fix (watch, prod-default-preserving): the endgame is now gated by an
+  `endgame_tried` state latch, written BEFORE the call fires — attempt
+  happens exactly once; a retry requires the loop agent to clear the latch
+  deliberately after triage, never an automatic 15m re-fire. Whole script
+  env-parameterized (WATCH_STATE / WATCH_BRIDGE / WATCH_PROBE / WATCH_CALL /
+  WATCH_HERMES, prod defaults unchanged when none set) so the suite can drive
+  the REAL script — testing a copy would prove nothing about prod.
+- NEW scripts/check_watch_endgame.py (verify_all step 5c-ter): sandbox
+  doubles = HTTP fake bridge (controllable device_registered + push_ok, POST
+  /__fire__ = an accepted push), python-based fake probe/call/hermes; 23/23
+  behavioral assertions: T1 first-tick WAIT announcements (once) + later
+  ticks silent + no call before flips; T2 both flips -> KEY LIVE +
+  REGISTERED + MISSION COMPLETE, exactly one call, push_ok delta seen, cron
+  self-removed, state file consumed; T3 stuck push_ok -> URGENT, cron stays;
+  T4 call fails -> URGENT, one attempt; T5 latched tick silent, one call
+  ever; T6 half-flip -> announcement, no endgame; T7 latch holds even when
+  inputs later go green (no second MISSION/removal). --selftest 4/4 mutates
+  throwaway copies: latch removed -> T5 bites (S1), blind probe -> suite
+  fails (S2), blind health-grep -> T2 bites (S3), clean copy green (S4).
+- The strict harness bit its author three times before first green (same
+  pattern as every checker in this ladder): the fake call double was #!/bin/sh
+  but the watch invokes it via /usr/bin/python3 (prod's call_enrique.py is
+  Python) — it died with a SyntaxError and silently no-opped; the probe
+  double had the same defect; and two suite premises were wrong (first-tick
+  WAIT announcements are BY DESIGN once, and MISSION COMPLETE deletes the
+  state file, so "bits set" and "second tick silent" assertions had to model
+  that). All recorded in the suite header.
+- Synced the cron's EXECUTED copy at ~/.hermes/scripts/testflight_device_watch.sh
+  (diff-proven identical) — the cron runs the hermes copy, not the repo's; a
+  repo-only fix would have shipped nothing. Full verify_all ALL GREEN with
+  5c-ter aboard (now 5 selftest suites: sentinel 18/18 + endgame 23/23 + 4/4).
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).

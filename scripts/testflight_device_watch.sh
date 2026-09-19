@@ -15,12 +15,18 @@
 # are silent until something flips. Read-only — GET /health plus the probe's
 # dummy-token POST to Apple; no bridge state is touched.
 # The self-remove failure is LOUD (manual-removal WARNING, never swallowed).
+#
+# Sandbox override (check_watch_endgame.py drives THIS script in a tmp
+# sandbox): every external surface is env-parameterized with prod defaults —
+# WATCH_STATE / WATCH_BRIDGE / WATCH_PROBE / WATCH_CALL / WATCH_HERMES.
+# Setting none of them is byte-for-byte the prod behavior.
 set -u
 JOB=jarvis-ios-device-watch
-STATE=/tmp/.jarvis_ios_device_watch_state
-HERMES=/root/.local/bin/hermes
-PROBE=/root/projects/jarvis-ios/scripts/probe_apns_delivery.py
-BRIDGE=http://127.0.0.1:9160
+STATE="${WATCH_STATE:-/tmp/.jarvis_ios_device_watch_state}"
+HERMES="${WATCH_HERMES:-/root/.local/bin/hermes}"
+PROBE="${WATCH_PROBE:-/root/projects/jarvis-ios/scripts/probe_apns_delivery.py}"
+CALL="${WATCH_CALL:-/root/projects/jarvis-ios/scripts/call_enrique.py}"
+BRIDGE="${WATCH_BRIDGE:-http://127.0.0.1:9160}"
 [ -f "$STATE" ] || : > "$STATE"
 
 # --- flip 1: APNs key accepted by Apple (probe exits 0 = BadDeviceToken) ---
@@ -50,7 +56,14 @@ if ! grep -q '^device_ok$' "$STATE"; then
 fi
 
 # --- both flips seen: mission complete, self-remove (LOUD on failure) ---
-if grep -q '^key_ok$' "$STATE" && grep -q '^device_ok$' "$STATE"; then
+# Fires ONCE: the endgame's verification call is REAL (rings Enrique), so a
+# failed attempt must NOT retry every 15m indefinitely — a second attempt
+# fires only if the loop agent clears the `endgame_tried` latch after
+# triage. (Pre-latch bug: bits stayed set on failure -> URGENT + a real call
+# every 15 minutes, forever.)
+if grep -q '^key_ok$' "$STATE" && grep -q '^device_ok$' "$STATE" \
+   && ! grep -q '^endgame_tried$' "$STATE"; then
+  echo endgame_tried >> "$STATE"
   # Endgame verification (dev-success-counter contract, PROGRESS 2026-09-19):
   # prove delivery with a REAL push instead of asserting it. Read push_ok
   # BEFORE, fire one verification call through the production path
@@ -60,12 +73,13 @@ if grep -q '^key_ok$' "$STATE" && grep -q '^device_ok$' "$STATE"; then
   # phone — the ring test is still Enrique's; this only retires the bridge's
   # "did Apple take it" uncertainty. Failure here is LOUD (urgent line +
   # failure routing), and the cron stays so the loop agent can triage on its
-  # next run; the state file keeps both bits so this fires once.
+  # next run; the endgame_tried latch makes this attempt ONE-SHOT (a retry
+  # needs the latch cleared deliberately, never an automatic 15m re-fire).
   H_BEFORE=$(curl -s -m 8 "$BRIDGE/health")
   # whitespace-tolerant int extraction (compact + spaced JSON both match)
   PUSH_OK_BEFORE=$(printf '%s' "$H_BEFORE" | grep -oE '"push_ok":[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1)
   CALL_OK=1
-  if ! /usr/bin/python3 /root/projects/jarvis-ios/scripts/call_enrique.py call \
+  if ! /usr/bin/python3 "$CALL" call \
       --reason "JARVIS iOS verification call — this confirms calls reach your phone. Ignore/hang up." \
       --by "cron:jarvis-ios-device-watch" >/tmp/.jarvis_ios_watch_call.log 2>&1; then
     CALL_OK=0

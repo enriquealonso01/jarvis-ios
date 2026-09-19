@@ -116,6 +116,14 @@ echo "--- watch sentinel wiring ---"
 if python3 scripts/check_watch_sentinel.py; then :; else FAIL=1; fi
 echo "--- watch sentinel behavior ---"
 if python3 scripts/check_watch_sentinel_behavior.py; then :; else FAIL=1; fi
+# 5c-ter. device-watch BEHAVIOR end-to-end (sandboxed): the real watch script
+# driven through both flips + the mission-complete endgame against fake
+# bridge/probe/call/hermes doubles — including the fires-once latch (a failed
+# verification must never auto-refire a real call every 15m) and the
+# self-remove. --selftest negative-tests the harness on throwaway copies.
+echo "--- watch endgame behavior (sandbox) ---"
+if python3 scripts/check_watch_endgame.py; then :; else FAIL=1; fi
+if python3 scripts/check_watch_endgame.py --selftest; then :; else FAIL=1; fi
 # 5d. reminder crons exist and are enabled
 python3 - <<'PY' || FAIL=1
 import json, sys
