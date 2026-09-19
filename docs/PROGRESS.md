@@ -1655,3 +1655,22 @@
   `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
   sign in once (device_registered must flip true); re-register his personal
   Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
+## 2026-09-19 ~23:03 UTC (SUNSET) — build loop PAUSED at Enrique's 7PM ET deadline
+
+- jarvis-ios-build-loop (cron c4b099e2cf11) PAUSED by the one-shot sunset job
+  (3b3cf2b06cad) — no further loop runs. Its final run had already dispatched
+  at 23:00:16 UTC, seconds before the pause; it completes and that is the last.
+  Device-watch (67968b669507, 15m) + watch-sentinel (b0a105e696f3, 30m) stay
+  RUNNING — the only announcers for the remaining flips.
+- Live state at pause: bridge :9160 healthy (ok:true, apns_configured:true,
+  device_registered:false, no push errors). APNs probe VERDICT: HTTP 403
+  InvalidProviderToken on BOTH paths (curl + bridge-stack httpx/h2) — the
+  ASC-only key is still rejected by APNs; the APNs-capable .p8 remains REQUIRED.
+- Totals at close: 147 commits (entire ladder, 2026-09-18 → 09-19). TestFlight
+  latest: build 30 VALID + IN_BETA_TESTING — no fresher build at sunset.
+- NEEDS ENRIQUE (unchanged, three): 1) APNs-capable .p8 — developer.apple.com
+  → Keys → new key with APNs CHECKED → send the .p8 here
+  (`scripts/swap_apns_key.py`); 2) install the HIGHEST TestFlight build (30)
+  + sign in enriquealonsorequejo@icloud.com once (device_registered must flip
+  true); 3) re-register his personal Signal account (groups deliver fine).
