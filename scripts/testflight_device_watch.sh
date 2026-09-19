@@ -6,7 +6,8 @@
 #                  400 BadDeviceToken on a dummy token). This fires the moment
 #                  Enrique's replacement .p8 is installed (swap_apns_key.py).
 #   flip 2 (phone): bridge /health device_registered flips true — the phone
-#                  completed POST /register after opening TestFlight build 1.
+#                  completed POST /register after opening the HIGHEST build
+#                  TestFlight shows (build-number agnostic on purpose; 8c).
 # Self-remove happens ONLY when BOTH bits are set (either order): key first
 # then phone, or a phone that registers while the key is still bad (pushes
 # would still 403) must not end the watch.
@@ -27,7 +28,7 @@ if ! grep -q '^key_ok$' "$STATE"; then
   V=$(/usr/bin/python3 "$PROBE" 2>/dev/null | grep '^VERDICT' | head -1)
   V="${V%.}"
   if printf '%s' "$V" | grep -q "delivery path PROVEN"; then
-    echo "KEY LIVE: installed APNs key is ACCEPTED by Apple (probe verdict 400 BadDeviceToken) — VoIP delivery path proven. Remaining: open TestFlight build 1 once on the phone."
+    echo "KEY LIVE: installed APNs key is ACCEPTED by Apple (probe verdict 400 BadDeviceToken) — VoIP delivery path proven. Remaining: open the HIGHEST build TestFlight shows, once on the phone."
     echo key_ok >> "$STATE"
   elif ! grep -q '^key_wait_announced$' "$STATE"; then
     echo "WAIT: APNs key flip pending — ${V:-probe produced no verdict}. Create the replacement key with 'APNs' CHECKED and send the .p8 (one command installs it: scripts/swap_apns_key.py)."
@@ -43,7 +44,7 @@ if ! grep -q '^device_ok$' "$STATE"; then
     echo "REGISTERED: Enrique's phone completed /register — CallKit push target live. Remaining: swap in the APNs-capable key (probe must print 400 BadDeviceToken)."
     echo device_ok >> "$STATE"
   elif ! grep -q '^device_wait_announced$' "$STATE"; then
-    echo "WAIT: device not registered yet — install TestFlight build 1 and open it once (reminder crons already cover this)."
+    echo "WAIT: device not registered yet — install JARVIS from TestFlight (the HIGHEST build number shown) and open it once."
     echo device_wait_announced >> "$STATE"
   fi
 fi

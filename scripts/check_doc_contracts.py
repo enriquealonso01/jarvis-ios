@@ -142,6 +142,7 @@ stale_claims = [
     "the FIRST and ONLY build",
     "install JARVIS **build 1**",
     "(build 1 LIVE",
+    "TestFlight build 1",
 ]
 ring_on_whatsapp = "'JARVIS, ring this phone' on WhatsApp"
 for label, mirror in (("guide", guide_mirror), ("sunset", sunset_mirror)):
@@ -206,6 +207,22 @@ check("sentinel GONE verdict is health-arbitrated (mission-complete"
       "MISSION_DONE" in sentinel_src and "push_ok" in sentinel_src)
 check("ARCHITECTURE.md documents the watch-of-the-watch layer",
       "watch-sentinel" in arch and "jarvis-ios-watch-sentinel" in arch)
+
+# 8c. Build-number freshness in the device-watch script (added 2026-09-19
+#     ~17:00 UTC): contract 8b covered the one-shot mirrors but the watch's
+#     own WAIT/KEY-LIVE lines still told Enrique to "install TestFlight
+#     build 1" AFTER build 30 shipped — and after tonight's 23:00 sunset the
+#     watch is the ONLY announcer left, so a stale instruction there is the
+#     last thing he'd read. Future-proof: the watch must be build-number
+#     AGNOSTIC (state-driven "HIGHEST build" phrasing), never name build 1
+#     as the build to install, and never route anything to WhatsApp.
+for claim in stale_claims:
+    check(f"watch script carries no stale build-1 claim ({claim[:30]}...)",
+          claim not in watch_src)
+check("watch script gives the highest-build-number instruction",
+      "HIGHEST build" in watch_src)
+check("watch script never routes anything to WhatsApp",
+      "WhatsApp" not in watch_src)
 
 
 print()
