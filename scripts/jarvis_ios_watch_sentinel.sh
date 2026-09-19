@@ -10,10 +10,14 @@
 # alerts the TF Ops group (one line, latched in /tmp) if the watch loses
 # guarding coverage:
 #
-#   1. watch cron exists (removed = flip completed OR real loss -> if the
-#      bridge health is unreadable we cannot tell which: alert once, then
-#      STAND DOWN — if this was mission-complete the watch already delivered
-#      MISSION COMPLETE; if it was a real loss, one alert already fired)
+#   1. watch cron exists (removed = flip completed OR real loss -> /health is
+#      the ARBITER, not mere reachability: the mission counts as complete
+#      ONLY when device_registered:true AND push_ok>=1 (Apple ACCEPTED a real
+#      push) — that exact shape gets a QUIET stand-down, because the watch
+#      already delivered MISSION COMPLETE; the same GONE with any lesser
+#      health = the announcer was lost -> alert once, then stand down. If
+#      the bridge itself is unreadable we cannot tell which: alert once,
+#      then stand down either way — never re-warn on this condition)
 #   2. watch enabled (paused -> alert; an agent can intentionally pause only
 #      with an approved replacement announcer, which would update this script)
 #   3. watch ticks advancing (last_run_at newer than previous poll; gap
@@ -65,17 +69,39 @@ fi
 
 if [ -z "$JOB_JSON" ]; then
   # watch cron is GONE: mission-complete self-remove OR real loss.
-  if ! curl -s -m 5 "$BRIDGE/health" >/dev/null 2>&1; then
+  # /health arbitrates: completion is PROVEN only by the exact shape the
+  # mission-complete endgame leaves behind — device_registered:true AND
+  # push_ok>=1 (a real push ACCEPTED by Apple). Anything less while the
+  # bridge answers = the announcer was lost -> alert once.
+  HEALTH_OK=0
+  MISSION_DONE=0
+  HEALTH_BODY=$(curl -s -m 5 "$BRIDGE/health" 2>/dev/null || true)
+  if [ -n "$HEALTH_BODY" ] && printf '%s' "$HEALTH_BODY" | grep -q '"ok"'; then
+    HEALTH_OK=1
+    MISSION_DONE=$(printf '%s' "$HEALTH_BODY" | /usr/bin/python3 -c 'import json,sys
+try:
+    h = json.load(sys.stdin)
+    done = h.get("device_registered") is True and int(h.get("push_ok") or 0) >= 1
+    print(1 if done else 0)
+except Exception:
+    print(0)')
+  fi
+  if [ "$HEALTH_OK" -eq 0 ]; then
     ALERT=1
     if ! grep -q '^sentinel_alert_gone$' "$STATE"; then
       emit "SENTINEL: $JOB cron is GONE and bridge :9160 is UNREACHABLE — cannot tell mission-complete from a real loss. If you did NOT just complete the ring test, the mission lost its announcer: loop agent must triage (hermes cron list | grep device-watch; curl $BRIDGE/health)." gone
     fi
     # Stand down either way: never re-warn on this condition.
     touch "$STOODDOWN"
+  elif [ "$MISSION_DONE" -eq 1 ]; then
+    # Health PROVES the mission completed (registered + Apple accepted a
+    # real push): the watch self-removed after delivering MISSION COMPLETE.
+    # QUIET stand-down — success must not page as a loss.
+    touch "$STOODDOWN"
   elif [ ! -f "$STOODDOWN" ]; then
     ALERT=1
     if ! grep -q '^sentinel_alert_gone$' "$STATE"; then
-      emit "SENTINEL: $JOB cron removed while bridge :9160 is REACHABLE — if this was NOT the mission-complete self-remove, the flip announcer is lost: loop agent must triage (hermes cron list | grep device-watch)." gone
+      emit "SENTINEL: $JOB cron removed while bridge :9160 is REACHABLE but /health does NOT prove completion (need device_registered:true AND push_ok>=1) — the flip announcer is lost: loop agent must triage (hermes cron list | grep device-watch; curl $BRIDGE/health)." gone
     fi
     touch "$STOODDOWN"
   fi

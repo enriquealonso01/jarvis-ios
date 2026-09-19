@@ -9,8 +9,12 @@ in a temp dir; the stub bridge binds an ephemeral localhost port.
 Branches:
   B1 healthy watch          -> silent, exit 0, no alerts
   B2 healthy twice          -> still silent (no duplicate noise)
-  B3 watch missing + bridge up          -> GONE alert once, stood-down set
-  B4 same again                          -> SILENT (stand-down is one-shot)
+  B3p watch gone + PROVEN health (registered + push_ok>=1)
+                            -> SILENT quiet stand-down (mission-complete
+                               self-remove must never page as a loss)
+  B3  watch gone + bridge up, health NOT proven
+                            -> GONE alert once, stood-down set
+  B4 same again             -> SILENT (stand-down is one-shot)
   B5 watch paused + bridge up           -> PAUSED alert once
   B6 paused persists                     -> silent (latched)
   B7 paused fixed                        -> re-armed; next B5 fires again
@@ -32,7 +36,6 @@ from datetime import datetime, timedelta, timezone
 
 REPO = os.path.dirname(os.path.abspath(__file__))
 SENTINEL = os.path.join(REPO, "jarvis_ios_watch_sentinel.sh")
-HEALTH = json.dumps({"ok": True, "device_registered": False}).encode()
 
 passed, failed = [], []
 
@@ -44,13 +47,14 @@ def ok(name, cond, detail=""):
 
 class Bridge(http.server.BaseHTTPRequestHandler):
     up = True
+    health = {"ok": True, "device_registered": False}
 
     def do_GET(self):
         if Bridge.up:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(HEALTH)
+            self.wfile.write(json.dumps(Bridge.health).encode())
         else:
             self.send_response(503)
             self.end_headers()
@@ -106,13 +110,33 @@ ok("B1 healthy watch -> silent", r.returncode == 0 and not out_lines(r), r.stdou
 r = run()
 ok("B2 still healthy -> silent", r.returncode == 0 and not out_lines(r), r.stdout.strip()[:80])
 
-# B3 watch gone + bridge up
+# B3p watch gone + health PROVES completion (registered + push_ok>=1) —
+# the exact shape the MISSION-COMPLETE endgame leaves behind. The
+# self-remove is SUCCESS, not a loss: must stand down SILENTLY.
+Bridge.up = True
+Bridge.health = {"ok": True, "device_registered": True, "push_ok": 2}
 write_job(present=False)
 r = run()
-ok("B3 watch gone -> GONE alert",
+stooddown = os.path.join(tmp, ".jarvis_ios_watch_sentinel_stooddown")
+ok("B3p gone + PROVEN health -> SILENT quiet stand-down",
+   r.returncode == 0 and not out_lines(r), r.stdout.strip()[:80])
+ok("B3p stood-down flag set", os.path.exists(stooddown))
+
+# B3p-bis same again -> still silent (one-shot semantics preserved)
+r = run()
+ok("B3p-bis still silent", r.returncode == 0 and not out_lines(r),
+   r.stdout.strip()[:80])
+
+# B3 watch gone + bridge answers but health does NOT prove completion
+# (the pre-mission shape: registered:false, push_ok:0) -> GONE alert.
+Bridge.health = {"ok": True, "device_registered": False, "push_ok": 0}
+os.remove(stooddown)  # fresh flag so B3's stand-down is observable
+write_job(present=False)
+r = run()
+ok("B3 watch gone + UNPROVEN health -> GONE alert",
    r.returncode == 0 and len(out_lines(r)) == 1 and "removed" in out_lines(r)[0]
-   and "REACHABLE" in out_lines(r)[0], r.stdout.strip()[:100])
-ok("B3 stood-down flag set", os.path.exists(os.path.join(tmp, ".jarvis_ios_watch_sentinel_stooddown")))
+   and "does NOT prove completion" in out_lines(r)[0], r.stdout.strip()[:100])
+ok("B3 stood-down flag set", os.path.exists(stooddown))
 
 # B4 gone again -> silent
 r = run()
@@ -171,8 +195,7 @@ Bridge.up = False
 write_job(enabled=False, last_min_ago=90, completed=384)
 run()  # fire all four once (latches set)
 r = run()  # second run: latched -> silent; then B12 fresh-state single-fire
-import os as _os
-_os.remove(state)
+os.remove(state)
 # stalled+budget need enabled=True (paused branch short-circuits them)
 write_job(enabled=True, last_min_ago=90, completed=384)
 r = run()

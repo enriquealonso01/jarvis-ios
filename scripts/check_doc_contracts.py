@@ -175,6 +175,9 @@ check("sentinel alerts are latched (one-shot per fault)",
       "sentinel_alert_" in sentinel_src and "grep -q '^sentinel_alert_" in sentinel_src)
 check("sentinel always exits 0 (failure channel never fires spuriously)",
       "exit 0" in sentinel_src and "exit 1" not in sentinel_src)
+check("sentinel GONE verdict is health-arbitrated (mission-complete"
+      " self-remove stands down silently via device_registered+push_ok)",
+      "MISSION_DONE" in sentinel_src and "push_ok" in sentinel_src)
 check("ARCHITECTURE.md documents the watch-of-the-watch layer",
       "watch-sentinel" in arch and "jarvis-ios-watch-sentinel" in arch)
 

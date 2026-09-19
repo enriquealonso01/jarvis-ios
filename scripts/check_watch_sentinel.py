@@ -97,6 +97,11 @@ if os.path.isfile(SENTINEL_REPO):
           "HERMES=" not in src and "$HERMES" not in src
           and "$(hermes" not in src and "`hermes" not in src)
     check("always exits 0", "exit 0" in src and "exit 1" not in src)
+    check("GONE verdict is health-arbitrated (mission-complete self-remove"
+          " with device_registered:true AND push_ok>=1 must stand down"
+          " SILENTLY, never page as a loss)",
+          "MISSION_DONE" in src and 'push_ok' in src
+          and "QUIET stand-down" in src)
 
 # 6. watch mirror contract still holds
 if os.path.isfile(WATCH_REPO) and os.path.isfile(WATCH_LIVE):

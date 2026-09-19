@@ -1,3 +1,48 @@
+## 2026-09-19 03:50 UTC (build-loop run) — success-was-paged-as-a-loss seam closed in the watch-sentinel: GONE verdicts are now health-ARBITRATED (device_registered:true AND push_ok>=1 = QUIET stand-down), so the mission-complete self-remove can never fire a false "announcer lost" alert
+
+- Audit this run swept for drift with both blockers still Enrique-side and
+  found the next real seam — a false-positive alarm scheduled for the moment
+  of SUCCESS: when the device-watch's endgame fires (real verification push
+  accepted), it delivers MISSION COMPLETE and SELF-REMOVES. The sentinel's
+  GONE branch treated "cron absent + bridge reachable" as a LOSS (alert once,
+  stand down) — reachability alone cannot distinguish "watch removed because
+  it finished" from "watch removed because something killed it". First real
+  ring tonight would have paged the TF Ops group with a bogus "flip announcer
+  is lost" line at the exact moment the mission completed.
+- FIX (deployed LIVE this run, repo→live byte-identical): the GONE branch
+  now reads /health as the ARBITER — MISSION_DONE = `device_registered:true`
+  AND `push_ok>=1` (the exact shape the endgame leaves behind: phone
+  registered + Apple ACCEPTED a real push) → QUIET stand-down, no alert;
+  GONE with any lesser health while the bridge answers → the alert, with an
+  honest message ("does NOT prove completion (need device_registered:true
+  AND push_ok>=1)"); bridge unreachable → unchanged alert-once + stand-down.
+  Uses push_ok, not push counters' absence — mirrors the watch's own
+  fail-closed endgame semantics (a 200 round-trip is the only proof).
+- Proven in the sandbox, not assumed: stub bridge made MUTABLE
+  (Bridge.health dict) so the proven-completion branch is driven for real —
+  B3p gone+PROVEN health → SILENT + stood-down flag; B3p-bis one-shot holds;
+  B3 gone+UNPROVEN (registered:false, push_ok:0) → GONE alert fires with the
+  new wording; B1–B13 regression all green → 18/18 PASS (was 15/15). The
+  wiring pin + doc-contract step 10 gained the arbitration pin each
+  ("GONE verdict is health-arbitrated"), so a revert cannot hide.
+- Live tick after deploy: SILENT, exit 0 (today's state — watch present,
+  22/384 ticks — takes the normal path; the new branch is inert until the
+  real GONE). verify_all.sh ALL GREEN end-to-end after the deploy (34+1 doc
+  contracts, sentinel wiring incl. new pin, behavior 18/18, watch wiring,
+  bearer probes, gateway gate, live health, prod parity, native WebRTC e2e).
+- Live state unchanged: probe verdict still 403 InvalidProviderToken (key
+  unchanged), device_registered:false, push_ok:0/push_fail:0, schedule clean,
+  build 1 VALID + IN_BETA_TESTING. Crons: loop 30m armed, guide 13:00 UTC
+  armed, sunset 23:00 UTC armed, watch 15m armed, sentinel 30m armed.
+- NEEDS ENRIQUE (both unchanged): (1) web ~2 min — create the APNs-capable
+  key (developer.apple.com → Keys → APNs CHECKED) and send the .p8
+  (scripts/swap_apns_key.py installs it). (2) phone — install TestFlight,
+  accept the invite, open build 1 once → /register fires. Either flip is
+  announced within 15 min; with both, the watch proves delivery with a real
+  push before mission-complete — and NOW the sentinel stands down silently
+  instead of paging success as a loss.
+
+
 ## 2026-09-19 03:10 UTC (build-loop run) — delivery-channel integrity on the terminal wait: the two one-shot announcers (23:00 UTC sunset wrap-up, 13:00 UTC setup guide) were still aimed at the WhatsApp DM that 403'd three times on 9/18 — both repointed to the PROVEN Signal DM, prompts + mirrors pinned, sweep ALL GREEN
 
 - Audit this run (holding pattern; features 1–8 done, waiting only on the two

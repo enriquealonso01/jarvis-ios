@@ -89,13 +89,16 @@ No-LLM cron (30m, `/root/.hermes/scripts/jarvis_ios_watch_sentinel.sh`, mirror
 in `scripts/`) that guards the device-watch — after the build-loop sunset the
 15m watch is the mission's ONLY autonomous announcer, so its death must not be
 silent. Checks: watch cron exists + enabled, ticks fresh (last_run_at < 40m),
-tick budget > 8, bridge /health reachable, probe still emits a VERDICT. Any
-coverage loss fires ONE latched SENTINEL line to the TF Ops group
-(failure channel suppressed — the script always exits 0); it is strictly
-observe-and-report and never mutates hermes state. Contract pinned in
-check_watch_sentinel.py (wiring) + check_watch_sentinel_behavior.py (sandbox
-behavior, 15 branches) + check_doc_contracts.py step 10; verify_all 5c-bis
-runs both on every sweep.
+tick budget > 8, bridge /health reachable, probe still emits a VERDICT. When
+the watch cron is GONE, /health ARBITRATES: `device_registered:true` AND
+`push_ok>=1` (the exact shape the MISSION-COMPLETE endgame leaves behind) is a
+QUIET stand-down — success must never page as a loss; any lesser health with
+the bridge answering means the announcer was truly lost and fires ONE latched
+SENTINEL line to the TF Ops group (failure channel suppressed — the script
+always exits 0); it is strictly observe-and-report and never mutates hermes
+state. Contract pinned in check_watch_sentinel.py (wiring) +
+check_watch_sentinel_behavior.py (sandbox behavior) + check_doc_contracts.py
+step 10; verify_all 5c-bis runs both on every sweep.
 
 ## Call flow (the core mission)
 1. Any agent (WhatsApp/voice/loop) HMAC-POSTs `/call {reason}` (or `/schedule`).
