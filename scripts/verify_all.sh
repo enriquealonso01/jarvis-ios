@@ -128,6 +128,19 @@ else
   echo "SKIP: $WEBRTC_PROBE_VENV missing (setup: python3 -m venv /root/venvs/webrtc-probe && /root/venvs/webrtc-probe/bin/pip install aiortc pyyaml)"
 fi
 
+step "7/6 local-vs-origin parity (no unpushed work may survive a run)"
+git fetch origin main --quiet 2>/dev/null
+AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null)
+if [ -z "$AHEAD" ]; then
+  echo "WARN: origin/main unreachable (offline?) — parity not proven"
+elif [ "$AHEAD" -eq 0 ]; then
+  echo "PASS: local main == origin/main (0 unpushed commits)"
+else
+  echo "FAIL: $AHEAD commit(s) on local main NOT pushed to origin:"
+  git log --oneline origin/main..HEAD
+  FAIL=1
+fi
+
 printf '\n================\n'
 if [ "$FAIL" = "0" ]; then echo "ALL GREEN"; else echo "FAILURES PRESENT"; fi
 exit $FAIL
