@@ -151,6 +151,25 @@ REASON_GUARDS = [
      "400 detail for oversized scheduled_by"),
 ]
 
+# cancel guard (1j, 2026-09-19): POST /schedule/cancel is the bridge's only
+# DESTRUCTIVE write — an empty body wiped EVERY pending scheduled call (the
+# scheduler has no undo), and pydantic coerced a non-string call_id (0/False)
+# into "" — the same wipe. Cancel-all now demands {"confirm": true}; a
+# whitespace-only call_id 404s instead of masquerading as an id-targeted
+# cancel; an unmatchable id 404s loudly instead of cancelled:0.
+CANCEL_GUARDS = [
+    ("it wipes EVERY pending call and cannot be undone",
+     "400 detail for unconfirmed cancel-all"),
+    ("call_id must be a string",
+     "400 detail for non-string call_id (pydantic v2 would 500)"),
+    ("to cancel ALL, or a real call_id from /schedule/list",
+     "404 detail for whitespace-only call_id"),
+    ("no scheduled call with call_id",
+     "404 detail for unmatchable call_id (was silent cancelled:0)"),
+    ('if body.get("confirm") is not True:',
+     "the confirm gate itself (an absent/false confirm must never wipe)"),
+]
+
 SCHED_LIST_KEY = "scheduled"
 
 
@@ -200,6 +219,12 @@ def check_offline(bridge_src: Path | None = None,
             problems.append(f"reason text guard missing: {label}")
         if src.count("req.reason = _validate_push_text(req.reason") != 2:
             problems.append("reason text guard not wired on BOTH /call and /schedule")
+    # cancel guard (1j): the confirm gate + detail literals must exist in the
+    # deployed source — a regression to "empty body wipes all" is the
+    # irreversible-destruction class, so it can never read as green.
+    for needle, label in CANCEL_GUARDS:
+        if needle not in src:
+            problems.append(f"cancel guard missing: {label}")
     for fname, structs in SWIFT_STRUCTS.items():
         f = (app_dir or APP) / fname
         if not f.exists():
@@ -428,14 +453,29 @@ def call_endpoints(base, token):
     out.append(("GET", "/schedule/list#2", _doc(st, body, 200), f"HTTP {st}"))
 
     call_id = sched.get("call_id") if isinstance(sched, dict) else None
+    # cancel guard (1j): destructive-shape probes BEFORE the valid cancel —
+    # a 200 to any of these is the wipe-the-whole-schedule regression class
+    st, body = req(base, "POST", "/schedule/cancel", token, {})
+    out.append(("POST", "/schedule/cancel#unconfirmed-all", _doc(st, body, 400), f"HTTP {st}"))
+    st, body = req(base, "POST", "/schedule/cancel", token, {"call_id": 0})
+    out.append(("POST", "/schedule/cancel#nonstring", _doc(st, body, 400), f"HTTP {st}"))
+    st, body = req(base, "POST", "/schedule/cancel", token, {"call_id": "   "})
+    out.append(("POST", "/schedule/cancel#blank-id", _doc(st, body, 404), f"HTTP {st}"))
+    cancel_guard_docs = [doc for m, p, doc, _ in out
+                         if p.startswith("/schedule/cancel#")]
+
     st, body = req(base, "POST", "/schedule/cancel", token,
                    {"call_id": call_id or "no-such-id"})
     out.append(("POST", "/schedule/cancel", _doc(st, body, 200), f"HTTP {st}"))
+    # cancel-ALL with the explicit confirm must still WORK (valid-shape
+    # regression guard — the gate must not have bricked the documented path)
+    st, body = req(base, "POST", "/schedule/cancel", token, {"confirm": True})
+    out.append(("POST", "/schedule/cancel#confirmed-all", _doc(st, body, 200), f"HTTP {st}"))
 
     st, body = req(base, "POST", "/call", token,
                    {"reason": "contract-probe", "scheduled_by": "contract-probe"})
     out.append(("POST", "/call", _doc(st, body, 200), f"HTTP {st}"))
-    return out, guard_docs, reg_docs, reason_docs
+    return out, guard_docs, reg_docs, reason_docs, cancel_guard_docs
 
 
 def shadow_decode(doc, spec) -> str:
@@ -539,6 +579,27 @@ def register_guard_problems(reg_docs) -> list[str]:
     return probs
 
 
+def cancel_guard_problems(cancel_docs) -> list[str]:
+    """Verdict the /schedule/cancel#unconfirmed-all / #nonstring / #blank-id
+    probe docs (1j): each must be a 200-free JSON body carrying the pinned
+    400/404 detail. A 200 to unconfirmed-all is the IRREVERSIBLE class — the
+    empty body used to wipe EVERY pending scheduled call (scheduler has no
+    undo); a 200 to nonstring is the pydantic-coercion wipe (0/False -> "");
+    a 200 to blank-id is the whitespace-id masquerade."""
+    probs = []
+    for doc in cancel_docs:
+        detail = (doc or {}).get("detail", "") if isinstance(doc, dict) else ""
+        if ("__http_error__" not in (doc or {})
+                and ("cancel-all requires" in detail
+                     or "call_id must be a string" in detail
+                     or "call_id is empty (whitespace-only)" in detail)):
+            print(f"LIVE cancel guard: 400/404 with detail OK ({detail[:60]})")
+        else:
+            probs.append(f"cancel guard probe did not 400/404 with the pinned "
+                         f"detail: {doc!r}")
+    return probs
+
+
 def check_live() -> bool:
     try:
         secret_bytes = dash_secret_bytes()
@@ -547,13 +608,15 @@ def check_live() -> bool:
         return True
     inst = Instance()
     token = mint_bearer(secret_bytes)
-    results, guard_docs, reg_docs, reason_docs = call_endpoints(inst.base, token)
+    results, guard_docs, reg_docs, reason_docs, cancel_docs = call_endpoints(inst.base, token)
 
     # guard verdicts FIRST: a 200 to any at_iso probe is the instant-fire
     # regression class; a 200 to any register probe is the dead-registration
     # class; a 200 to any empty/huge reason probe is the APNs-413-at-fire-time
     # class (an oversized persisted reason burns 10 retries then silently
-    # drops the call) — every one must fail the whole live layer loudly
+    # drops the call); a 200 to any cancel probe is the IRREVERSIBLE class
+    # (unconfirmed wipe of every pending call) — every one must fail the
+    # whole live layer loudly
     all_ok = True
     for p in at_iso_guard_problems(guard_docs):
         print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
@@ -562,6 +625,9 @@ def check_live() -> bool:
         print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
         all_ok = False
     for p in reason_guard_problems(reason_docs):
+        print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
+        all_ok = False
+    for p in cancel_guard_problems(cancel_docs):
         print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
         all_ok = False
 
@@ -575,8 +641,9 @@ def check_live() -> bool:
     list_samples = []  # (label, doc, coll) for every /schedule/list sample
     for method, path, doc, status_desc in results:
         if path.endswith(("#bad", "#past", "#short", "#nonhex",
-                          "#empty", "#huge")):
-            continue  # at_iso + register + reason guard probes — verdicted above
+                          "#empty", "#huge", "#unconfirmed-all",
+                          "#nonstring", "#blank-id")):
+            continue  # at_iso + register + reason + cancel guard probes — verdicted above
         spec = spec_for(method, path)
         if spec is None:
             print(f"BRIDGE-CONTRACT-FAIL (live): {method} {path} has no "
@@ -815,6 +882,30 @@ def selftest() -> int:
           any("did not 400" in p for p in
               reason_guard_problems(
                   [{"__http_error__": 413, "__body__": "payload too large"}])))
+
+    # 1j: the cancel-guard verdict must BITE the same way
+    good_unconf = {"detail": "cancel-all requires {\"confirm\": true} — it "
+                             "wipes EVERY pending call and cannot be undone; "
+                             "to cancel one call send {\"call_id\": \"<id from "
+                             "/schedule/list>\"}"}
+    good_nonstr = {"detail": "call_id must be a string"}
+    good_blank = {"detail": "call_id is empty (whitespace-only) — send "
+                            "{\"confirm\": true} to cancel ALL, or a real "
+                            "call_id from /schedule/list"}
+    check("T10a cancel guard accepts pinned 400/404 details",
+          cancel_guard_problems([good_unconf, good_nonstr, good_blank]) == [])
+    check("T10b cancel guard caught: unconfirmed-all returned 200",
+          any("did not 400" in p for p in
+              cancel_guard_problems([{"cancelled": 3}])))
+    check("T10c cancel guard caught: wrong/no detail",
+          any("did not 400" in p for p in
+              cancel_guard_problems(
+                  [{"__http_error__": 422, "__body__": "validation"}])))
+    edit(bridge_copy, lambda t: t.replace(
+        'if body.get("confirm") is not True:', 'if False:  # gate removed', 1))
+    check("T10d offline cancel-guard-vanish caught",
+          any("cancel guard missing" in p for p in offline_problems()))
+    shutil.copy2(BRIDGE_SRC, bridge_copy)
 
     # clean tree must be CLEAN (no false positives from the tampering above)
     check("clean tree offline pins pass", offline_problems() == [])

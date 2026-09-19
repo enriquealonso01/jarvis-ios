@@ -18,8 +18,8 @@ Usage:
   call_enrique.py call     --reason "Market update" [--by "cron:jobname"]
   call_enrique.py schedule --at "2026-09-19T14:00:00+00:00" --reason "..." [--by ...]
   call_enrique.py list
-  call_enrique.py cancel                # all
   call_enrique.py cancel --id ab12cd34  # one
+  call_enrique.py cancel --yes          # ALL (explicit: no undo)
 
 Exit codes: 0 success (even pushed:false — see below), 1 usage/config error,
 2 bridge unreachable/HTTP error. `pushed:false` on /call means APNs is not
@@ -85,8 +85,11 @@ def main() -> None:
 
     sub.add_parser("list", help="list pending scheduled calls")
 
-    x = sub.add_parser("cancel", help="cancel one (--id) or all scheduled calls")
+    x = sub.add_parser("cancel", help="cancel one (--id) or ALL scheduled calls")
     x.add_argument("--id", default=None, help="call_id from `list`; omit to cancel ALL")
+    x.add_argument("--yes", action="store_true",
+                   help="required with cancel-ALL (no --id): the bridge refuses "
+                        "an unconfirmed wipe of every pending call (no undo)")
 
     a = p.parse_args()
     if not SECRET_PATH.exists():
@@ -147,7 +150,26 @@ def main() -> None:
     elif a.cmd == "list":
         out = _request("GET", "/schedule/list")
     else:
-        body = {} if not a.id else {"call_id": a.id}
+        # Cancel guard (1j, mirrored bridge-side): a whitespace-only --id must
+        # fail HERE — it used to reach the bridge as a truthy-but-unmatchable
+        # call_id and the request said nothing about what it would do.
+        if a.id is not None and not a.id.strip():
+            print("--id is whitespace-only — pass a call_id from `list`, or "
+                  "omit --id (with --yes) to cancel ALL", file=sys.stderr)
+            sys.exit(1)
+        if a.id:
+            body = {"call_id": a.id}
+        else:
+            # Cancel-ALL is the one bridge write that wipes EVERY pending call
+            # with no undo. Bridge-side (1j) it now requires {"confirm": true};
+            # the CLI mirrors that with an explicit --yes so an agent cannot
+            # nuke the schedule with a bare `cancel` reflex.
+            if not a.yes:
+                print("cancel-ALL wipes every pending call and cannot be undone "
+                      "-- re-run with --yes, or target one call with "
+                      "--id <call_id from list>", file=sys.stderr)
+                sys.exit(1)
+            body = {"confirm": True}
         out = _request("POST", "/schedule/cancel", body)
 
     print(json.dumps(out, indent=2))

@@ -165,7 +165,15 @@ it ships in a build:
   INSIDE the APNs payload, Apple 413s payloads over 4096 bytes, so an
   oversized /schedule entry persisted fine and then silently dropped after
   10 fire-time retries (1f-bis's silent-never class via payload SIZE);
-  selftest 23/23.
+  since 2026-09-19 (1j) likewise the CANCEL GUARDS on POST /schedule/cancel
+  (offline needles + live 400/404s: #unconfirmed-all #nonstring #blank-id)
+  — the empty body was the bridge's one IRREVERSIBLE write (wipes every
+  pending call; the scheduler has no undo) and demanded zero friction, so
+  cancel-all now requires `{"confirm": true}`, a whitespace-only call_id
+  404s instead of masquerading as an id-targeted cancel, an unmatchable id
+  404s loudly (was silent `cancelled: 0`), and a non-string call_id 400s
+  BEFORE pydantic v2 would raise an opaque 500; the agent CLI mirrors the
+  gate (`cancel --yes` for cancel-all); selftest 27/27.
 - **1g chat send** (`check_chat_contract.py`): the app's WRITE path —
   POST `/api/control/work/{id}/chat`, POST `/api/control/project/task`, GET
   `/api/control/work/{id}/history` — routes, Swift models, AND the pre-LLM

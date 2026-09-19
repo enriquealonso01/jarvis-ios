@@ -187,6 +187,22 @@ def main():
     st, _ = req(base, "POST", "/schedule/cancel", {"Authorization": "Bearer x"}, cancel_body)
     check("/schedule/cancel bad bearer 401", st == 401)
 
+    # cancel guard (1j) must bite on BOTH auth paths BEFORE any valid write:
+    # the unconfirmed empty-body wipe of EVERY pending call is the one
+    # IRREVERSIBLE shape this bridge accepts (scheduler has no undo)
+    empty_cancel = json.dumps({}).encode()
+    nonstr_cancel = json.dumps({"call_id": 0}).encode()
+    blank_cancel = json.dumps({"call_id": "   "}).encode()
+    st, _ = req(base, "POST", "/schedule/cancel", {"Authorization": f"Bearer {token}"}, empty_cancel)
+    check("/schedule/cancel unconfirmed-all bearer 400", st == 400)
+    st, _ = req(base, "POST", "/schedule/cancel", {"x-bridge-sig": sig_for(a.secret, nonstr_cancel)}, nonstr_cancel)
+    check("/schedule/cancel non-string id HMAC 400", st == 400)
+    st, _ = req(base, "POST", "/schedule/cancel", {"x-bridge-sig": sig_for(a.secret, blank_cancel)}, blank_cancel)
+    check("/schedule/cancel blank id HMAC 404", st == 404)
+    # the guard must not have bricked the documented cancel-all path
+    st, out5b = req(base, "POST", "/schedule/cancel", {"Authorization": f"Bearer {token}"}, json.dumps({"confirm": True}).encode())
+    check("/schedule/cancel confirmed-all bearer 200", st == 200 and isinstance(out5b.get("cancelled"), int))
+
     # secrets endpoints unchanged sanity (bearer list)
     st, _ = req(base, "GET", "/secrets", {"Authorization": f"Bearer {token}"})
     check("/secrets bearer still 200", st == 200)

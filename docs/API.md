@@ -40,8 +40,13 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   scheduler fire path, never returned to clients. Fixed 2026-09-18.)
   GETs authenticate via HMAC over an empty body (`sig = HMAC-SHA256(secret, b"")`)
   OR the iOS app's `Authorization: Bearer <dashboard token>` (added with backlog #4).
-- `POST /schedule/cancel` `{call_id?}` -> `{cancelled: N}`. With call_id cancels that one;
-  with empty body `{}` cancels all pending.
+- `POST /schedule/cancel` `{call_id}` -> `{cancelled: 1}` — cancels that one;
+  `{}` (cancel-ALL) -> 400 unless `{"confirm": true}` is present: it wipes
+  every pending call and cannot be undone (1j, 2026-09-19). A whitespace-only
+  call_id -> 404; an id that matches nothing -> 404 (was a silent
+  `cancelled: 0`); a non-string call_id -> 400 (pydantic v2 would 500).
+  `call_enrique.py` mirrors this: cancel-one is `cancel --id <id>`;
+  cancel-all is `cancel --yes`.
 - `GET /health` -> `{ok, apns_configured, device_registered, last_push_error,
   push_ok, push_fail, scheduled}`.
   `device_registered` = the phone has completed POST /register (boolean

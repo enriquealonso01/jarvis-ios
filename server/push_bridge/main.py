@@ -495,22 +495,56 @@ async def schedule_list(request: Request, x_bridge_sig: str = Header(default="")
 
 @app.post("/schedule/cancel")
 async def schedule_cancel(request: Request, x_bridge_sig: str = Header(default="")):
-    """Cancel one scheduled call by call_id, or all if call_id omitted."""
+    """Cancel one scheduled call by call_id, or all if call_id omitted.
+
+    Guard (1j, 2026-09-19): cancel-ALL requires an EXPLICIT {"confirm": true}.
+    The empty body is a valid-but-dangerous shape — the scheduler has no undo,
+    so one buggy agent probe / test body / confused voice call wiped every
+    pending reminder silently and permanently. A WHITESPACE-ONLY call_id (e.g.
+    --id " ") no longer masquerades as cancel-all either: truthy → it targets
+    a call_id that can never exist, so it 404s loudly instead of no-op wiping
+    the whole schedule (cancelled:0 with everything still gone is the lie that
+    shape told before). A malformed NON-STRING call_id 400s BEFORE model
+    construction: pydantic v2 does not coerce — it raises a raw
+    ValidationError that uvicorn surfaces as an opaque 500 Internal Server
+    Error (the v1-era coercion-to-"" hazard is gone, but an unexplained 500
+    is its own silent-failure class for the client).
+    Cancel-ONE is confirm-free: it targets exactly one visible id.
+    """
     raw = await request.body()
     _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
-    req = CancelReq(**json.loads(raw or b"{}"))
+    body = json.loads(raw or b"{}")
+    # call_id must be a string if present — checked BEFORE CancelReq(**body)
+    # (see the docstring: pydantic v2 would 500, not coerce).
+    if "call_id" in body and body["call_id"] is not None and not isinstance(body["call_id"], str):
+        raise HTTPException(status_code=400, detail="call_id must be a string")
+    req = CancelReq(**body)
     items = _load_schedule()
     if req.call_id:
-        kept = [i for i in items if i["call_id"] != req.call_id]
+        # Strip before matching: a whitespace-padded id matched NOTHING above,
+        # but truthy req.call_id also skipped the cancel-all branch — the old
+        # code returned cancelled:0 while implying "one id targeted". Now it
+        # says plainly that no such call exists (404), never silently wiping.
+        cid = req.call_id.strip()
+        if not cid:
+            raise HTTPException(status_code=404, detail="call_id is empty (whitespace-only) — send {\"confirm\": true} to cancel ALL, or a real call_id from /schedule/list")
+        kept = [i for i in items if i["call_id"] != cid]
+        cancelled = len(items) - len(kept)
+        if cancelled == 0:
+            raise HTTPException(status_code=404, detail=f"no scheduled call with call_id {cid!r} — see /schedule/list (nothing was cancelled)")
+        if cancelled:
+            _save_schedule(kept)
+        return {"cancelled": cancelled}
     else:
-        # Documented contract (CancelReq: "None/empty cancels all"): an empty
-        # body / empty call_id clears the whole schedule. The old filter kept
-        # every item when call_id was None — cancel-all silently did nothing.
-        kept = []
-    cancelled = len(items) - len(kept)
-    if cancelled:
-        _save_schedule(kept)
-    return {"cancelled": cancelled}
+        # Cancel-all keeps working (the documented contract) but only when the
+        # caller MEANT it: an explicit confirm flag. Anything else 400s with
+        # the exact remedy — before the 1j fix, {"call_id": ""} (pydantic
+        # coercion of a non-string 0/False lands here too) wiped everything.
+        if body.get("confirm") is not True:
+            raise HTTPException(status_code=400,
+                                detail="cancel-all requires {\"confirm\": true} — it wipes EVERY pending call and cannot be undone; to cancel one call send {\"call_id\": \"<id from /schedule/list>\"}")
+        _save_schedule([])
+        return {"cancelled": len(items)}
 
 
 

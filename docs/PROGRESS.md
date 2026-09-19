@@ -1,3 +1,71 @@
+## 2026-09-19 ~21:50 UTC (build-loop run) — 1j: POST /schedule/cancel was the bridge's one IRREVERSIBLE write with ZERO friction — an empty body `{}` (or a pydantic-shaped probe) wiped EVERY pending scheduled call silently (the scheduler has no undo, and a `cancelled: 0` reply even hinted success-by-proxy); cancel-all now requires `{"confirm": true}`, whitespace-only/unmatchable ids 404 loudly (was silent `cancelled: 0`), a non-string call_id 400s before pydantic v2 would raise an opaque 500; mirrored in call_enrique.py (`cancel --yes`) + the app's 404 path, pinned offline + live (selftest 27/27), deployed and prod-verified
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (the Swift 404-path change below rides
+  the NEXT tag; bridge-side shipped to prod THIS run).
+- The audit that found it: the 1f -> 1g ladder closed the input seams on
+  /schedule (at_iso), /register (device_token), /call + /schedule (reason
+  text) — this run audited the remaining write surface and found the only
+  DESTRUCTIVE one had no guard at all: POST /schedule/cancel with an empty
+  body cleared the ENTIRE schedule. Failure shapes: a buggy agent probe / a
+  test body / a confused voice-tool call with `{}` erased every pending
+  reminder permanently; `{"call_id": "   "}` (whitespace-only, e.g. from an
+  untrimmed CLI arg) took the truthy branch, matched nothing, returned
+  `cancelled: 0` — a silent no-op that LOOKED like an id-targeted cancel
+  while implying the schedule survived (it did — but only by luck of the
+  match); and an unknown id returned `cancelled: 0`, the same ambiguity the
+  app already had to special-case as "maybe already fired".
+- Fixed bridge-side (server/push_bridge/main.py): cancel-all now 400s
+  "cancel-all requires {"confirm": true} — it wipes EVERY pending call and
+  cannot be undone; to cancel one call send {"call_id": "<id>"}" unless
+  confirm is EXACTLY true; a non-string call_id 400s "call_id must be a
+  string" BEFORE model construction (pydantic v2 does not coerce — v1-style
+  `0 -> ""` coercion would have been a wipe-shaped hazard, but v2 instead
+  raises a raw ValidationError that uvicorn surfaces as an opaque 500; the
+  guard turns both into a pinned 400); a whitespace-only call_id 404s with
+  the exact remedy; an unmatchable id 404s "no scheduled call with call_id
+  ... (nothing was cancelled)" — the cancelled-count lie is gone. Cancel-ONE
+  stays confirm-free: it targets exactly one visible id.
+- Client mirrors: scripts/call_enrique.py cancel-ALL now requires --yes
+  (sends {"confirm": true}); a bare `cancel` or whitespace-only --id exits 1
+  at composition time with the remedy — an agent cannot nuke the schedule
+  with a reflex. iOS CancelView (CallsView.swift cancel()): the bridge's new
+  404 for an already-gone id is caught (CCClient.Failure "HTTP 404") and
+  mapped to the SAME friendly path as the old cancelled:0 race — refresh the
+  list, "Already cancelled (or already fired)". Verified live through a real
+  throwaway bridge on the wire (9/9: schedule two -> cancel-one 200 ->
+  repeat 404 -> bare 400 -> nonstring 400 -> blank 404 -> confirmed-all 200
+  -> list empty).
+- Pinned in check_bridge_contract.py (1j): offline — CANCEL_GUARDS needles
+  (both 400 details, both 404 details, the `body.get("confirm") is not True`
+  gate itself); live — /schedule/cancel#unconfirmed-all (400) / #nonstring
+  (400) / #blank-id (404) probed BEFORE the valid cancel, verdicted by
+  cancel_guard_problems (a 200 to any probe fails the whole live layer),
+  plus a #confirmed-all valid-shape probe so the gate cannot have bricked
+  the documented cancel-all path. Selftest extended to 27/27 (T10a pinned
+  details, T10b 200-regression caught, T10c wrong/no-detail caught, T10d
+  offline gate-vanish caught). probe_call_bearer_live.py mirrors the guard
+  on both AUTH paths + the not-bricked check — 26/26.
+- Needle-authoring lesson (2nd of its kind, after 1g-bis's comment-masking):
+  a needle containing `{"confirm": true}` must match the ESCAPED source form
+  `{\"confirm\": true}` inside the Python string literal — the plain form is
+  never in the file. Quote-free sub-strings ("it wipes EVERY pending call")
+  are immune; used for both detail needles. Selftest caught the drift
+  immediately (clean-tree check FAIL).
+- Deployed via the documented sequence: py_compile OK -> LKG byte-synced ->
+  systemctl restart -> /health ok:true (push_ok:0, scheduled:0 untouched).
+  Prod live-verified with direct HMAC-signed probes: bare cancel-all 400
+  (pinned detail), non-string 400, blank 404, unknown-id 404, confirmed-all
+  200 {"cancelled": 0}, schedule still [], health unpolluted.
+  check_deploy_parity ALL GREEN. CLI verified against live prod (old-code
+  bridge accepts {"confirm": true} too — deploy-order safe both ways).
+- Docs: API.md /schedule/cancel entry rewritten (confirm gate, 404s, CLI
+  mirror); ARCHITECTURE.md 1f ladder entry extended (1j).
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
 ## 2026-09-19 ~21:00 UTC (build-loop run) — 1g-bis: the LAST unguarded bridge write surfaces closed — POST /call + POST /schedule accepted an UNBOUNDED `reason` (it rides INSIDE the APNs payload; Apple rejects any notification over 4096 bytes, so an oversized /schedule entry persisted fine, burned 10 fire-time retries, then silently dropped the call — 1f-bis's silent-never class via payload SIZE); both surfaces now 400 empty/oversized text BEFORE firing/persisting, pinned offline + live, deployed to prod and live-verified
 
 - Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
