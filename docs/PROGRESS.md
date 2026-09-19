@@ -1,4 +1,40 @@
-## 2026-09-19 11:05 UTC (build-loop run) — NEW step 1h: `check_push_payload_contract.py` proves the VoIP push wire shape end-to-end with ZERO Apple traffic (selftest 10/10, full sweep ALL GREEN)
+## 2026-09-19 11:27 UTC (build-loop run) — REAL BUG on the native call path: the app's data-channel keepalive shipped as a BINARY ping (isBinary:true) — pipecat only counts TEXT pings, so every iOS call since build 1 has run with a dead keepalive + per-second json.loads error spam on the gateway; fixed + pinned
+
+- Audit this run walked the app↔gateway WebRTC contract against pipecat's
+  actual source (not the docs) and found the seam: WebRTCClient's 1 Hz
+  liveness ping was `Data("ping".utf8), isBinary: true`. The gateway side
+  (SmallWebRTCConnection, connection.py:352) counts a keepalive ONLY for
+  `isinstance(message, str)` frames that start with "ping"; a binary frame
+  falls through to `json.loads(b"ping")`, raises, is error-logged EVERY
+  SECOND of every call, and `_last_received_time` never advances — so
+  `connection.is_connected()` (3s liveness window) reads DEAD for iOS
+  sessions regardless of reality, while the web orb (JS `dcSend('ping')` →
+  string) and probe_webrtc_native.py (aiortc `channel.send("ping")` → str)
+  both pass. Proven at the wire level too: aiortc marks str frames with
+  PPID WEBRTC_STRING(51) and bytes with WEBRTC_BINARY(53) — the types
+  genuinely differ on the wire; this was never a cosmetic distinction.
+- FIX (ios/JarvisApp/WebRTCClient.swift): `isBinary: false` + a comment
+  naming the contract so the next reader doesn't "clean it up" back to
+  binary. No gateway change needed (gateway behavior is correct; the app
+  was the sole deviator). Rides the next tag build (ios-v*); build 29 on
+  TestFlight still carries the binary ping — harmless to call audio, but
+  the keepalive + log-spam fix only lands with the next upload.
+- PINNED so it cannot regrow: swift_sanity required pin on the exact text
+  send (`Data("ping".utf8), isBinary: false`), negative-tested on a tmp copy
+  (reverting to isBinary:true removes the needle → sanity FAIL, restore →
+  PASS). ARCHITECTURE.md + GATEWAY.md now say TEXT is load-bearing with the
+  root cause; aiortc PPID evidence recorded here.
+- Full verify_all sweep ALL GREEN with the fix aboard (doc contracts,
+  sanity, drop/scheduler, APNs probe warn, push counters, 1d–1h checkers,
+  bearer probes, live health, parity, watch+sentinel 18/18, native WebRTC
+  e2e vs the live gateway — which itself proves the TEXT ping keeps a
+  session alive end-to-end).
+- Live state unchanged: build 29 VALID + IN_BETA_TESTING,
+  device_registered:false, push_ok:0, probe verdict 403
+  InvalidProviderToken — both blockers still Enrique-side.
+- NEEDS ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py
+  installs it), (2) phone — TestFlight → open BUILD 29 → sign in once;
+  device-watch announces each flip within 15 min.
 
 - Layer A (offline pins, 9 of them): (1) SET-equality between the payload
   keys every bridge fire site builds — /call handler and the scheduler-tick
