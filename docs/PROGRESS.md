@@ -1,3 +1,50 @@
+## 2026-09-19 09:15 UTC (build-loop run) — the app's OTHER network half pinned: new step 1f bridge-contract checker proves every Secrets/Calls endpoint the app calls EXISTS on the bridge and DECODES into the app's exact Swift models (9 live probes decode-OK incl. non-empty element shadows, selftest 10/10, full sweep ALL GREEN)
+
+- Backlog 1–9 re-verified DONE against the tree; live state unchanged (build
+  29 VALID + IN_BETA_TESTING, device_registered:false, push_ok:0, probe
+  verdict 403 InvalidProviderToken — both blockers still Enrique-side).
+  Next-highest value: step 1e (08:19) pinned the DASHBOARD half (Home +
+  Chats); the app's bridge-side surface — every Secrets and Calls tab call —
+  decoded into six Swift models (`SecretsListResp`, `SecretWriteResp`,
+  `ScheduledCall`, `SchedResp`, `CallResp`, `CancelResp`) with NO contract
+  proof at all. A bridge rename or dropped field would have surfaced only as
+  a silently blank Secrets list or stale schedule on the phone.
+- NEW scripts/check_bridge_contract.py, wired into verify_all.sh as step 1f.
+  Layer A (offline): all 8 routes must exist in server/push_bridge/main.py
+  (/secrets, /secrets/set, /secrets/delete, /register, /schedule/list,
+  /schedule, /schedule/cancel, /call), Swift structs must declare the pinned
+  fields, COLLECTION ELEMENT structs are pinned offline too (SecretMeta,
+  ScheduledCall — a blind spot 1e still has), and the req/opt SPLIT is
+  verified BOTH directions (req-pinned must be non-Optional, opt-pinned must
+  be `T?` — the under-pin direction leaves decode-breaking fields
+  unprotected). /register pins route + request keys only (the app checks
+  HTTP 200, no decode). Layer B (live): spawns the throwaway bridge exactly
+  like probe_call_bearer_live.py (tmp state dir, scheduler off, always
+  killed), drives every endpoint with a real dashboard Bearer in an order
+  that leaves both collections NON-EMPTY when listed (set→list→delete,
+  schedule→list→cancel) so element shadows are never vacuous, with a
+  vacuous-element guard that FAILS if both list samples come back empty,
+  and decodes against an EXACT shadow of Swift's synthesized Decodable:
+  req = keyNotFound/typeMismatch-null, opt = presence-only (UI degrades).
+  Contract throwaway names only; prod bridge untouched (tmpfs state, port
+  9163, process killed at exit).
+- First run caught a REAL bug — in the new checker itself: /secrets/set
+  never returns `deleted` (delete-only key), so the strict pin failed its
+  own live decode. Contract corrected per-endpoint; lesson recorded: the
+  strict pin bites its author before it bites the app.
+- Negative-tested IN-REPO (`--selftest`, tmp copies — the real tree is never
+  touched, unlike 1d/1e's hand-run tamper rituals): route-vanish,
+  struct-vanish, req-field-vanish, element-struct-vanish,
+  element-field-rename, live element rename → keyNotFound, live key drop,
+  live req-null → typeMismatch, req/opt misclassification, clean-tree
+  no-false-positive — 10/10 PASS. verify_all ALL GREEN with 1f aboard: doc
+  contracts, swift sanity, drop/scheduler checks, APNs probe (warn), push
+  counters, login contract (1d), CC contract (1e), bridge contract + selftest
+  (1f), bearer probes, live health, parity, watch+sentinel 18/18, WebRTC e2e.
+- NEEDS ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py
+  installs it), (2) phone — TestFlight → open BUILD 29 → sign in once;
+  device-watch announces each flip within 15 min.
+
 ## 2026-09-19 08:19 UTC (build-loop run) — the path AFTER sign-in now pinned: new step 1e CC-API contract checker proves every Home/Chats endpoint the app calls EXISTS on the live dashboard and DECODES into the app's exact Swift models (7/7 live 200 decode-OK)
 
 - Backlog 1–8 re-verified DONE against the tree; live state unchanged (build
