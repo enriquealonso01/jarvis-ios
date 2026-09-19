@@ -28,11 +28,15 @@ git pull
 ```
 Or straight: `cd ios && fastlane testflight`.
 
-Build numbers: the `testflight` lane auto-bumps `CURRENT_PROJECT_VERSION` from
-the latest live TestFlight build (`latest_testflight_build_number` + 1) whenever
-the App Store Connect API-key envs are set — no manual edits needed. With
-interactive auth (no API key) it skips the bump: bump it by hand in
-ios/project.yml if TestFlight rejects a duplicate build number.
+Build numbers: the `archive` lane stamps `CURRENT_PROJECT_VERSION` from
+`GITHUB_RUN_NUMBER` (local runs: a timestamp) via xcargs at archive time.
+XCODE 26 TRAP: the export step renumbers the build (CFBundleVersion -> 1)
+unless `manageAppVersionAndBuildNumber: false` is in the exportOptions — the
+Fastfile pins that AND verifies the stamp inside the produced .ipa (extracts
+Info.plist and compares CFBundleVersion to the requested number), failing the
+lane loudly instead of letting ASC reject the upload with -19232 "bundle
+version must be higher than the previously uploaded version". If you edit the
+lane, keep both the flag and the verification.
 
 ## Notes
 - First SPM resolve pulls the ~400MB WebRTC binary (see BUILD.md backlog-#4 note).

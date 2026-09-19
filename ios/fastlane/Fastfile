@@ -64,9 +64,31 @@ platform :ios do
       export_method: "app-store",
       xcargs:        "CURRENT_PROJECT_VERSION=#{build_number} DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}",
       export_options: {
-        provisioningProfiles: { APP_ID => "match AppStore #{APP_ID}" }
+        provisioningProfiles: { APP_ID => "match AppStore #{APP_ID}" },
+        # XCODE 26 TRAP: -exportArchive now RENUMBERS the build (CFBundleVersion
+        # -> 1) unless this key is explicitly false — run 35423491270 archived
+        # with CURRENT_PROJECT_VERSION=24 and still shipped cfBundleVersion=1,
+        # and ASC rejected the upload with -19232 "bundle version must be
+        # higher than the previously uploaded version". Absence of the key is
+        # no longer safe; the false must be IN the exportOptions plist.
+        manageAppVersionAndBuildNumber: false
       }
     )
+
+    # Verify the stamp SURVIVED export — fail the lane loudly instead of
+    # letting ASC reject a duplicate build number minutes later.
+    ipa = lane_context[SharedValues::IPA_OUTPUT_PATH]
+    UI.user_error!("gym produced no .ipa — cannot verify build number") unless ipa && File.exist?(ipa)
+    stamped = sh(
+      "set -e; rm -f /tmp/jarvis_info.plist; " \
+      "unzip -p #{ipa.shellescape} Payload/#{SCHEME}.app/Info.plist > /tmp/jarvis_info.plist; " \
+      "plutil -extract CFBundleVersion raw -o - /tmp/jarvis_info.plist"
+    ).strip
+    UI.user_error!(
+      "export renumbered the build: ipa has CFBundleVersion=#{stamped}, " \
+      "expected #{build_number} — manageAppVersionAndBuildNumber must stay false"
+    ) unless stamped == build_number.to_s
+    UI.success("build number verified in .ipa: CFBundleVersion=#{stamped}")
   end
 
   desc "Build and ship to TestFlight (installs on your iPhone via the TestFlight app — no Mac needed)"
