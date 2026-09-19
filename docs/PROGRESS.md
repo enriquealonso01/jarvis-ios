@@ -1,3 +1,50 @@
+## 2026-09-19 12:55 UTC (build-loop run) — SHIP GATE shipped: the poll-by-hand era ends; ios-v28 -> run #30 -> BUILD 30 VALID + IN_BETA_TESTING verified live and now provable in ONE command forever
+
+- This run's first act: verify last cycle's promise actually landed. Run 30
+  (tag ios-v28, created 12:02Z) completed success, ASC upload row
+  cfBundleVersion=30 COMPLETE, build 30 processingState VALID,
+  internalBuildState IN_BETA_TESTING, autoNotify enabled — so **build 30 is
+  the latest TestFlight build** and it CARRIES THE TEXT-PING KEEPALIVE FIX
+  (merge-base-verified: ios-v28 contains e77b26f). Build 29 still installed
+  on the phone = binary ping; opening 30 flips it. The 12:05 run's "fix rides
+  the next tag build" is now TRUE and PROVEN, not assumed.
+- Built what this manual verification kept repeating: `scripts/ship_gate.py`
+  — one command walks the real chain fail-closed: (hop1) latest local ios-v*
+  tag exists on origin — the 12:05 failure class (committed, unpushed, no
+  tag); (hop2) that tag's ios-release Actions run concluded success — auth
+  from git's own credential store (never printed; anonymous API is 404);
+  (hop3a) ASC shows build <run-number> VALID with 3x20s ingest-lag retry;
+  (hop3b) internalBuildState IN_BETA_TESTING. Any hop missing/red/lagging
+  FAILS loudly — a run that can't prove "shipped" says so instead of
+  assuming. Live-proven green end-to-end this run.
+- Negative-tested the house way (`scripts/selftest_ship_gate.sh`, throwaway
+  clones, real tree untouched): T1 local-only tag bites with the exact
+  12:05-class message; T3 uses REAL historical failure data — ios-v26 = run
+  28 concluded failure — proving a RED run can't read as shipped; T4 missing
+  git credentials fails as a clean one-line config error. T4 found a real
+  gate bug on first authoring (missing credentials file -> raw traceback);
+  fixed, and the selftest's own T3 first draft PASSED a red gate (ios-v27 is
+  legitimately shipped — wrong premise) which is exactly why negative tests
+  need real failure data, not invented tags.
+- Selftest infra lesson pinned in its header: a throwaway HOME needs BOTH
+  .gitconfig (credential.helper pointer) AND .git-credentials (the token);
+  copying only the store file silently de-auths git. T2 (origin lists the
+  ref but lacks its commit) is impossible for refs — ls-remote only lists
+  what it can serve — noted in the script.
+- Wired into verify_all.sh as step 8/6 (gate + selftest): step 7 proves
+  nothing unpushed, step 8 proves the pushed thing SHIPPED. Full sweep ALL
+  GREEN with both aboard (doc contracts, swift sanity, drop/scheduler, APNs
+  probe warn, push counters, 1d–1h checkers, bearer probes, live health,
+  parity, watch+sentinel 18/18, native WebRTC e2e, ship gate).
+- Live state: build 30 VALID + IN_BETA_TESTING (latest), build 29 also
+  VALID, device_registered:false, push_ok:0, probe verdict 403
+  InvalidProviderToken — both blockers still Enrique-side, unchanged.
+- NEEDS ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py
+  installs it), (2) phone — TestFlight → open the HIGHEST build (30 now) →
+  sign in once; device-watch announces each flip within 15 min.
+- Next run: proceed down the backlog (launch-screen/icon polish or
+  call_enrique voice-tool wiring per docs/API.md); ship gate now makes
+  "did the last tag ship?" a zero-effort check at run start.
 ## 2026-09-19 12:05 UTC (build-loop run) — the isBinary keepalive fix was SITTING UNPUSHED: local main was 2 commits ahead of origin and no tag existed past ios-v27, so "fix rides the next tag build" had no vehicle — pushed main, cut ios-v28 → CI now builds build 30 carrying the TEXT-ping fix
 
 - Found by this run's first-ever local-vs-origin audit: `git log
