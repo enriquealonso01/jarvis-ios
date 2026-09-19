@@ -150,7 +150,7 @@ required_guard_pins = [
                            # token must be persisted + re-kicked when auth
                            # flips, or device_registered stays false until the
                            # NEXT cold launch (day-one ring dead).
-                           "private static let tokenKey",
+                           "private nonisolated static let tokenKey",
                            "UserDefaults.standard.set(token, forKey: Self.tokenKey)",
                            "func retryDeviceRegistration"]),
     ("JarvisApp.swift", ["retryDeviceRegistration"]),

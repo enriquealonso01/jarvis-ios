@@ -72,7 +72,17 @@ final class CallManager: NSObject, ObservableObject {
     /// Last PushKit token seen, persisted so registration can be RE-KICKED
     /// after the launch-time retry loop has burned out (see
     /// retryDeviceRegistration — the fresh-install day-one seam).
-    private static let tokenKey = "jarvis.push.voiptoken"
+    ///
+    /// `nonisolated` is REQUIRED: the PushKit delegate
+    /// (pushRegistry(_:didUpdate:for:) below) is `nonisolated` — the system
+    /// calls it on its own queue — and a plain `static let` in a @MainActor
+    /// class is MainActor-isolated, so reading `Self.tokenKey` there is a
+    /// hard compile error ("main actor-isolated static property 'tokenKey'
+    /// can not be referenced from a nonisolated context", build 2 / run
+    /// 35420950536). An immutable `String` constant of Sendable type may be
+    /// nonisolated — every call site (MainActor and PushKit queue) reads the
+    /// same value. UserDefaults itself is thread-safe.
+    private nonisolated static let tokenKey = "jarvis.push.voiptoken"
 
     /// Re-attempt /register using the STORED PushKit token. Called when
     /// isAuthed flips true (password login OR manual token in Settings).
