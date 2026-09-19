@@ -1,3 +1,50 @@
+## 2026-09-19 06:00 UTC (build-loop run) — PIPELINE FULLY GREEN: build 29 VALID + IN_BETA_TESTING with the day-one re-kick fix aboard; a four-run debugging chain traced the version-stamp break to its true root (xcodegen wrote literal CFBundleVersion=1 into Info.plist) and the Fastfile now verifies the stamp in-archive AND in-ipa
+
+- Last run's assumption was WRONG and this run caught it: build 2 (tag
+  ios-v21) had silently FAILED — "no upload row yet, normal" was actually a
+  hard Swift compile error. Reading the real Actions run statuses (not the
+  ASC poller alone) is now the loop's first step.
+- Fix 1 — compile (run 35420950536): the re-kick commit's
+  `private static let tokenKey` is MainActor-isolated, and the PushKit
+  delegate is `nonisolated` → "main actor-isolated static property
+  'tokenKey' can not be referenced from a nonisolated context".
+  `private nonisolated static let` (immutable String, Sendable) is the
+  correct repair; swift_sanity's required pin updated to the guarded form
+  (and it NEGATIVE-tested the change: sanity failed until the pin matched).
+- Fix chain — build numbers (runs 35423491270 → 35424281811 → 35424600305 →
+  35424959129): build 3 archived fine but ASC rejected the upload with
+  -19232 "bundle version must be higher than the previously uploaded
+  version" — cfBundleVersion=1 again. Evidence-driven sequence: (a) explicit
+  `manageAppVersionAndBuildNumber:false` in gym's exportOptions was NOT
+  enough (gym appends xcargs to -exportArchive too); (b) lane rebuilt as
+  archive-only (skip_package_ipa) + hand export with a generated
+  ExportOptions.plist and zero build settings on the command line + loud
+  guards — the ARCHIVE itself still carried CFBundleVersion=1;
+  (c) MANAGE_APP_VERSION_AND_BUILD_NUMBER=NO on the archive — still 1;
+  (d) TRUE ROOT CAUSE: xcodegen hardcodes CFBundleVersion=1 into the
+  GENERATED Info.plist, and a plist literal overrides CURRENT_PROJECT_VERSION
+  entirely (this also explains yesterday's "green" build 1 shipping as
+  version 1 — it was never tested against a second upload). Plist now uses
+  `$(CURRENT_PROJECT_VERSION)` / `$(MARKETING_VERSION)` references; the
+  archive guard immediately PASSED (build 28 stamped). One self-inflicted
+  typo (`xcrun -exportArchive` → `xcodebuild -exportArchive`) fixed, and
+  ios-v27 (run 35425198930) went END-TO-END GREEN: upload row
+  cfBundleVersion=29 COMPLETE, BUILD: 29 | VALID | IN_BETA_TESTING (count 2).
+- Fastfile hardening that stays: 3-step lane (archive w/ stamp +
+  MANAGE...=NO → hand export from clean plist → verify CFBundleVersion in
+  the .xcarchive AND inside the exported .ipa, UI.user_error! on any
+  mismatch), plus the beta lane prints the generated Info.plist every run so
+  a literal-vs-reference regression is visible in CI. FASTLANE.md documents
+  the whole trap chain with run ids. verify_all ALL GREEN after every change;
+  sentinel 18/18; no gateway/bridge restarts.
+- Live state: device_registered:false, push_ok:0, probe verdict still 403
+  InvalidProviderToken. Build 1 is now superseded — NEEDS ENRIQUE updated to
+  point at BUILD 29: (1) APNs-capable .p8 (scripts/swap_apns_key.py
+  unchanged), (2) phone — TestFlight → open BUILD 29 → sign in once; the
+  re-kick fix (now actually compiled + shipped) makes that single open+sign-in
+  flip device_registered. Device-watch announces each flip within 15 min.
+
+
 ## 2026-09-19 04:30 UTC (build-loop run) — day-one registration seam closed in the app: PushKit token persisted + /register RE-KICKED the moment auth flips (login or manual token), so "open build 1 once" now actually flips device_registered instead of waiting for a second cold launch
 
 - Audit this run (holding pattern; both blockers still Enrique-side) traced
