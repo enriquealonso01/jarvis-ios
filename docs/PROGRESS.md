@@ -1,3 +1,49 @@
+## 2026-09-19 ~20:20 UTC (build-loop run) — 1f-ter: the /register input hole CLOSED — the bridge persisted ANY device_token ≥20 chars unvalidated (a prose "token" overwrote the real registration silently: device_registered stays true, every future /call + /schedule push fires at a dead token, push_fail climbs, no error anywhere); now format-guarded bridge-side (≥64 lowercase hex, PushKit's exact wire format), pinned offline + live in 1f + probe_call_bearer_live, deployed to prod and live-verified
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (no app-code change this run, so no
+  new tag — zero user-facing delta). Bridge :9160 healthy, device_registered
+  still false (phone-side NEEDS-ENRIQUE unchanged).
+- The audit that found it: 1f-bis closed /schedule's input seam; this run
+  audited its SIBLING write surface, POST /register, and found the same
+  class of hole one guard weaker: the only validation was
+  `len(device_token) >= 20` — no format check at all. DEVICE_TOKEN is the
+  bridge's ONLY push address: one malformed write (a buggy agent probe, a
+  test body, a corrupted retry) silently bricks every future push while
+  /health keeps saying device_registered:true. The 1f-bis failure classes
+  (silent-never / instant-fire) map here to silent-forever-unreachable.
+- Fixed bridge-side (server/push_bridge/main.py): /register now strips the
+  token, requires >=64 chars (400 "device_token too short — PushKit tokens
+  are 64 hex chars (32 bytes); refusing to overwrite a working
+  registration"), and requires every char in 0-9a-f (400 "device_token
+  must be lowercase hex (0-9a-f); refusing to overwrite a working
+  registration") — BEFORE anything is persisted. The app sends exactly the
+  pinned format (CallManager converts raw PushKit bytes with
+  String(format: "%02x")); the real 32-byte token is 64 hex chars.
+  Contract-additive: previously-valid registrations all still pass.
+- Pinned in check_bridge_contract.py (1f-ter): offline — REGISTER_GUARDS
+  needles (strip-normalize + both 400 detail literals) must exist in the
+  deployed bridge source; live — the throwaway instance is probed with
+  short ("short-token") and 64-char non-hex ("Z"*64) bodies on the way IN,
+  BEFORE the valid-register probe, so a guard regression can never
+  overwrite the probe token first (register_guard_problems verdicts; a 200
+  to either probe fails the whole live layer). Selftest extended to 18/18
+  (T7d pinned-details accepted, T7e 200-regression caught, T7f
+  wrong/no-detail caught, T8b offline guard-vanish caught).
+- probe_call_bearer_live.py mirrors the guard on both AUTH paths (Bearer
+  short 400, HMAC non-hex 400) — 18/18.
+- Deployed via the documented sequence: py_compile OK -> LKG byte-synced ->
+  systemctl restart -> /health ok:true (push_ok:0 untouched). Prod
+  live-verified with direct HMAC-signed probes: short 400 + non-hex 400
+  with the pinned details, health unpolluted (device_registered still
+  false — no probe side effects). check_deploy_parity ALL GREEN.
+- Docs: API.md /register entry documents the validation; ARCHITECTURE.md
+  1f ladder entry extended.
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
 ## 2026-09-19 ~19:55 UTC (build-loop run) — 1f-bis: the /schedule input hole CLOSED — the bridge persisted ANY at_iso unvalidated (a garbage timestamp sat silent-never forever; a past timestamp RANG ENRIQUE INSTANTLY on the next 20s scheduler tick); now 400-guarded bridge-side, mirrored in the agent tool, pinned offline + live in 1f, deployed to prod and live-verified
 
 - Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30

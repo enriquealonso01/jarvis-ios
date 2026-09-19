@@ -201,6 +201,15 @@ def main():
     st, _ = req(base, "POST", "/register", {"Authorization": "Bearer nope"}, reg_body)
     check("/register bad bearer 401", st == 401)
 
+    # token-format guard (1f-ter) must bite on BOTH auth paths BEFORE the
+    # valid probes — otherwise a malformed value would overwrite the token
+    st, _ = req(base, "POST", "/register", {"Authorization": f"Bearer {token}"},
+                json.dumps({"device_token": "short-token"}).encode())
+    check("/register short bearer 400", st == 400)
+    st, _ = req(base, "POST", "/register", {"x-bridge-sig": sig_for(a.secret, json.dumps({"device_token": "Z" * 64}).encode())},
+                json.dumps({"device_token": "Z" * 64}).encode())
+    check("/register nonhex HMAC 400", st == 400)
+
     # agent HMAC path on /register still works and overwrites the token
     reg2 = json.dumps({"device_token": "b" * 64}).encode()
     st, out7 = req(base, "POST", "/register", {"x-bridge-sig": sig_for(a.secret, reg2)}, reg2)

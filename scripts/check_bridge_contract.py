@@ -116,6 +116,23 @@ AT_ISO_GUARDS = [
     ("refusing to schedule an instant call", "400 detail for past at_iso"),
 ]
 
+# device_token-format guards (1f-ter, 2026-09-19): DEVICE_TOKEN is the bridge's
+# only push address, and /register previously accepted any string >= 20 chars —
+# a prose "token" persisted cleanly, device_registered stayed true, and every
+# future push fired at a dead address with no error anywhere. The app sends
+# lowercase hex (String(format: "%02x")), 32 bytes = 64 chars. Pinned offline
+# (needles in the deployed source) and live (real 400s + pinned details from
+# the throwaway instance) — a regression to "persist anything" can never read
+# as green.
+REGISTER_GUARDS = [
+    ("(req.device_token or \"\").strip()",
+     "normalize/reject empty device_token"),
+    ("device_token too short — PushKit tokens are 64 hex chars (32 bytes)",
+     "400 detail for short device_token"),
+    ("device_token must be lowercase hex (0-9a-f)",
+     "400 detail for non-hex device_token"),
+]
+
 SCHED_LIST_KEY = "scheduled"
 
 
@@ -151,6 +168,12 @@ def check_offline(bridge_src: Path | None = None,
     for needle, label in AT_ISO_GUARDS:
         if needle not in src:
             problems.append(f"POST /schedule at_iso guard missing: {label}")
+    # device_token-format guards must exist too (1f-ter): a malformed
+    # DEVICE_TOKEN persisted over the real one silently kills every future
+    # push (device_registered stays true, no error surfaces anywhere)
+    for needle, label in REGISTER_GUARDS:
+        if needle not in src:
+            problems.append(f"POST /register token guard missing: {label}")
     for fname, structs in SWIFT_STRUCTS.items():
         f = (app_dir or APP) / fname
         if not f.exists():
@@ -321,6 +344,13 @@ def call_endpoints(base, token):
     out.append(("POST", "/secrets/delete", _doc(st, body, 200), f"HTTP {st}"))
 
     st, body = req(base, "POST", "/register", token,
+                   {"device_token": "short-token", "bundle_id": "probe.bundle"})
+    out.append(("POST", "/register#short", _doc(st, body, 400), f"HTTP {st}"))
+    st, body = req(base, "POST", "/register", token,
+                   {"device_token": "Z" * 64, "bundle_id": "probe.bundle"})
+    out.append(("POST", "/register#nonhex", _doc(st, body, 400), f"HTTP {st}"))
+
+    st, body = req(base, "POST", "/register", token,
                    {"device_token": "a" * 64, "bundle_id": "probe.bundle"})
     out.append(("POST", "/register", None, f"HTTP {st}"))  # status-only
 
@@ -346,6 +376,8 @@ def call_endpoints(base, token):
     out.append(("POST", "/schedule#past", _doc(st, body, 400), f"HTTP {st}"))
     guard_docs = [doc for m, p, doc, _ in out
                   if p in ("/schedule#bad", "/schedule#past")]
+    reg_docs = [doc for m, p, doc, _ in out
+                if p in ("/register#short", "/register#nonhex")]
 
     st, body = req(base, "GET", "/schedule/list", token)  # non-empty now
     out.append(("GET", "/schedule/list#2", _doc(st, body, 200), f"HTTP {st}"))
@@ -358,7 +390,7 @@ def call_endpoints(base, token):
     st, body = req(base, "POST", "/call", token,
                    {"reason": "contract-probe", "scheduled_by": "contract-probe"})
     out.append(("POST", "/call", _doc(st, body, 200), f"HTTP {st}"))
-    return out, guard_docs
+    return out, guard_docs, reg_docs
 
 
 def shadow_decode(doc, spec) -> str:
@@ -421,6 +453,25 @@ def at_iso_guard_problems(guard_docs) -> list[str]:
     return probs
 
 
+def register_guard_problems(reg_docs) -> list[str]:
+    """Verdict the two /register#short / #nonhex probe docs: each must be a
+    200-free JSON body carrying the pinned 400 detail. A 200 here is the
+    dead-registration regression class (a malformed device_token persisted
+    over the real one; every future push fires at a dead address with
+    device_registered still true and no error anywhere)."""
+    probs = []
+    for doc in reg_docs:
+        detail = (doc or {}).get("detail", "") if isinstance(doc, dict) else ""
+        if ("__http_error__" not in (doc or {})
+                and ("device_token too short" in detail
+                     or "must be lowercase hex" in detail)):
+            print(f"LIVE register guard: 400 with detail OK ({detail[:60]})")
+        else:
+            probs.append(f"register guard probe did not 400 with the pinned "
+                         f"detail: {doc!r}")
+    return probs
+
+
 def check_live() -> bool:
     try:
         secret_bytes = dash_secret_bytes()
@@ -429,12 +480,16 @@ def check_live() -> bool:
         return True
     inst = Instance()
     token = mint_bearer(secret_bytes)
-    results, guard_docs = call_endpoints(inst.base, token)
+    results, guard_docs, reg_docs = call_endpoints(inst.base, token)
 
-    # guard verdicts FIRST: a 200 to either probe is the instant-fire
-    # regression class and must fail the whole live layer loudly
+    # guard verdicts FIRST: a 200 to either at_iso probe is the instant-fire
+    # regression class; a 200 to either register probe is the
+    # dead-registration class — both must fail the whole live layer loudly
     all_ok = True
     for p in at_iso_guard_problems(guard_docs):
+        print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
+        all_ok = False
+    for p in register_guard_problems(reg_docs):
         print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
         all_ok = False
 
@@ -447,8 +502,8 @@ def check_live() -> bool:
 
     list_samples = []  # (label, doc, coll) for every /schedule/list sample
     for method, path, doc, status_desc in results:
-        if path.endswith(("#bad", "#past")):
-            continue  # at_iso guard probes — already verdicted above
+        if path.endswith(("#bad", "#past", "#short", "#nonhex")):
+            continue  # at_iso + register guard probes — verdicted above
         spec = spec_for(method, path)
         if spec is None:
             print(f"BRIDGE-CONTRACT-FAIL (live): {method} {path} has no "
@@ -626,12 +681,35 @@ def selftest() -> int:
           any("did not 400" in p for p in
               at_iso_guard_problems(
                   [{"__http_error__": 422, "__body__": "validation"}])))
+    # 1f-ter: the register guard verdict must BITE the same way
+    good_short = {"detail": "device_token too short — PushKit tokens are "
+                            "64 hex chars (32 bytes); refusing to overwrite "
+                            "a working registration"}
+    good_hex = {"detail": "device_token must be lowercase hex (0-9a-f); "
+                          "refusing to overwrite a working registration"}
+    check("T7d register guard accepts pinned 400 details",
+          register_guard_problems([good_short, good_hex]) == [])
+    check("T7e register guard caught: probe returned 200",
+          any("did not 400" in p for p in
+              register_guard_problems([{"registered": True, "token_len": 11}])))
+    check("T7f register guard caught: wrong/no detail",
+          any("did not 400" in p for p in
+              register_guard_problems(
+                  [{"__http_error__": 422, "__body__": "validation"}])))
     edit(bridge_copy, lambda t: t.replace(
         'raise HTTPException(status_code=400,\n'
         '                            detail="at_iso is in the past (UTC) — refusing to schedule an instant call")',
         "pass  # guard removed", 1))
     check("T8 offline guard-vanish caught",
           any("at_iso guard missing" in p for p in offline_problems()))
+    shutil.copy2(BRIDGE_SRC, bridge_copy)
+    # 1f-ter: removing the register guard must fail the offline pin too
+    edit(bridge_copy, lambda t: t.replace(
+        'raise HTTPException(status_code=400,\n'
+        '                            detail="device_token must be lowercase hex (0-9a-f); refusing to overwrite a working registration")',
+        "pass  # guard removed", 1))
+    check("T8b offline register-guard-vanish caught",
+          any("register token guard missing" in p for p in offline_problems()))
     shutil.copy2(BRIDGE_SRC, bridge_copy)
 
     # clean tree must be CLEAN (no false positives from the tampering above)

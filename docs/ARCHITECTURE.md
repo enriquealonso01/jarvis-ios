@@ -155,7 +155,11 @@ it ships in a build:
   garbage/past at_iso must be refused BEFORE persistence, because the
   scheduler fires persisted entries the moment they are due: a past
   timestamp would ring Enrique instantly, a garbage one would sit
-  silent-never); selftest 14/14.
+  silent-never); since 2026-09-19 (1f-ter) likewise the POST /register
+  device_token FORMAT GUARDS (offline needles + live 400s for
+  short/non-hex tokens on both auth paths) — a malformed token persisted
+  over the real one silently kills every future push while
+  `device_registered` stays true; selftest 18/18.
 - **1g chat send** (`check_chat_contract.py`): the app's WRITE path —
   POST `/api/control/work/{id}/chat`, POST `/api/control/project/task`, GET
   `/api/control/work/{id}/history` — routes, Swift models, AND the pre-LLM

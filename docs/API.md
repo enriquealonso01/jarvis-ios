@@ -17,6 +17,12 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
   /opt/jarvis-ios-bridge/apns.env (0600) and auto-injected into every /call push and
   every /schedule entry (`device_token` field, snapshotted at schedule time —
   kept server-side only, never listed back by /schedule/list).
+  VALIDATED (2026-09-19): `device_token` must be ≥64 lowercase hex chars (a
+  PushKit token is 32 bytes = 64 hex; the app sends exactly that) — garbage or
+  short tokens get `400 {detail}` and are NOT persisted, because a malformed
+  value would silently overwrite the device's real registration (every future
+  push would fire at a dead token with `device_registered` still true).
+  Pinned + live-probed by `scripts/check_bridge_contract.py`.
 - `GET /schedule/list` -> `{scheduled: [{call_id, at_iso, reason, scheduled_by}]}`.
   (The snapshotted `device_token` and the internal `failures` counter are
   STRIPPED from every entry — the push-delivery secret is only used by the

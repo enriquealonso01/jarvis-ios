@@ -424,10 +424,24 @@ async def register(request: Request, x_bridge_sig: str = Header(default="")):
     raw = await request.body()
     _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
     req = RegisterReq(**json.loads(raw))
-    if not req.device_token or len(req.device_token) < 20:
-        raise HTTPException(422, "device_token missing or malformed")
-    _save_env_key("DEVICE_TOKEN", req.device_token)
-    return {"registered": True, "token_len": len(req.device_token)}
+    # Token-format guard (1f-ter, 2026-09-19): DEVICE_TOKEN is the bridge's
+    # ONLY push address. Persisting a malformed value doesn't error anywhere —
+    # device_registered stays true, every future /call + /schedule fires at the
+    # dead token, push_fail climbs, and "ring this phone" is dead until an
+    # agent notices. PushKit tokens are lowercase hex (the app converts the
+    # raw bytes with String(format: "%02x")) and 32 bytes = 64 chars, so pin
+    # format+length BEFORE anything is persisted — same seam class as the
+    # /schedule at_iso guard (1f-bis). Pinned offline + live by
+    # scripts/check_bridge_contract.py (guard probes /register#short / #nonhex).
+    token = (req.device_token or "").strip()
+    if len(token) < 64:
+        raise HTTPException(status_code=400,
+                            detail="device_token too short — PushKit tokens are 64 hex chars (32 bytes); refusing to overwrite a working registration")
+    if any(c not in "0123456789abcdef" for c in token):
+        raise HTTPException(status_code=400,
+                            detail="device_token must be lowercase hex (0-9a-f); refusing to overwrite a working registration")
+    _save_env_key("DEVICE_TOKEN", token)
+    return {"registered": True, "token_len": len(token)}
 
 
 @app.get("/schedule/list")
