@@ -103,7 +103,22 @@ def fail(msg):
     sys.exit(1)
 
 
-# --- Layer A: offline pins ---------------------------------------------------
+# --- Layer A: offline pins ----------------------------------------------------
+# Garbage/past at_iso guards (1f-bis, 2026-09-19): the scheduler fires any
+# persisted entry whose at_iso <= now on its next tick, so POST /schedule must
+# 400 both shapes BEFORE persisting. Pinned offline (guard present in the
+# deployed bridge source) and live (real 400 + detail from a throwaway
+# instance) — a regression to instant-fire can never read as green.
+AT_ISO_GUARDS = [
+    # (needle that must appear in the bridge source, human label)
+    ("datetime.fromisoformat(req.at_iso", "parse+reject invalid at_iso"),
+    ("at_iso is not a valid ISO-8601 timestamp", "400 detail for garbage at_iso"),
+    ("refusing to schedule an instant call", "400 detail for past at_iso"),
+]
+
+SCHED_LIST_KEY = "scheduled"
+
+
 
 def struct_body(fname: str, struct: str, app_dir: Path | None = None) -> str | None:
     base = app_dir or APP
@@ -130,6 +145,12 @@ def check_offline(bridge_src: Path | None = None,
         pat = re.compile(r'@app\.(?:get|post)\("%s"' % re.escape(path))
         if not pat.search(src):
             problems.append(f"bridge route not found: {method} {path}")
+    # at_iso validation guards must exist in the deployed bridge source: the
+    # scheduler fires persisted entries the moment they are due, so a bridge
+    # regression to "persist anything" is a silent-never OR instant-call bug
+    for needle, label in AT_ISO_GUARDS:
+        if needle not in src:
+            problems.append(f"POST /schedule at_iso guard missing: {label}")
     for fname, structs in SWIFT_STRUCTS.items():
         f = (app_dir or APP) / fname
         if not f.exists():
@@ -313,6 +334,19 @@ def call_endpoints(base, token):
     sched = _doc(st, body, 200)
     out.append(("POST", "/schedule", sched, f"HTTP {st}"))
 
+    # at_iso validation guards (1f-bis): garbage and past timestamps must be
+    # 400'd BEFORE persistence (the scheduler would otherwise fire a past
+    # entry instantly, or drop a malformed one silently forever)
+    st, body = req(base, "POST", "/schedule", token,
+                   {"at_iso": "not-a-timestamp", "reason": "contract-probe"})
+    out.append(("POST", "/schedule#bad", _doc(st, body, 400), f"HTTP {st}"))
+    st, body = req(base, "POST", "/schedule", token,
+                   {"at_iso": "2020-01-01T00:00:00+00:00",
+                    "reason": "contract-probe"})
+    out.append(("POST", "/schedule#past", _doc(st, body, 400), f"HTTP {st}"))
+    guard_docs = [doc for m, p, doc, _ in out
+                  if p in ("/schedule#bad", "/schedule#past")]
+
     st, body = req(base, "GET", "/schedule/list", token)  # non-empty now
     out.append(("GET", "/schedule/list#2", _doc(st, body, 200), f"HTTP {st}"))
 
@@ -324,7 +358,7 @@ def call_endpoints(base, token):
     st, body = req(base, "POST", "/call", token,
                    {"reason": "contract-probe", "scheduled_by": "contract-probe"})
     out.append(("POST", "/call", _doc(st, body, 200), f"HTTP {st}"))
-    return out
+    return out, guard_docs
 
 
 def shadow_decode(doc, spec) -> str:
@@ -369,6 +403,24 @@ def shadow_decode(doc, spec) -> str:
     return "; ".join(probs)
 
 
+def at_iso_guard_problems(guard_docs) -> list[str]:
+    """Verdict the two /schedule#bad / #past probe docs: each must be a 200-free
+    JSON body carrying the pinned 400 detail. A 200 here is the instant-fire
+    regression class (garbage/past at_iso persisted and fired by the
+    scheduler)."""
+    probs = []
+    for doc in guard_docs:
+        detail = (doc or {}).get("detail", "") if isinstance(doc, dict) else ""
+        if ("__http_error__" not in (doc or {})
+                and ("not a valid ISO-8601" in detail
+                     or "refusing to schedule an instant call" in detail)):
+            print(f"LIVE at_iso guard: 400 with detail OK ({detail[:60]})")
+        else:
+            probs.append(f"at_iso guard probe did not 400 with the pinned "
+                         f"detail: {doc!r}")
+    return probs
+
+
 def check_live() -> bool:
     try:
         secret_bytes = dash_secret_bytes()
@@ -377,7 +429,14 @@ def check_live() -> bool:
         return True
     inst = Instance()
     token = mint_bearer(secret_bytes)
-    results = call_endpoints(inst.base, token)
+    results, guard_docs = call_endpoints(inst.base, token)
+
+    # guard verdicts FIRST: a 200 to either probe is the instant-fire
+    # regression class and must fail the whole live layer loudly
+    all_ok = True
+    for p in at_iso_guard_problems(guard_docs):
+        print(f"BRIDGE-CONTRACT-FAIL (live): {p}")
+        all_ok = False
 
     def spec_for(method: str, path: str):
         p = path.split("#")[0]  # '#2' = second sample of the same endpoint
@@ -386,9 +445,10 @@ def check_live() -> bool:
                 return spec
         return None
 
-    all_ok = True
     list_samples = []  # (label, doc, coll) for every /schedule/list sample
     for method, path, doc, status_desc in results:
+        if path.endswith(("#bad", "#past")):
+            continue  # at_iso guard probes — already verdicted above
         spec = spec_for(method, path)
         if spec is None:
             print(f"BRIDGE-CONTRACT-FAIL (live): {method} {path} has no "
@@ -549,6 +609,30 @@ def selftest() -> int:
     check("T6 req-opt-misclassification caught",
           any("pinned opt but NON-Optional in SchedResp" in p
               for p in probs))
+
+    # T7/T8: the live at_iso guard verdict must BITE. Real guard docs come
+    # from a throwaway instance (scheduler off, tmp state, always killed);
+    # tampered verdict inputs are fed straight to at_iso_guard_problems —
+    # the real tree is never touched by either.
+    good_bad = {"detail": "at_iso is not a valid ISO-8601 timestamp"}
+    good_past = {"detail": "at_iso is in the past (UTC) — refusing to "
+                           "schedule an instant call"}
+    check("T7a guard accepts pinned 400 details",
+          at_iso_guard_problems([good_bad, good_past]) == [])
+    check("T7b guard caught: probe returned 200",
+          any("did not 400" in p for p in
+              at_iso_guard_problems([{"call_id": "x", "scheduled": True}])))
+    check("T7c guard caught: wrong/no detail",
+          any("did not 400" in p for p in
+              at_iso_guard_problems(
+                  [{"__http_error__": 422, "__body__": "validation"}])))
+    edit(bridge_copy, lambda t: t.replace(
+        'raise HTTPException(status_code=400,\n'
+        '                            detail="at_iso is in the past (UTC) — refusing to schedule an instant call")',
+        "pass  # guard removed", 1))
+    check("T8 offline guard-vanish caught",
+          any("at_iso guard missing" in p for p in offline_problems()))
+    shutil.copy2(BRIDGE_SRC, bridge_copy)
 
     # clean tree must be CLEAN (no false positives from the tampering above)
     check("clean tree offline pins pass", offline_problems() == [])

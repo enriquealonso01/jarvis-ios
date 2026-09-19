@@ -1,3 +1,54 @@
+## 2026-09-19 ~19:55 UTC (build-loop run) — 1f-bis: the /schedule input hole CLOSED — the bridge persisted ANY at_iso unvalidated (a garbage timestamp sat silent-never forever; a past timestamp RANG ENRIQUE INSTANTLY on the next 20s scheduler tick); now 400-guarded bridge-side, mirrored in the agent tool, pinned offline + live in 1f, deployed to prod and live-verified
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (no app-code change this run, so no
+  new tag — zero user-facing delta). Tree clean, 0/0 vs origin.
+- The audit that found it: post-backlog runs need fresh increments, so this
+  run audited uncovered write surfaces. POST /schedule (bridge main.py) took
+  `{at_iso, reason}` and persisted it with ZERO validation while the
+  scheduler (`_run_scheduler_tick`) fires any persisted entry whose
+  at_iso <= now on its next tick. Two failure classes rode on that seam:
+  (1) an agent tool computing `--at` wrong (e.g. "10am" past, or a garbage
+  string) either scheduled a call that never fires — dropped as "malformed"
+  at fire time with no error anywhere — or (2) worse, rang the phone
+  INSTANTLY. The one surface that fires real calls to Enrique had no input
+  guard at all.
+- Fixed bridge-side (server/push_bridge/main.py): /schedule now parses
+  at_iso with `datetime.fromisoformat` (400 "at_iso is not a valid
+  ISO-8601 timestamp" on garbage), normalizes naive -> UTC, and 400s
+  "at_iso is in the past (UTC) — refusing to schedule an instant call"
+  when due <= now — BEFORE anything is persisted. Naive timestamps stay
+  accepted (same UTC assumption as the scheduler) so the change is
+  contract-additive, not contract-breaking.
+- Mirrored client-side (scripts/call_enrique.py): `schedule --at` fails at
+  composition time (exit 1, zero network calls) on garbage/past
+  timestamps; naive --at warns but proceeds. The agent learns the moment
+  it composes the command, not after a persisted lie.
+- Pinned in check_bridge_contract.py (1f-bis): offline — three needles
+  (parse-reject + both 400 detail literals) must exist in the deployed
+  bridge source; live — a throwaway instance is probed with real
+  garbage/past bodies and must answer 400 with the pinned details
+  (`at_iso_guard_problems` verdicts; a 200 to either probe fails the whole
+  live layer — the instant-fire regression class can never read green).
+  Selftest extended to 14/14 (T7a pinned-details accepted, T7b 200-regression
+  caught, T7c wrong/no-detail caught, T8 offline guard-vanish caught).
+  Two of the new tests bit their author first: the guard probes initially
+  fell into the generic per-route decode loop (expect-200) and failed —
+  they now skip it (dedicated verdict); the T8 tamper edit had to match
+  the exact raise block.
+- Deployed via the documented sequence: py_compile OK -> LKG byte-synced ->
+  systemctl restart -> /health ok:true (push_ok:0 untouched). Prod
+  live-verified with direct HMAC-signed probes: garbage 400 + past 400 +
+  schedule list still empty. One probe byproduct (a naive-future schedule
+  the client-mirror test created via the real prod bridge) was cancelled
+  by id — schedule back to [], verified.
+- Docs: API.md /schedule entry documents the validation; ARCHITECTURE.md
+  1f ladder entry extended (offline + live guard pins, why).
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
 ## 2026-09-19 ~17:45 UTC (build-loop run) — contract 8d: docs/BUILD.md was the LAST Enrique-facing surface still carrying stale instructions — "install build 1" (build 30 shipped Sep 19), "agents tell you when via WhatsApp DM" (403 since Sep 18), and the watch described as announcing to "Enrique's personal Signal DM" (UNREGISTERED_FAILURE since Sep 19); de-staled all three and pinned BUILD.md in check_doc_contracts.py, negative-tested (reverted copy -> 5 named FAILs, exit 1)
 
 - Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30

@@ -148,7 +148,14 @@ it ships in a build:
   opt = `T?`), closing the element blind spot 1f called out; selftest 7/7 on
   tmp copies.
 - **1f bridge** (`check_bridge_contract.py`): all eight Secrets/Calls routes
-  on the push bridge, decode + req/opt split both directions.
+  on the push bridge, decode + req/opt split both directions. Since
+  2026-09-19 (1f-bis) also pins the POST /schedule at_iso VALIDATION
+  GUARDS offline (three needles: parse-reject + both 400 details) and
+  LIVE (real 400s + pinned details probed against a throwaway instance —
+  garbage/past at_iso must be refused BEFORE persistence, because the
+  scheduler fires persisted entries the moment they are due: a past
+  timestamp would ring Enrique instantly, a garbage one would sit
+  silent-never); selftest 14/14.
 - **1g chat send** (`check_chat_contract.py`): the app's WRITE path —
   POST `/api/control/work/{id}/chat`, POST `/api/control/project/task`, GET
   `/api/control/work/{id}/history` — routes, Swift models, AND the pre-LLM

@@ -6,7 +6,12 @@ keyed by the shared secret in /opt/jarvis-ios-bridge/shared_secret (root-only).
 - `POST /call` `{reason, scheduled_by?}` -> `{call_id, pushed}`. Fires VoIP push now.
   `pushed:false` = APNs p8 not yet configured (bridge still queues/logs).
 - `POST /schedule` `{at_iso (ISO-8601, prefer +00:00), reason, scheduled_by?}` -> `{call_id, at}`.
-  Internal scheduler fires when due (20s tick).
+  Internal scheduler fires when due (20s tick). VALIDATED (2026-09-19):
+  `at_iso` must parse as ISO-8601 AND be in the future (UTC) — garbage or past
+  timestamps get `400 {detail}` and are NOT persisted (the scheduler fires any
+  persisted entry the moment it is due, so a past `at_iso` would ring
+  instantly; pinned + live-probed by `scripts/check_bridge_contract.py`,
+  mirrored client-side in `scripts/call_enrique.py`).
 - `POST /register` `{device_token, bundle_id?}` -> `{registered, token_len}`.
   App calls this on launch with its APNs token. Persisted as `DEVICE_TOKEN=...` in
   /opt/jarvis-ios-bridge/apns.env (0600) and auto-injected into every /call push and

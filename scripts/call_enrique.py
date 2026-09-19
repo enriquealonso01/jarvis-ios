@@ -24,6 +24,13 @@ Usage:
 Exit codes: 0 success (even pushed:false — see below), 1 usage/config error,
 2 bridge unreachable/HTTP error. `pushed:false` on /call means APNs is not
 configured OR no device has registered yet; the JSON says which state.
+
+Schedule validation (2026-09-19, mirrored bridge-side): `--at` must be a
+FUTURE ISO-8601 timestamp. Garbage timestamps exit 1 here without a network
+call; past timestamps exit 1 too (the bridge 400s them — the scheduler fires
+any persisted entry the moment it is due, so a past `--at` would ring
+instantly). Naive (no-offset) timestamps are accepted and treated as UTC by
+both sides — pass an explicit offset when in doubt.
 """
 from __future__ import annotations
 
@@ -94,6 +101,24 @@ def main() -> None:
         if not out.get("pushed"):
             print("NOTE pushed=false — APNs unconfigured or device not registered yet (bridge /health says which).")
     elif a.cmd == "schedule":
+        # Client-side mirror of the bridge's 2026-09-19 /schedule guards:
+        # fail at composition time (exit 1, no network call) instead of
+        # persisting a silent-never or instant-fire entry.
+        from datetime import datetime, timezone
+        try:
+            due = datetime.fromisoformat(a.at_iso.strip())
+        except ValueError:
+            print(f"--at '{a.at_iso}' is not a valid ISO-8601 timestamp "
+                  f"(example: 2026-09-19T14:00:00+00:00)", file=sys.stderr)
+            sys.exit(1)
+        if due.tzinfo is None:
+            print("NOTE: --at has no UTC offset; bridge will treat it as UTC.", file=sys.stderr)
+            due = due.replace(tzinfo=timezone.utc)
+        if due <= datetime.now(timezone.utc):
+            print(f"--at '{a.at_iso}' is in the past — refusing (the bridge "
+                  f"400s past timestamps; a schedule must be in the future).",
+                  file=sys.stderr)
+            sys.exit(1)
         body = {"at_iso": a.at_iso, "reason": a.reason}
         if a.by:
             body["scheduled_by"] = a.by

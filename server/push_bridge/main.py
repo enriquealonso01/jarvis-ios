@@ -15,6 +15,7 @@ at runtime (file /opt/jarvis-ios-bridge/apns.env, root-only). NEVER in git.
 """
 from __future__ import annotations
 import base64, json, os, time, uuid, hmac, hashlib, threading
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
@@ -485,6 +486,23 @@ async def schedule(request: Request, x_bridge_sig: str = Header(default="")):
     raw = await request.body()
     _auth_dual(request, x_bridge_sig, raw)   # agents: HMAC sig; app: dashboard Bearer
     req = ScheduleReq(**json.loads(raw or b"{}"))
+    # Validation guards (1f-bis, 2026-09-19): the scheduler fires any persisted
+    # entry whose at_iso <= now on its next 20s tick, so an unvalidated body
+    # meant a garbage timestamp persisted silently (dropped as malformed at
+    # fire time — the call never happens, no error anywhere) and a past
+    # timestamp rang Enrique INSTANTLY. Both must fail here, loudly, before
+    # anything is persisted. Pinned offline + live by
+    # scripts/check_bridge_contract.py (guard probes /schedule#bad / #past).
+    try:
+        due = datetime.fromisoformat(req.at_iso.strip())
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail="at_iso is not a valid ISO-8601 timestamp")
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=timezone.utc)
+    if due <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400,
+                            detail="at_iso is in the past (UTC) — refusing to schedule an instant call")
     item = {"call_id": str(uuid.uuid4())[:8], "at_iso": req.at_iso, "reason": req.reason,
             "scheduled_by": req.scheduled_by, "device_token": _load_env().get("DEVICE_TOKEN", "")}
     items = _load_schedule() + [item]
