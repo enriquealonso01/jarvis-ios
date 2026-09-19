@@ -1,3 +1,42 @@
+## 2026-09-19 08:19 UTC (build-loop run) — the path AFTER sign-in now pinned: new step 1e CC-API contract checker proves every Home/Chats endpoint the app calls EXISTS on the live dashboard and DECODES into the app's exact Swift models (7/7 live 200 decode-OK)
+
+- Backlog 1–8 re-verified DONE against the tree; live state unchanged (build
+  29 VALID + IN_BETA_TESTING, device_registered:false, push_ok:0, probe
+  verdict 403 InvalidProviderToken — both blockers still Enrique-side).
+  Next-highest value: 06:45's run proved the sign-in path (step 1d); the
+  FIRST thing the app does after sign-in — Home loading seven cards, Chats
+  loading the dispatch board — had no contract proof at all. A dashboard
+  rename or field removal would have surfaced only as a silently blank card
+  on the phone.
+- NEW scripts/check_cc_contract.py, wired into verify_all.sh as step 1e.
+  Layer A (offline): all 7 routes must exist in the deployed dashboard
+  source (/api/control/vitals, overview, zai_usage, automations, activity,
+  attention, dispatch/board) and the Swift structs (Vitals, Overview,
+  BridgeHealth, ZaiUsage, Automations, Activity, Attention, WorkChatReply,
+  WorkHistory in CCClient.swift; Board in ChatsView.swift) must declare the
+  pinned required fields. Layer B (live, read-only GETs): mints a dashboard
+  bearer exactly like the other probes and fetches each endpoint, decoding
+  against a shadow of the Swift model with the same optionality split
+  (required = non-optional `let`, optional = `T?`); unreachable dashboard =
+  SKIP-not-fail, 429 tolerated as alive (check_login_contract conventions).
+- First-ever live proof of the Home payload contract: all 7 endpoints
+  returned 200 and decoded clean — including /overview (first probe hung ~10s
+  on PC-bridge lookup; healthy at 25s timeout, bridge.reachable:true) and
+  /attention (currently carrying one real crit alert: krendora-fb-bulk-
+  inquiries automation failing, exactly what the app's alert card would
+  show). Notes: vitals is the one all-required model; the dispatch board's
+  thread items' free-text fields left unpinned (no contract value).
+- Negative-tested per repo convention: route-vanish, struct-vanish,
+  field-vanish, and two live-decode-gap classes all caught (each tamper made
+  the checker exit 1 with a named pin); full verify_all ALL GREEN with 1e
+  aboard — doc contracts, swift sanity, APNs probe (warn), push-counter
+  shadow, login contract, bridge bearer probe, gateway gate, live health,
+  parity, watch+sentinel 18/18, native WebRTC e2e.
+- NEEDS ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py
+  installs it), (2) phone — TestFlight → open BUILD 29 → sign in once;
+  device-watch announces each flip within 15 min.
+
+
 ## 2026-09-19 07:50 UTC (build-loop run) — Enrique-facing one-shots DE-STaled: today's 9AM setup guide and 11PM sunset wrap-up no longer tell him to install build 1 or run the ring test over WhatsApp; freshness contract 8b now pins both mirrors
 
 - Found by this run's live-state pass: both one-shot cron prompts still
