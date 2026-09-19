@@ -84,6 +84,19 @@ Serves the CC web UI + the API the app mirrors (vitals, dispatch, auth/native
 PKCE endpoints). Agents never restart it unless a router file compiles AND
 /control + healthz are verified after.
 
+### Watch-of-the-watch (jarvis-ios-watch-sentinel)
+No-LLM cron (30m, `/root/.hermes/scripts/jarvis_ios_watch_sentinel.sh`, mirror
+in `scripts/`) that guards the device-watch — after the build-loop sunset the
+15m watch is the mission's ONLY autonomous announcer, so its death must not be
+silent. Checks: watch cron exists + enabled, ticks fresh (last_run_at < 40m),
+tick budget > 8, bridge /health reachable, probe still emits a VERDICT. Any
+coverage loss fires ONE latched SENTINEL line to the TF Ops group
+(failure channel suppressed — the script always exits 0); it is strictly
+observe-and-report and never mutates hermes state. Contract pinned in
+check_watch_sentinel.py (wiring) + check_watch_sentinel_behavior.py (sandbox
+behavior, 15 branches) + check_doc_contracts.py step 10; verify_all 5c-bis
+runs both on every sweep.
+
 ## Call flow (the core mission)
 1. Any agent (WhatsApp/voice/loop) HMAC-POSTs `/call {reason}` (or `/schedule`).
 2. Bridge signs ES256 JWT with the APNs p8 → VoIP push to the registered

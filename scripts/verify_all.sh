@@ -81,6 +81,12 @@ fi
 # 5c. device-watch wiring contract (the mission-complete path)
 echo "--- device-watch wiring ---"
 if python3 scripts/check_watch_wiring.py; then :; else FAIL=1; fi
+# 5c-bis. watch-of-the-watch: sentinel wiring + behavior contracts (guards the
+# watch after the loop sunset pauses the build loop; sandbox-tested, no LLM)
+echo "--- watch sentinel wiring ---"
+if python3 scripts/check_watch_sentinel.py; then :; else FAIL=1; fi
+echo "--- watch sentinel behavior ---"
+if python3 scripts/check_watch_sentinel_behavior.py; then :; else FAIL=1; fi
 # 5d. reminder crons exist and are enabled
 python3 - <<'PY' || FAIL=1
 import json, sys

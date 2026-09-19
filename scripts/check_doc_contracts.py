@@ -158,6 +158,27 @@ check("API.md documents the push counters",
       "push_ok" in api and "REAL Apple round-trips" in api)
 
 
+# 10. Watch-of-the-watch sentinel contract (added 2026-09-19): after the
+#     23:00 UTC sunset pauses the build-loop cron, the 15m device-watch is
+#     the mission's ONLY autonomous announcer. jarvis-ios-watch-sentinel
+#     (30m, no-LLM) guards it — cron exists/enabled/ticks-fresh/budget,
+#     bridge reachable, probe verdict alive — and alerts the TF Ops group
+#     (latched, one-shot) on any coverage loss. It must stay
+#     observe-and-report: it never mutates hermes state itself.
+sentinel_src = open(os.path.join(ROOT, "scripts", "jarvis_ios_watch_sentinel.sh")).read()
+arch = open(os.path.join(ROOT, "docs", "ARCHITECTURE.md")).read()
+check("sentinel guards the device-watch job by name",
+      'JOB=jarvis-ios-device-watch' in sentinel_src)
+check("sentinel is observe-and-report (no hermes invocations)",
+      "HERMES=" not in sentinel_src and "$(hermes" not in sentinel_src)
+check("sentinel alerts are latched (one-shot per fault)",
+      "sentinel_alert_" in sentinel_src and "grep -q '^sentinel_alert_" in sentinel_src)
+check("sentinel always exits 0 (failure channel never fires spuriously)",
+      "exit 0" in sentinel_src and "exit 1" not in sentinel_src)
+check("ARCHITECTURE.md documents the watch-of-the-watch layer",
+      "watch-sentinel" in arch and "jarvis-ios-watch-sentinel" in arch)
+
+
 print()
 if failures:
     print(f"{len(failures)} DOC CONTRACT FAILURE(S)")

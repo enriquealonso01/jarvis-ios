@@ -1,3 +1,59 @@
+## 2026-09-19 02:25 UTC (build-loop run) — watch-of-the-watch: the flip announcer's own death is no longer silent — jarvis-ios-watch-sentinel (30m, no-LLM) guards the device-watch cron, live + pinned + sandbox-proven 15/15
+
+- Gap this run found: after tonight's 23:00 UTC sunset pauses the build-loop
+  cron, the 15m device-watch is the mission's ONLY autonomous announcer for
+  the two remaining flips (APNs key accepted / phone /register) — and its
+  own failure modes were all silent: cron removed or paused, ticks
+  exhausted, scheduler stall, bridge :9160 down, or probe_apns_delivery.py
+  broken (flip-1 detection blind). Any of these and Enrique's flips happen
+  with nothing firing. (The watch's own endgame already proves delivery;
+  this closes the "who watches the watch" seam.)
+- SENTINEL (deployed LIVE this run): jarvis-ios-watch-sentinel —
+  no-agent 30m cron, 720 ticks (~15 days), zero LLM cost — checks every
+  tick: (1) watch cron exists (removed + bridge-unreachable = alert once
+  then STAND DOWN: cannot tell mission-complete self-remove from a real
+  loss; removed + bridge-reachable = alert once), (2) enabled, (3) ticks
+  fresh (last_run_at age > 40m = stalled), (4) tick budget > 8 (~2h
+  headroom), (5) bridge /health ok, (6) probe still emits a VERDICT.
+  Alerts are one-line, latched per fault (re-arm on recovery), routed to
+  the TF Ops group; failure channel suppressed (script always exits 0, so
+  the cron failure path can never double-announce); strictly
+  observe-and-report — it never invokes hermes (mentioning `hermes cron
+  resume` inside an alert text is human remediation, not a mutation).
+- PROVEN before deploy, not assumed: sandbox behavior test
+  (check_watch_sentinel_behavior.py) drives the REAL script against a stub
+  jobs.json + stub bridge + stub probe via JARVIS_IOS_* env overrides —
+  15/15: healthy→silent ×2, gone→alert+stood-down, gone again→silent,
+  paused→alert, persists→latched, fix+break→refires, stalled (50m-old
+  last_run_at), budget (5 ticks left), bridge down, probe blind, 4-fault
+  storm→4 lines, recovery→silent+re-armed. The test caught TWO real design
+  bugs pre-deploy: the stall check originally compared last_run_at to the
+  PREVIOUS POLL (a 50-min-stale tick that just changed would pass) — now a
+  direct age-vs-now check; and the stood-down flag was a fixed /tmp path
+  (sandbox would have touched the prod flag) — now state-file-relative.
+- Pinned three ways so it cannot rot: check_watch_sentinel.py (18 wiring
+  pins: repo/live byte-identical, executable, cron spec 30m/720,
+  Ops-group deliver, local failure channel, no-hermes-invocation,
+  always-exit-0, watch mirror still identical) +
+  check_watch_sentinel_behavior.py (the 15-branch sandbox, re-run in every
+  sweep) + check_doc_contracts.py step 10 (5 pins incl. ARCHITECTURE.md
+  documents the layer). verify_all 5c-bis runs both; full sweep ALL GREEN
+  end-to-end after the live deploy (34 doc-contract pins, sentinel wiring
+  + behavior, watch wiring, bearer probes, gateway gate, live health, prod
+  parity, native WebRTC e2e PASS).
+- Live state after deploy: sentinel cron enabled (next run 02:48 UTC),
+  live run SILENT (everything healthy), device-watch untouched
+  (16/384 ticks, next 02:23, deliver pins intact), bridge /health clean
+  (0/0 counters, device_registered false, last_push_error empty). Probe
+  verdict re-confirmed live: still 403 InvalidProviderToken both legs
+  (key unchanged).
+- NEEDS ENRIQUE (both unchanged): (1) web ~2 min — create the APNs-capable
+  key (developer.apple.com → Keys → APNs CHECKED) and send the .p8
+  (scripts/swap_apns_key.py installs it, gates re-verify Apple's verdict).
+  (2) phone — install TestFlight, accept the invite, open build 1 once →
+  /register fires. Either flip is announced within 15 min; with both, the
+  watch proves delivery with a real push before declaring mission complete.
+
 ## 2026-09-19 01:00 UTC (build-loop run) — push-success observability closed the mission-complete honesty gap: bridge counts real Apple round-trips (push_ok/push_fail on /health), the device-watch ENDGAME now PROVES delivery with a real verification call instead of asserting it; prod-path verified live, deploy executed via the safe path
 
 - Close audit this run found the endgame seam: the watch's
