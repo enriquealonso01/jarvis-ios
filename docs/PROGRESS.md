@@ -1,3 +1,47 @@
+## 2026-09-19 06:45 UTC (build-loop run) — the sign-in path PROVEN for the first time: a full audit of the day-one "open + sign in" journey found no blocking bug (the suspected PasswordLoginBody slip was a misread), and a live probe now pins the app↔dashboard PKCE contract — authorize 302+PKCE cookie, brokered password-login reaching the credential check, loopback-redirect boundary — as verify_all step 1d
+
+- Backlog 1–8 re-verified DONE against the tree (app shell, Chats, Secrets,
+  Calls/CallKit/PushKit/WebRTC, bridge /register + schedule endpoints +
+  scheduler, gateway WebRTC + voice tool, call_enrique CLI, fastlane CI);
+  #9 icon/launch/haptics/settings ship in project.yml + assets. The build
+  number chain that produced build 29 came from xcodegen's GITHUB_RUN_NUMBER
+  (CURRENT_PROJECT_VERSION: "20" in project.yml is stale, harmless — CI
+  overrides it; zeroed to "0" this run to kill the confusion at the source).
+- AUDIT (the one day-one path nothing had ever exercised: sign-in):
+  walked AuthStore's whole RFC 8252 round trip against the deployed
+  dashboard routes — authorize query (S256 + literal-loopback redirect,
+  which the server REQUIRES; 'localhost' is rejected), password-login body
+  model, next→?code= extraction, token/refresh bodies + decode. Found and
+  disproved one suspect: a first read of AuthStore.swift:207 suggested
+  `self.password = username` (every sign-in bricked); grep + regex on the
+  REAL file proved the line is correct — a lesson in re-reading before
+  writing. LIVE probes against jarvis.enriquecodes.com: /auth/native/
+  authorize → 302 /login + __Host-hermes_session_pkce cookie (broker handoff
+  alive); brokered /auth/password-login with a probe body → 401 "Invalid
+  credentials" — i.e. provider=basic resolves, the PKCE cookie is ACCEPTED,
+  the app's exact body shape parses, and flow control reaches the
+  credential check (the only step needing real creds); non-loopback
+  redirect → 400 (open-redirect boundary intact). Token/refresh endpoints
+  return {access_token, refresh_token, expires_at} — exactly the app's
+  decode. Verdict: nothing blocks flip 2 (Enrique's sign-in) server-side.
+- PINNED so it cannot drift: scripts/check_login_contract.py (layer A: 22
+  structural pins on AuthStore.swift incl. a NEGATIVE-tested
+  password=username tamper check; layer B: the three live probes above,
+  SKIPPED-not-failed when the dashboard is unreachable, 429 tolerated as
+  alive) wired into verify_all.sh as step 1d. First sweep run caught its
+  own bug — urllib silently followed the authorize 302 and read the login
+  page's 200 as the status; NoRedirect handler added, contract re-proven.
+- verify_all ALL GREEN with 1d aboard (doc contracts, swift sanity, APNs
+  probe, push-counter shadow, bearer probes, live health, parity, watch +
+  sentinel wiring + 18/18 behavior, WebRTC e2e 6/6).
+- Live state unchanged: probe verdict still 403 InvalidProviderToken
+  (ASC-only key), device_registered:false, push_ok:0, build 29 VALID +
+  IN_BETA_TESTING (count 2), schedule clean. NEEDS ENRIQUE unchanged, now
+  with sign-in PROVEN up to real credentials: (1) APNs-capable .p8
+  (scripts/swap_apns_key.py installs it), (2) phone — TestFlight → open
+  BUILD 29 → sign in once; device-watch announces each flip within 15 min.
+
+
 ## 2026-09-19 06:00 UTC (build-loop run) — PIPELINE FULLY GREEN: build 29 VALID + IN_BETA_TESTING with the day-one re-kick fix aboard; a four-run debugging chain traced the version-stamp break to its true root (xcodegen wrote literal CFBundleVersion=1 into Info.plist) and the Fastfile now verifies the stamp in-archive AND in-ipa
 
 - Last run's assumption was WRONG and this run caught it: build 2 (tag

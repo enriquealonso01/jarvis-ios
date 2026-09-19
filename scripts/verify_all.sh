@@ -36,6 +36,9 @@ if python3 scripts/probe_apns_delivery.py --warn; then :; else FAIL=1; fi
 step "1c/6 push-counter shadow probe (stubbed Apple, real module)"
 if python3 scripts/probe_push_counters_shadow.py; then :; else FAIL=1; fi
 
+step "1d/6 login-path contract (app PKCE shapes + live dashboard native flow)"
+if python3 scripts/check_login_contract.py; then :; else FAIL=1; fi
+
 step "2/6 bridge bearer probe (throwaway :916x)"
 if python3 scripts/probe_call_bearer_live.py --spawn; then :; else FAIL=1; fi
 

@@ -55,8 +55,8 @@ platform :ios do
     )
 
     # TestFlight requires a unique build number per upload. Stamp it at archive
-    # time via xcargs — project.yml pins CURRENT_PROJECT_VERSION at 20, so bumping
-    # the pbxproj would drift on the next xcodegen run.
+    # time via xcargs (project.yml's base value is just a local fallback; CI
+    # always overrides) — bumping the pbxproj would drift on the next xcodegen run.
     #
     # XCODE 26 TRAP (runs 35420950536 → 35424281811, 2026-09-19): xcodebuild's
     # ARCHIVE now performs automatic app-version management by DEFAULT — it

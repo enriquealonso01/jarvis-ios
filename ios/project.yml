@@ -12,7 +12,10 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "20"
+    # Local-fallback only — CI stamps the real build number from the GitHub
+    # run number via xcargs (Fastfile); a literal here never reaches TestFlight
+    # because the plist references $(CURRENT_PROJECT_VERSION), not a value.
+    CURRENT_PROJECT_VERSION: "0"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: ""            # Enrique sets his team in Xcode (BUILD.md)
     PRODUCT_BUNDLE_IDENTIFIER: com.enriquecodes.jarvis
