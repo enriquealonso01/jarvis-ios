@@ -108,7 +108,7 @@ platform :ios do
       # Explicit false: absence is not safe on Xcode 26 (default flipped).
       "manageAppVersionAndBuildNumber"  => false
     }.to_plist)
-    sh("xcrun -exportArchive -archivePath #{archive_path.shellescape} " \
+    sh("xcodebuild -exportArchive -archivePath #{archive_path.shellescape} " \
        "-exportPath #{export_path.shellescape} " \
        "-exportOptionsPlist #{export_plist.shellescape}")
 
