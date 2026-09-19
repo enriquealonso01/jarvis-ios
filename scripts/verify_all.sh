@@ -10,6 +10,11 @@
 #      hangup at the end) — the real offer/answer/data-channel contract the
 #      iOS app depends on. Needs /root/venvs/webrtc-probe (aiortc+pyyaml);
 #      skipped with a warning if the venv is missing (does NOT fail the sweep).
+#   7. local-vs-origin parity: a run can't end with unpushed commits.
+#   8. ship gate: latest ios-v* tag -> green Actions run -> ASC build VALID +
+#      IN_BETA_TESTING (scripts/ship_gate.py; negative-tested by
+#      selftest_ship_gate.sh). No run ends believing something shipped when
+#      it didn't.
 # Exit 0 iff everything passes. Safe: never touches prod bridge state.
 set -u
 cd "$(dirname "$0")/.."
@@ -140,6 +145,18 @@ else
   git log --oneline origin/main..HEAD
   FAIL=1
 fi
+
+# 8. ship gate: the latest ios-v* tag must be a REAL, GREEN, VALID TestFlight
+#    build (tag on origin -> Actions run success -> ASC build VALID +
+#    IN_BETA_TESTING). Guards the push->ship half: step 7 proves nothing is
+#    unpushed; this proves the shipped thing actually landed on ASC. If the
+#    newest tag's run is still in flight (or ASC lags), it fails loudly and
+#    the run re-checks later — a silent "should be fine" is what killed the
+#    12:05 cycle. Negative-tested by selftest_ship_gate.sh (T1 local-only
+#    tag, T3 red run, T4 missing credential).
+step "8/6 ship gate (tag -> green Actions run -> ASC build VALID)"
+if python3 scripts/ship_gate.py; then :; else FAIL=1; fi
+if bash scripts/selftest_ship_gate.sh; then :; else FAIL=1; fi
 
 printf '\n================\n'
 if [ "$FAIL" = "0" ]; then echo "ALL GREEN"; else echo "FAILURES PRESENT"; fi

@@ -161,6 +161,24 @@ it ships in a build:
   otherwise be masked by the app's `?? "JARVIS call"` / `?? "/voice-gw"`
   defaults — the phone rings, nothing errors, the reason is just blank.
 
+## The ship gate (step 8: a run can't end believing a lie about shipping)
+Step 7 (parity) proves nothing is unpushed; step 8 proves the thing that WAS
+pushed actually shipped. `ship_gate.py` walks the real chain fail-closed:
+latest local `ios-v*` tag exists on origin (hop 1 — the 12:05 failure class:
+a fix committed locally, never pushed, no tag, "rides the next build" with no
+vehicle) → the tag's `ios-release` Actions run concluded success (hop 2;
+anonymous GitHub API is 404, so auth comes from git's own credential store —
+never printed) → ASC shows that run's build number VALID (hop 3a; the
+workflow stamps CFBundleVersion = run number) with internalBuildState
+IN_BETA_TESTING (hop 3b). Any hop missing, red, or lagging (run in flight,
+ASC ingest delay with a 3×20s retry) FAILS the sweep loudly — a run that
+can't prove "shipped" says so instead of assuming. Negative-tested by
+`selftest_ship_gate.sh` in throwaway clones (real tree untouched): T1
+local-only tag, T3 a RED run for the latest tag (real historical data:
+ios-v26 = run 28 concluded failure), T4 missing git credentials (loud config
+failure, no traceback — which the selftest caught as a real gate bug on its
+first authoring run).
+
 ## What only Enrique can do (the gated ladder)
 Xcode build on the Mac → TestFlight upload (fastlane lane or manual) → create
 the APNs p8 key and hand it over for install. See docs/BUILD.md, FASTLANE.md,
