@@ -50,6 +50,10 @@ step "1g/6 chat send-path contract (work chat + project task + history)"
 if python3 scripts/check_chat_contract.py; then :; else FAIL=1; fi
 if python3 scripts/check_chat_contract.py --selftest; then :; else FAIL=1; fi
 
+step "1h/6 VoIP push payload contract (bridge wire shape vs the app's payload reads)"
+if python3 scripts/check_push_payload_contract.py; then :; else FAIL=1; fi
+if python3 scripts/check_push_payload_contract.py --selftest; then :; else FAIL=1; fi
+
 step "2/6 bridge bearer probe (throwaway :916x)"
 if python3 scripts/probe_call_bearer_live.py --spawn; then :; else FAIL=1; fi
 

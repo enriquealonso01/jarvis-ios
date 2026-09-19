@@ -1,3 +1,54 @@
+## 2026-09-19 11:05 UTC (build-loop run) — NEW step 1h: `check_push_payload_contract.py` proves the VoIP push wire shape end-to-end with ZERO Apple traffic (selftest 10/10, full sweep ALL GREEN)
+
+- Layer A (offline pins, 9 of them): (1) SET-equality between the payload
+  keys every bridge fire site builds — /call handler and the scheduler-tick
+  construction site, each pinned to exactly
+  `{reason, call_id, gateway_ws, scheduled_by}` — and the keys the app
+  reads; the pin is the LITERAL set, so even a coordinated both-sides rename
+  fails until the contract is consciously re-pinned (a silent both-sides
+  drop is exactly the class the fallback reads mask). (2) the top-level
+  `aps` envelope (`{"aps": {}, **payload}` — Swift reads SIBLINGS of aps).
+  (3) the literal `"/voice-gw"` value (the app dials
+  `base + gatewayWS + "/api/offer"`). (4) every required key is read with
+  the `?? fallback` shape (the hazard set made explicit). (5) the Swift
+  `VoIPPayload` struct req/opt split (gatewayWS must stay non-optional —
+  T7 negative-tests declaring it `String?`). (6) single-reader placement:
+  every `payload[...]` read in CallManager must sit INSIDE
+  `handleVoIPPayload` (occurrence-position check; a rogue second reader
+  = drift). (7) the post-end redelivery guard dedupes on `p.callID`.
+  (8) gateway still serves the `/voice-gw` offer path.
+- Layer B (live send-path, no network): imports the REAL bridge module into
+  the checker process pointed at a tmp state dir (BRIDGE_NO_SCHEDULER off
+  for the tick path), stubs httpx.Client + jwt to CAPTURE the serialized
+  JSON body instead of POSTing, then drives (1) the direct /call payload
+  through the real `_send_voip`, (2) a REAL due scheduler tick
+  (`_run_scheduler_tick` with a due entry in scheduled_calls.json — the
+  tick's own construction site, not a copy of it), and (3) both early-exit
+  paths (unconfigured, no-device) which must capture NOTHING (round-trip-
+  only semantics). Each captured body decodes against an exact shadow of
+  the app's read: `aps` top-level, required keys present + non-empty
+  String, `scheduled_by` nullable-optional, `gateway_ws == "/voice-gw"`.
+- Selftest 10/10 (tmp copies, real tree untouched): bridge one-sided key
+  rename, app-side read rename, COORDINATED rename (caught — pin is the
+  literal set), aps-envelope vanish, live optional-drop tolerated
+  (scheduled_by absent is legal), live null-of-required caught, Swift
+  struct req→opt drift caught, rogue second reader caught, clean tree
+  passes. The selftest caught THREE real checker bugs before first commit
+  (reader-block regex ended before the reads; A5 compared Swift names to
+  wire keys; the position-span check needed occurrence positions, not key
+  names) — the strict selftest bites its author first, again.
+- Wired into verify_all.sh as step 1h (checker + selftest, same convention
+  as 1f/1g); ARCHITECTURE.md ladder section extended to 1d–1h. Full sweep
+  ALL GREEN with 1h aboard (doc contracts, swift sanity, drop/scheduler,
+  APNs probe warn, push counters, 1d–1g, bearer probes, live health,
+  parity, watch+sentinel 18/18, native WebRTC e2e).
+- Live state unchanged: build 29 VALID + IN_BETA_TESTING,
+  device_registered:false, push_ok:0, probe verdict 403
+  InvalidProviderToken — both blockers still Enrique-side.
+- NEEDS ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py
+  installs it), (2) phone — TestFlight → open BUILD 29 → sign in once;
+  device-watch announces each flip within 15 min.
+
 ## 2026-09-19 10:00 UTC (build-loop run) — the app's WRITE path pinned: new step 1g chat send-path contract checker proves the Chats tab's actual SEND surface (POST /work/{id}/chat, POST /project/task, GET /work/{id}/history) — routes, Swift models, and the pre-LLM 400 guards proven LIVE with ZERO model calls (selftest 10/10, full sweep ALL GREEN)
 
 - Backlog 1–9 re-verified DONE against the tree; live state unchanged (build

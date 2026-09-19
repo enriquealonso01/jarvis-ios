@@ -121,7 +121,7 @@ change, the native call path is broken regardless of what the auth-gate check
 (step 3) says.
 
 ## Contract checkers (the app's every network surface, pinned)
-verify_all.sh steps 1d–1g pin each layer of the app↔box conversation so a
+verify_all.sh steps 1d–1h pin each layer of the app↔box conversation so a
 dashboard/bridge rename, dropped field, or moved guard fails the sweep before
 it ships in a build:
 - **1d login** (`check_login_contract.py`): the RFC 8252 PKCE sign-in round
@@ -138,6 +138,24 @@ it ships in a build:
   `_run_jarvis_turn`; the live layer therefore proves the guards answer 400
   `{detail}` with zero model calls, plus a non-vacuous history element shadow
   against a real session.
+- **1h push payload** (`check_push_payload_contract.py`): the ONE
+  Apple-boundary object the HTTP checkers cannot see — the VoIP push payload
+  `_send_voip` serializes (`{"aps": {}, **payload}`) and
+  `handleVoIPPayload` reads. Offline: SET-equality between the keys every
+  bridge fire site builds (/call handler + scheduler tick) and the keys the
+  app reads, the top-level `aps` envelope, the literal `"/voice-gw"` value,
+  the Swift `VoIPPayload` req/opt split, single-reader placement (every
+  `payload[...]` read must sit inside `handleVoIPPayload`), and the
+  redelivery guard's `callID` dedupe key. Live: the REAL `_send_voip` runs
+  in-process (stubbed httpx/jwt capture the serialized body — no network, no
+  Apple, no live bridge touched) for the direct /call path AND a real due
+  scheduler tick; each captured wire body decodes against the app's exact
+  read shape (required keys present+String, `scheduled_by` nullable), the
+  early-exit paths provably capture nothing, and a drift of the pin (the
+  literal key SET) fails until consciously re-pinned. This is the check that
+  keeps the silent-fallback class impossible: a bridge key rename would
+  otherwise be masked by the app's `?? "JARVIS call"` / `?? "/voice-gw"`
+  defaults — the phone rings, nothing errors, the reason is just blank.
 
 ## What only Enrique can do (the gated ladder)
 Xcode build on the Mac → TestFlight upload (fastlane lane or manual) → create
