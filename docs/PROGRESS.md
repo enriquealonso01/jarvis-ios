@@ -1,3 +1,37 @@
+## 2026-09-19 07:50 UTC (build-loop run) — Enrique-facing one-shots DE-STaled: today's 9AM setup guide and 11PM sunset wrap-up no longer tell him to install build 1 or run the ring test over WhatsApp; freshness contract 8b now pins both mirrors
+
+- Found by this run's live-state pass: both one-shot cron prompts still
+  carried pre-build-29 text — "install JARVIS **build 1** (1.0 (1))",
+  "build 1 is the first and only build that exists", "TestFlight status
+  (build 1 LIVE...)", and a ring test routed "on WhatsApp" (403'd since
+  Sep 18). The guide fires 13:00 UTC TODAY (9AM Miami): he would have been
+  told to install a superseded build; the sunset (23:00 UTC) would have
+  repeated it in the wrap-up. Build 29 is VALID + IN_BETA_TESTING since
+  Sep 18 22:57 PT — the text predated it.
+- Fixed BOTH sides, mirror-first per the byte-identity contract:
+  scripts/cron_prompts/apple_setup_guide.txt + loop_sunset.txt now say
+  install the HIGHEST build number TestFlight shows (build 29 the latest
+  as of Sep 19, build 1 superseded, ITMS-rejected 19/20/21 never shipped),
+  releases stay automatic on tag push, and the ring test runs on SIGNAL
+  (WhatsApp 403 note kept). Live jobs 2203e22d518d / 3b3cf2b06cad updated
+  via `hermes cron edit --prompt "$(cat mirror)"`; verified from the live
+  store: byte-identical to mirrors, enabled:true, state:scheduled, next_run
+  13:00 / 23:00 UTC unchanged. Completed one-shot jarvis-ios-resume-loop
+  audited and left alone (done 2026-09-18, correctly disabled).
+- Contract 8b added to scripts/check_doc_contracts.py so this staleness
+  class can never silently regrow: mirrors must contain NO build-1-only
+  claims ("the FIRST and ONLY build" et al.), MUST carry the state-driven
+  "HIGHEST build number" instruction, and MUST NOT route the ring test to
+  WhatsApp — future-proof past build 30+. verify_all ALL GREEN with 8b
+  aboard (all pins incl. live-vs-mirror byte-identity).
+- Live state unchanged: build 29 VALID + IN_BETA_TESTING, device_registered
+  false, push_ok 0, probe verdict 403 InvalidProviderToken (ASC-only key),
+  schedule clean. NEEDS ENRIQUE unchanged: (1) APNs-capable .p8
+  (scripts/swap_apns_key.py installs it), (2) phone — TestFlight → install
+  the HIGHEST build (29) → sign in once; device-watch announces each flip
+  within 15 min. Today's guide now points him at exactly that.
+
+
 ## 2026-09-19 06:45 UTC (build-loop run) — the sign-in path PROVEN for the first time: a full audit of the day-one "open + sign in" journey found no blocking bug (the suspected PasswordLoginBody slip was a misread), and a live probe now pins the app↔dashboard PKCE contract — authorize 302+PKCE cookie, brokered password-login reaching the credential check, loopback-redirect boundary — as verify_all step 1d
 
 - Backlog 1–8 re-verified DONE against the tree (app shell, Chats, Secrets,

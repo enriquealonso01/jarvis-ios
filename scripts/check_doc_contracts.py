@@ -128,6 +128,32 @@ check("sunset mirror checks probe verdict for the NEEDS-ENRIQUE list",
       "probe_apns_delivery" in sunset_mirror and "InvalidProviderToken" in sunset_mirror)
 check("sunset mirror keeps the device-watch running after pausing the loop",
       "device-watch" in sunset_mirror)
+
+# 8b. Build-number + channel freshness in Enrique-facing one-shots (added
+#     2026-09-19): the mirrors once told him to "install build 1 — the FIRST
+#     and ONLY build" AFTER build 29 shipped, and routed the ring test over
+#     WhatsApp AFTER that channel went 403. Contracts, future-proof (they
+#     survive build 30+ on purpose):
+#       - never name build 1 as the only/latest build to install;
+#       - always give the STATE-DRIVEN instruction ("HIGHEST build number");
+#       - never route the ring test to WhatsApp.
+stale_claims = [
+    "build 1 is the first and only build",
+    "the FIRST and ONLY build",
+    "install JARVIS **build 1**",
+    "(build 1 LIVE",
+]
+ring_on_whatsapp = "'JARVIS, ring this phone' on WhatsApp"
+for label, mirror in (("guide", guide_mirror), ("sunset", sunset_mirror)):
+    for claim in stale_claims:
+        check(f"{label} mirror carries no stale build-1 claim ({claim[:30]}...)",
+              claim not in mirror)
+    check(f"{label} mirror gives the highest-build-number instruction",
+          "HIGHEST build number" in mirror)
+    check(f"{label} mirror never routes the ring test to WhatsApp",
+          ring_on_whatsapp not in mirror)
+check("guide mirror does not claim the live key delivers pushes",
+      "bridge is live with the APNs key" not in guide_mirror)
 for label, jid in LIVE_IDS.items():
     live = live_jobs.get(jid, {}).get("prompt", "")
     check(f"live cron {label} ({jid}) matches its repo mirror",
