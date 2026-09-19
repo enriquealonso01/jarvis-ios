@@ -32,10 +32,16 @@
   gateway) are the verification stack; ALL GREEN after the change. Committed
   to master; next tag build (ios-v2) picks it up — no rebuild needed for
   build 1's verdict.
-- Live state unchanged: device_registered:false, push_ok:0, probe verdict
-  still 403 InvalidProviderToken, build 1 VALID + IN_BETA_TESTING. NEEDS
-  ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py), (2)
-  phone — TestFlight, invite, open build 1, sign in. Both flips announce
+- SHIPPED THIS RUN (after the audit fix): tag ios-v21 pushed → ios-release.yml
+  → build 2 carrying the re-kick fix (build number = GitHub run number, so
+  build 1 does NOT contain it — relaunch was the old workaround, build 2
+  removes the need). ASC poll ~16 min after the tag: no upload row yet —
+  normal (yesterday's green cycle ≈ 90 min incl. runner + SPM + archive);
+  next loop ticks re-poll; an itms code in the UPLOAD row = pipeline failure
+  to diagnose. Live state unchanged: device_registered:false, push_ok:0,
+  probe verdict 403 InvalidProviderToken, build 1 VALID + IN_BETA_TESTING.
+  NEEDS ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py),
+  (2) phone — TestFlight, invite, open build 1, sign in. Both flips announce
   within 15 min; with the app fix riding the repo, opening + signing in once
   is now genuinely sufficient for flip 2.
 
