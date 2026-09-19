@@ -1,4 +1,25 @@
-## 2026-09-19 02:25 UTC (build-loop run) — watch-of-the-watch: the flip announcer's own death is no longer silent — jarvis-ios-watch-sentinel (30m, no-LLM) guards the device-watch cron, live + pinned + sandbox-proven 15/15
+## 2026-09-19 03:10 UTC (build-loop run) — delivery-channel integrity on the terminal wait: the two one-shot announcers (23:00 UTC sunset wrap-up, 13:00 UTC setup guide) were still aimed at the WhatsApp DM that 403'd three times on 9/18 — both repointed to the PROVEN Signal DM, prompts + mirrors pinned, sweep ALL GREEN
+
+- Audit this run (holding pattern; features 1–8 done, waiting only on the two
+  flips) found the seam: jarvis-ios-loop-sunset and
+  jarvis-ios-apple-setup-guide delivered to `origin` = the WhatsApp DM, while
+  the device-watch had already been moved to Signal (`signal:+130****2646`,
+  firing ok every 15m since the channel switch, zero delivery errors). Had
+  they fired as configured, tonight's FINAL mission wrap-up (including the
+  loop pause + NEEDS-ENRIQUE list) would have vanished into a 403'd channel.
+- FIXED live via `hermes cron edit`: deliver → `signal:+130****2646` (the
+  exact target the device-watch proves with every 15m tick — no guessing at
+  phone numbers), and both prompts updated to NAME the Signal target and
+  FORBID WhatsApp delivery, so the agent-side "verify delivery goes here"
+  instruction can't steer back to the dead channel. Repo mirrors
+  (scripts/cron_prompts/*.txt) updated byte-identically; doc-contract step 8
+  pins (live==mirror) re-verified PASS; full verify_all sweep ALL GREEN
+  after the change. Sentinel/watch/loop crons untouched.
+- Unchanged: device_registered false, push counters 0/0, probe still 403
+  InvalidProviderToken. NEEDS ENRIQUE unchanged: (1) APNs-capable .p8
+  (swap_apns_key.py installs it), (2) phone-side TestFlight install + open
+  build 1. Both flips announce within 15 min via the watch; with both, the
+  endgame proves real delivery before mission-complete.
 
 - Gap this run found: after tonight's 23:00 UTC sunset pauses the build-loop
   cron, the 15m device-watch is the mission's ONLY autonomous announcer for
