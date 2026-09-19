@@ -1,3 +1,30 @@
+## 2026-09-19 00:10 UTC (build-loop run) — loop cadence right-sized 5m→30m: state machine fully green and purely waiting on Enrique, ~288 redundant agent runs/day eliminated; no code delta survived the small-edit bar
+
+- Full re-audit this run: backlog 1–9 complete, verify_all ALL GREEN
+  (23/23 doc contracts, 15/15 watch pins, bridge bearer probe, gateway
+  gate, prod parity, live health, native WebRTC e2e PASS). ASC build 1
+  VALID + IN_BETA_TESTING; probe verdict re-run live: still 403
+  InvalidProviderToken (key unchanged); device_registered false;
+  last_push_error empty; schedule clean.
+- This run's real delta is the loop itself: with both blockers
+  Enrique-side and the dual-flip device-watch (15m, ~4-day lifetime,
+  key_wait+device_wait announced once each) covering BOTH remaining
+  events independently, the build loop at every 5m (~288 runs/day) was
+  pure holding-pattern cost — the same proxy-cost class that paused
+  backlog #7. Cut to every 30m via `hermes cron edit`, verified in
+  jobs.json (interval minutes:30, enabled, next_run set); verify_all
+  re-run ALL GREEN after the change (its cron step only pins
+  enabled-state, correctly not cadence). Sunset job 23:00 UTC today
+  still pauses the right job (c4b099e2cf11) and now sees flips with 30m
+  granularity for its final ~16 hours — well within the watch's
+  15-minute announcement latency.
+- Commit 74892f5 pushed (empty-delta allowed so the ops change is on the
+  record). NEEDS ENRIQUE (both unchanged): (1) web ~2 min — create the
+  APNs-capable key (developer.apple.com → Keys → APNs CHECKED) and send
+  the .p8 (one command installs it); (2) phone — install TestFlight,
+  accept invite, open build 1 once → REGISTERED. Watch announces either
+  flip within 15 min.
+
 ## 2026-09-19 00:00 UTC (build-loop run) — stale-guidance bug caught BEFORE it fired: the Sep-19 9AM setup guide claimed the broken APNs key works; prompts now mirrored + pinned; watch lifetime doubled to 4 days
 
 - This run's own audit found the next scheduled message to Enrique was wrong:
