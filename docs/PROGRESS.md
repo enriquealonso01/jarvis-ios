@@ -1,3 +1,26 @@
+## 2026-09-19 ~15:00 UTC (build-loop run) — BACKLOG FORMALLY CLOSED: all nine launch items audited against the codebase and verified done; docs/BACKLOG.md written as the durable 9/9 record with per-item evidence pointers — post-backlog mode begins (fresh increments + maintenance, not list-grinding)
+
+- Run-start sweep: verify_all ALL GREEN including the ship gate — ios-v28 ->
+  run #30 -> build 30 VALID + IN_BETA_TESTING (still the shipped latest; this
+  run changes no app code, so no tag — zero user-facing delta).
+- Per-item audit that justified closing (each checked in the tree, not from
+  memory): (1) app shell = RootTabView Home/Chats/Secrets/Calls + HomeView
+  cards; (2) Chats + CCClient proven live by contract checkers 1e/1g;
+  (3) Secrets via bridge routes proven by 1f; (4) Calls = CallKit/PushKit/
+  WebRTC proven by 1h payload contract + live aiortc e2e; (5) bridge
+  /register + /schedule list/cancel in main.py, pinned in docs/API.md;
+  (6) gateway native WebRTC on the orb's session.py pipeline, documented;
+  (7) fastlane Fastfile + scripts/upload.sh (+--build-only); (8)
+  scripts/call_enrique.py + voice tools call_enrique/schedule_call live
+  under ~/.hermes/jarvis/voice_tools/; (9) icon+launch screen (ICON.md),
+  load-failure-vs-empty states in Secrets/Calls, Haptics.swift, SettingsView.
+- docs/BACKLOG.md now carries the table (item / status / evidence) + standing
+  state: build 30 shipped, verify_all as the maintenance surface, the three
+  NEEDS-ENRIQUE blockers, and the fail-closed ring-path endgame (device-watch
+  fires a real verification call and only then declares MISSION COMPLETE).
+- Future runs: read BACKLOG.md first, run verify_all, maintain + take fresh
+  increments. No backlog item remains to "do next".
+
 ## 2026-09-19 14:05 UTC (build-loop run) — the 9AM setup guide NEVER reached Enrique: his personal Signal DM bounces UNREGISTERED_FAILURE (account unregistered server-side, live-proven with a minimal direct send); both one-shot announcers + the device-watch repointed to proven Signal groups, guide re-fired and DELIVERED (last_status=ok), sunset tonight now aims at a working channel
 
 - Found by the run-start sweep, not by luck: verify_all 5d flagged
