@@ -58,14 +58,19 @@ platform :ios do
     # time via xcargs — project.yml pins CURRENT_PROJECT_VERSION at 20, so bumping
     # the pbxproj would drift on the next xcodegen run.
     #
-    # XCODE 26 TRAP (runs 35423491270 + 35423976015): gym appends xcargs to the
-    # -exportArchive command TOO, and passing build settings to -exportArchive
-    # switches xcodebuild into app-version management — with
-    # manageAppVersionAndBuildNumber:false the exported ipa comes out
-    # CFBundleVersion=1 no matter what was archived (ASC then rejects the
-    # upload with -19232). So the export is done HERE, by hand, with a plist we
-    # control and ZERO build settings on the command line: xcodebuild then
-    # copies the archive's Info.plist untouched, stamp intact.
+    # XCODE 26 TRAP (runs 35420950536 → 35424281811, 2026-09-19): xcodebuild's
+    # ARCHIVE now performs automatic app-version management by DEFAULT — it
+    # resets CFBundleVersion to 1 in the archived app, ignoring
+    # CURRENT_PROJECT_VERSION — and gym appends xcargs to the -exportArchive
+    # command too, where build settings switch export into the same mode (the
+    # ipa comes out CFBundleVersion=1 and ASC rejects with -19232 "bundle
+    # version must be higher"). Countermeasures, both required:
+    #   1. ARCHIVE carries MANAGE_APP_VERSION_AND_BUILD_NUMBER=NO so the
+    #      CURRENT_PROJECT_VERSION stamp lands in the archive untouched.
+    #   2. EXPORT is done by hand with a plist we control and ZERO build
+    #      settings on the command line, so xcodebuild copies the archive's
+    #      Info.plist as-is.
+    # Guards below verify the stamp in the ARCHIVE and again in the .IPA.
     build_number = ENV["GITHUB_RUN_NUMBER"] || Time.now.strftime("%Y%m%d%H%M")
     build_dir    = File.join(IOS_DIR, "build")
     archive_path = File.join(build_dir, "JarvisApp.xcarchive")
@@ -74,13 +79,13 @@ platform :ios do
     FileUtils.rm_rf(export_path)
     FileUtils.mkdir_p(build_dir)
 
-    # STEP 1 — archive ONLY (skip_package_ipa): the version rides THIS command.
+    # STEP 1 — archive ONLY (skip_package_ipa), version management disabled.
     build_app(
       project:          XCODEPROJ,
       scheme:           SCHEME,
       archive_path:     archive_path,
       skip_package_ipa: true,
-      xcargs:           "CURRENT_PROJECT_VERSION=#{build_number} DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}"
+      xcargs:           "CURRENT_PROJECT_VERSION=#{build_number} MANAGE_APP_VERSION_AND_BUILD_NUMBER=NO DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}"
     )
 
     # Guard: the stamp must be IN the archive before exporting.
