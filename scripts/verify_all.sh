@@ -131,12 +131,13 @@ jobs = json.load(open('/root/.hermes/cron/jobs.json'))
 jobs = jobs.get('jobs', jobs) if isinstance(jobs, dict) else jobs
 by_name = {j.get('name'): j for j in (jobs if isinstance(jobs, list) else jobs.values())}
 ok = True
-# 5d semantics (fixed 2026-09-19 13:40 run): a fired one-shot is NOT a loss —
-# the 13:00 apple-setup-guide self-disables on completion, and the old
-# enabled-only check cried MISSING forever after. What IS a loss: state ==
-# completed with last_status != ok (e.g. delivery_failed = content existed
-# but never reached Enrique — exactly what happened at 13:03, Signal RPC
-# down). Recurring jobs must simply exist and stay enabled.
+# 5d semantics v2 (1k run, 2026-09-19 post-sunset): the 23:00 sunset job
+# PAUSED jarvis-ios-build-loop by design — paused is the post-sunset STEADY
+# state, not a loss; demanding it armed failed every sweep after sunset (found
+# live this run: ALL GREEN at 21:50, FAILURES at 23:xx with zero code change).
+# A loss is: the job VANISHED, or a completed one-shot with last_status != ok
+# (delivery_failed = content never reached Enrique — the 13:03 class). The
+# device-watch is the remaining announcer and must stay enabled.
 for name in ('jarvis-ios-build-loop', 'jarvis-ios-loop-sunset', 'jarvis-ios-apple-setup-guide'):
     j = by_name.get(name)
     if not j:
@@ -152,9 +153,19 @@ for name in ('jarvis-ios-build-loop', 'jarvis-ios-loop-sunset', 'jarvis-ios-appl
             print(f"cron {name} -> DELIVERY FAILED (completed, last_status={status}) — re-fire it")
             ok = False
     else:
+        # recurring: must EXIST; armed or post-sunset-paused both pass
         enabled = j.get('enabled', j.get('paused', True)) is not False
-        print(f"cron {name} -> {'armed' if enabled else 'MISSING/DISABLED'}")
-        ok = ok and enabled
+        print(f"cron {name} -> {'armed' if enabled else 'paused (post-sunset steady state)'}")
+# the watch of the watches: the device-watch must never be disabled/removed
+watch = by_name.get('jarvis-ios-device-watch')
+if not watch:
+    print("cron jarvis-ios-device-watch -> MISSING (the remaining announcer)")
+    ok = False
+elif watch.get('enabled', True) is False:
+    print("cron jarvis-ios-device-watch -> DISABLED (the remaining announcer)")
+    ok = False
+else:
+    print("cron jarvis-ios-device-watch -> armed")
 sys.exit(0 if ok else 1)
 PY
 
