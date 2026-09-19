@@ -1,3 +1,52 @@
+## 2026-09-19 ~23:59 UTC (build-loop run) — 1k: the scheduler could GIVE UP on a scheduled call and vanish — after 10 failed push attempts at fire time (dead token, broken key, transport outage) or a malformed entry, the only trace was one container log line; /health kept saying scheduled:N and every client kept believing the call would come. Every drop is now RECORDED (dropped_calls.json, ring buffer cap 50) and SURFACED (/health dropped_calls + /schedule/list dropped: [...]), mirrored in the app (Home warning + Calls-tab Dropped section) and call_enrique.py; deployed and wire-verified end-to-end
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING.
+- The audit that found it: 1f-bis closed silent-never at PERSIST time (bad
+  at_iso 400s), but the other side of the boundary was still silent — the
+  scheduler itself can drop an entry at FIRE time, and did so with only a
+  print(). "Call me at 10am" that never rings was undistinguishable from a
+  lost reminder; nobody could even ask "did it drop?" because no surface
+  carried the answer. Fixed: _record_drop appends {call_id, reason, at_iso,
+  scheduled_by, dropped_at, why} (why = "push failed 10 times — gave up" or
+  "malformed entry: …"), best-effort writes that can never kill the tick;
+  GET /health carries dropped_calls (count), GET /schedule/list carries the
+  full dropped log. Clients: CallsView gained a DroppedCall model + a red
+  "Dropped (N)" section with per-entry why; HomeView shows "N scheduled
+  call(s) dropped" when nonzero; call_enrique.py list prints DROPPED lines
+  on stderr (JSON stays machine-truthful).
+- Pinned FOUR ways: (1) DROP_LOG_GUARDS offline needles + a both-drop-sites
+  wiring count, selftest 31/31 (T11a unwrap / T11b unsurface / T11c-T11d
+  decode bites); (2) behavioral tick tests with a monkeypatched failing push
+  (gave-up recorded, malformed recorded, successful fire NEVER recorded,
+  buffer capped) — scheduler pins now 13/13; (3) the live bearer probe seeds
+  a drop fixture into the throwaway instance BEFORE the app loads, so the
+  dropped element shadow is exercised EVERY run, never vacuous — 28/28;
+  (4) doc-contract pins for both API.md shapes. Prod deployed (compile ->
+  LKG -> restart -> health ok, dropped_calls:0) and wire-verified with a REAL
+  scheduler loop on a throwaway bridge: seeded due-with-failures + malformed
+  entries both landed in the dropped log with why+dropped_at, health said
+  dropped_calls=2 scheduled=0.
+- COLLATERAL #1 (selftest caught): struct_body's column-0 `struct` lookahead
+  swallowed NESTED sibling structs — DroppedCall inside CallsView made a
+  renamed `reason` in ScheduledCall read GREEN (T4b false-negative on the
+  clean tree). Lookahead now tolerates indentation (`\n\s*struct`).
+- COLLATERAL #2 (live-run caught): verify_all 5d demanded the build-loop cron
+  ARMED, but the 23:00 sunset job PAUSES it by design — every post-sunset
+  sweep failed with zero code change (ALL GREEN at 21:50, FAILURES at 23:xx).
+  5d semantics v2: a recurring cron loss is VANISHING, not being paused; the
+  device-watch (the remaining announcer) is newly pinned armed.
+- Swift CI-class risk pre-empted: the Dropped header ternary mixed member
+  styles (.secondary : .red) — a type-inference compile error that only bites
+  on the CI Mac; branches share the concrete Color type now.
+- Docs: API.md (dropped shape + dropped_calls), ARCHITECTURE.md 1k section.
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+- No app-code tag: build 30 remains shipped latest (the Swift drop-section
+  rides the next tag).
+
 ## 2026-09-19 ~21:50 UTC (build-loop run) — 1j: POST /schedule/cancel was the bridge's one IRREVERSIBLE write with ZERO friction — an empty body `{}` (or a pydantic-shaped probe) wiped EVERY pending scheduled call silently (the scheduler has no undo, and a `cancelled: 0` reply even hinted success-by-proxy); cancel-all now requires `{"confirm": true}`, whitespace-only/unmatchable ids 404 loudly (was silent `cancelled: 0`), a non-string call_id 400s before pydantic v2 would raise an opaque 500; mirrored in call_enrique.py (`cancel --yes`) + the app's 404 path, pinned offline + live (selftest 27/27), deployed and prod-verified
 
 - Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
