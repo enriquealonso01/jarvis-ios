@@ -185,8 +185,10 @@ struct CallsView: View {
                     }
                 } header: {
                     // The count is the headline; red only when non-empty.
+                    // (Ternary branches share one concrete type: a bare `.red`
+                    // branch beside `.secondary` is a compile error class.)
                     Text(dropped.isEmpty ? "Dropped" : "Dropped (\(dropped.count))")
-                        .foregroundStyle(dropped.isEmpty ? .secondary : .red)
+                        .foregroundStyle(dropped.isEmpty ? Color.secondary : Color.red)
                 }
             }
             .navigationTitle("Calls")
