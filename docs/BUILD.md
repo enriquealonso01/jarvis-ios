@@ -17,7 +17,9 @@ You only ever do these steps. Everything else is agent-deployed.
 4. Signing & Capabilities: select your Personal Team (the one tied to your Apple Developer sub)
 5. Product > Scheme > JarvisApp; destination: any iPhone
 
-## Every update cycle (agents tell you when via WhatsApp DM)
+## Every update cycle (agents announce in the TF Ops Signal group — his
+## WhatsApp went 403 on 2026-09-18 and his personal Signal DM bounces
+## UNREGISTERED_FAILURE as of 2026-09-19, so NEITHER is used for delivery)
 1. `git pull`
 2. In Xcode: Product > Archive
 3. Window > Organizer > Distribute App > TestFlight (internal)
@@ -50,8 +52,12 @@ You only ever do these steps. Everything else is agent-deployed.
   group "App Store Connect Users" (no manual betaGroups POST needed — a POST
   returns 422 "cannot be assigned" when membership is already automatic).
 - Remaining: (1) Phone: install TestFlight, accept the internal-tester invite
-  (enriquealonsorequejo@icloud.com), install build 1, open it once — the app
-  POSTs /register to the bridge on launch, which makes VoIP pushes live.
+  (enriquealonsorequejo@icloud.com), install the HIGHEST build number
+  TestFlight shows, open it once — the app POSTs /register to the bridge on
+  launch, which makes VoIP pushes live. (Build-number agnostic on purpose:
+  build 1 shipped 2026-09-18, build 30 is the latest as of Sep 19 — always
+  pick the HIGHEST number; ITMS-rejected attempts 19/20/21 never shipped and
+  never appear in TestFlight.)
   (2) No ASC web-UI banner check needed anymore: ingest was never stuck;
   internalBuildState=IN_BETA_TESTING is the authoritative all-clear.
 
@@ -104,8 +110,10 @@ You only ever do these steps. Everything else is agent-deployed.
 - verify_all step 1b runs this probe every sweep (WARN mode) so the verdict
   stays visible until fixed. The watch,
   `jarvis-ios-device-watch` (15m, 384 repeats ≈ 4 days, script-mode,
-  announcements → Enrique's personal Signal DM, failure notices → the
-  TF Ops group — watchdog convention: personal → DM), now waits on BOTH
+  announcements AND failure notices → the TF Ops Signal group — his personal
+  Signal DM bounces UNREGISTERED_FAILURE and his WhatsApp is 403; watchdog
+  convention: personal → DM when it works, groups when it doesn't), now waits
+  on BOTH
   remaining flips and announces each
   once: (1) KEY LIVE — installed APNs key ACCEPTED by Apple, detected by
   running scripts/probe_apns_delivery.py (exit 0 = verdict 400

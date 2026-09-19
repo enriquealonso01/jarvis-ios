@@ -143,6 +143,7 @@ stale_claims = [
     "install JARVIS **build 1**",
     "(build 1 LIVE",
     "TestFlight build 1",
+    "install build 1",
 ]
 ring_on_whatsapp = "'JARVIS, ring this phone' on WhatsApp"
 for label, mirror in (("guide", guide_mirror), ("sunset", sunset_mirror)):
@@ -223,6 +224,35 @@ check("watch script gives the highest-build-number instruction",
       "HIGHEST build" in watch_src)
 check("watch script never routes anything to WhatsApp",
       "WhatsApp" not in watch_src)
+
+# 8d. BUILD.md freshness (added 2026-09-19 ~18:05 UTC): contracts 8b/8c
+#     covered the cron mirrors and the watch script, but docs/BUILD.md — the
+#     doc Enrique actually opens on his Mac for the phone-side steps, and the
+#     one ARCHITECTURE.md's "gated ladder" points him at — sat in the
+#     scanner's blind spot: its "Remaining:" section still told him to
+#     "install build 1" AFTER build 30 shipped, and it still routed update
+#     notices "via WhatsApp DM" (403 since Sep 18) / described the watch as
+#     announcing to his personal Signal DM (UNREGISTERED_FAILURE since
+#     Sep 19). Same failure class, last unread surface. Pins (BUILD.md-scoped
+#     on purpose: the mirrors/watch legitimately MENTION the dead channels
+#     only in "do NOT deliver there" context, and the mirrors carry
+#     historical narration BUILD.md doesn't):
+#       - never instruct installing build 1 (any "build 1" mention);
+#       - always give the state-driven "HIGHEST build" instruction;
+#       - no WhatsApp as a delivery/update channel;
+#       - no claim that the watch announces to his personal Signal DM.
+build_claims = [
+    "install build 1",
+    "via WhatsApp DM",
+    "announcements → Enrique's personal Signal DM",
+]
+for claim in build_claims:
+    check(f"BUILD.md carries no stale claim ({claim[:36]}...)",
+          claim not in build)
+check("BUILD.md gives the state-driven highest-build instruction",
+      "HIGHEST build number" in build)
+check("BUILD.md delivery is the TF Ops Signal group, never WhatsApp/DM",
+      "TF Ops Signal group" in build)
 
 
 print()

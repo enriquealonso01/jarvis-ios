@@ -1,3 +1,46 @@
+## 2026-09-19 ~17:45 UTC (build-loop run) — contract 8d: docs/BUILD.md was the LAST Enrique-facing surface still carrying stale instructions — "install build 1" (build 30 shipped Sep 19), "agents tell you when via WhatsApp DM" (403 since Sep 18), and the watch described as announcing to "Enrique's personal Signal DM" (UNREGISTERED_FAILURE since Sep 19); de-staled all three and pinned BUILD.md in check_doc_contracts.py, negative-tested (reverted copy -> 5 named FAILs, exit 1)
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (no app-code change this run, no new
+  tag — zero user-facing delta). Bridge :9160 healthy, apns_configured:true,
+  device_registered:false, APNs probe still 403 InvalidProviderToken on both
+  legs (phone/key-side blockers unchanged, NEEDS ENRIQUE below).
+- The gap this run closed: 8b/8c de-staled the one-shot mirrors and the watch
+  script, but docs/BUILD.md — the doc Enrique actually opens on his Mac for
+  the phone-side steps, the one ARCHITECTURE.md's "gated ladder" points him
+  at — was in the scanner's blind spot (the checker read it only for the
+  Push-Notifications/swap-script pointer pins, never for freshness). Its
+  "Remaining:" section still instructed "install build 1, open it once";
+  its update-cycle header routed notices "via WhatsApp DM"; its watch
+  description claimed announcements go to his personal Signal DM. After
+  tonight's 23:00 sunset, BUILD.md outlives every announcer — the last
+  thing he'd read would have been a superseded build number and two dead
+  channels. Exactly the class 8b/8c were written to kill.
+- Fixed (3 spots in BUILD.md): install step is now build-number agnostic
+  ("HIGHEST build number TestFlight shows", with the historical note: build
+  1 shipped Sep 18, 30 is latest as of Sep 19, ITMS-rejected 19/20/21 never
+  appear in TestFlight); update-cycle header now names the TF Ops Signal
+  group as the ONLY delivery channel (WhatsApp 403, personal DM bouncing);
+  watch description matches its real wiring (announcements AND failure
+  notices -> TF Ops group). All three claims verified against live surfaces
+  before editing (watch script + wiring checker + cron mirrors).
+- Pinned as contract 8d in scripts/check_doc_contracts.py: BUILD.md scoped
+  stale-claim list ("install build 1", "via WhatsApp DM", "announcements →
+  Enrique's personal Signal DM"), positive pins for the "HIGHEST build
+  number" instruction and TF-Ops-group delivery. The shared stale_claims
+  list gained "install build 1" so every scanned surface (mirrors, watch,
+  BUILD.md) bans it. Authored one false-positive trap and caught it before
+  it shipped: my first claim list included the GOOD phrase "install JARVIS —
+  pick the HIGHEST build" as absent — the same self-bite 8b hit; removed.
+  Negative test: tmp clone + `git checkout -- docs/BUILD.md` (restores the
+  stale copy) -> exactly 5 named FAILs, exit 1; real tree 71 doc-contract
+  PASSes, full verify_all ALL GREEN.
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
+
 ## 2026-09-19 ~17:10 UTC (build-loop run) — the LAST remaining announcer de-staled: the device-watch's own WAIT/KEY-LIVE lines still told Enrique to "install TestFlight build 1" (superseded by build 30 since Sep 19); after tonight's 23:00 sunset the watch is the ONLY announcer left, so that stale line would have been the last instruction he ever read from this mission — fixed, pinned as contract 8c, negative-tested
 
 - Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
