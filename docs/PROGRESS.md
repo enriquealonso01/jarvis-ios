@@ -1,3 +1,38 @@
+## 2026-09-19 ~17:10 UTC (build-loop run) — the LAST remaining announcer de-staled: the device-watch's own WAIT/KEY-LIVE lines still told Enrique to "install TestFlight build 1" (superseded by build 30 since Sep 19); after tonight's 23:00 sunset the watch is the ONLY announcer left, so that stale line would have been the last instruction he ever read from this mission — fixed, pinned as contract 8c, negative-tested
+
+- Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
+  -> build 30 VALID + IN_BETA_TESTING (no app-code change this run, no new
+  tag — zero user-facing delta). Bridge :9160 healthy, apns_configured:true,
+  device_registered:false (phone-side blockers unchanged). Backlog stays
+  CLOSED (docs/BACKLOG.md); all watch/sentinel/cron surfaces audited live:
+  build-loop armed, device-watch ticking 15m (last run ok), sentinel 30m,
+  both one-shots enabled with unchanged next_run 13:00/23:00 UTC — the
+  13:00 guide already fired DELIVERED to the Ops group.
+- The gap: 15:00's contract 8b de-staled the one-shot MIRRORS but missed
+  scripts/testflight_device_watch.sh itself — its KEY-LIVE line said
+  "Remaining: open TestFlight build 1 once on the phone" and its device-WAIT
+  said "install TestFlight build 1 and open it once". Same failure class 8b
+  was written to kill, in the script that OUTLIVES the one-shots.
+- Fixed the three lines to build-agnostic "HIGHEST build" phrasing; synced
+  the cron's EXECUTED copy at ~/.hermes/scripts/testflight_device_watch.sh
+  (diff-proven identical — the cron runs the hermes copy, not the repo's;
+  a repo-only fix would have shipped nothing).
+- Pinned: doc contract 8c in scripts/check_doc_contracts.py — the watch
+  script must carry no stale build-1 claim, MUST use "HIGHEST build"
+  phrasing, and never mention WhatsApp (the watch's failure text is the
+  future recovery instruction). Broadened the shared stale_claims list with
+  the literal "TestFlight build 1" — and the negative test BIT ITS AUTHOR
+  first: with the original 4-claim list, a tampered watch copy saying
+  "install TestFlight build 1" PASSED (claim not listed; a second
+  "HIGHEST build" phrase masked the positive check). After the broadening,
+  the tampered copy FAILS with exactly one named line; the real tree passes
+  clean (full verify_all ALL GREEN, 174 PASS lines).
+- NEEDS ENRIQUE unchanged (three, all phone/web-side): APNs-capable .p8 via
+  `scripts/swap_apns_key.py`; install the HIGHEST TestFlight build (30) and
+  sign in once (device_registered must flip true); re-register his personal
+  Signal account (DM bounces UNREGISTERED_FAILURE; groups deliver).
+
+
 ## 2026-09-19 ~16:20 UTC (build-loop run) — 1e-bis shipped: the CC-API checker's element-struct blind spot is CLOSED — collection element structs (Overview.Bridge/Project, ZaiUsage.Window, Automations.Item, Activity.Session, Attention.Alert, ChatsView's Board.Thread/Item) now pinned OFFLINE in both directions; selftest 7/7; verify_all ALL GREEN
 
 - Run-start sweep: verify_all ALL GREEN — ship gate still ios-v28 -> run #30
