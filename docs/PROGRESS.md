@@ -1,3 +1,54 @@
+## 2026-09-19 14:05 UTC (build-loop run) — the 9AM setup guide NEVER reached Enrique: his personal Signal DM bounces UNREGISTERED_FAILURE (account unregistered server-side, live-proven with a minimal direct send); both one-shot announcers + the device-watch repointed to proven Signal groups, guide re-fired and DELIVERED (last_status=ok), sunset tonight now aims at a working channel
+
+- Found by the run-start sweep, not by luck: verify_all 5d flagged
+  `jarvis-ios-apple-setup-guide -> MISSING/DISABLED`. The old enabled-only
+  check was RIGHT that something was wrong and WRONG about what: the 13:00
+  one-shot had FIRED, composed the perfect guide, and its Signal delivery
+  FAILED (`last_status=delivery_failed`, Signal RPC -1). A completed one-shot
+  self-disables — the check then cried MISSING forever, and the real failure
+  (content existed, Enrique never saw it) was invisible.
+- Root cause chased through three re-fire attempts: (1st) `hermes cron run`
+  on a completed one-shot is rejected → `resume --run-now`; that run died
+  with the box's own restart (`Interrupted by shutdown` — same 13:33 flap
+  that reset every daemon PID); (2nd) failed with the same RPC error as 13:00
+  — not transient; (3rd) extracted the exact wire truth from
+  `last_delivery_error`: `UNREGISTERED_FAILURE` for his DM number. Verified
+  OUT OF BAND with a one-line direct signal-cli `send` RPC to the DM: same
+  UNREGISTERED_FAILURE — while every group send (Ops ITfF, mission Gd7A,
+  Krendora nY3C) delivers ok, including the device-watch's own DM SUCCESS at
+  13:32, so the account died server-side between 13:32 and 13:45 (recovery:
+  Enrique re-registers his Signal; nothing agent-side can fix it).
+- Fixes shipped (commit 933fa1e, pushed, origin/main verified):
+  - verify_all 5d made delivery-state-aware: one-shot + state=completed +
+    last_status=ok -> `DELIVERED` (PASS); last_status!=ok -> FAIL loudly
+    ("DELIVERY FAILED — re-fire it"); recurring jobs unchanged (exist +
+    enabled). A fired one-shot can never again read as lost coverage, and a
+    fired-but-failed one can never read as delivered.
+  - check_watch_wiring contract 4 repointed: device-watch announcements ->
+    TF Ops group (Gd7A), root cause + date pinned in the docstring;
+    ALL PINS HOLD re-verified live.
+  - Both one-shot prompts (mirrors + live crons, byte-identical) refreshed:
+    deliver target -> Ops group (ITfF) with the WHY in-line (DM
+    UNREGISTERED_FAILURE 13:48 UTC, WhatsApp 403 since 9/18 — deliver to
+    NEITHER), and the stale build-29 claims bumped to build 30 (that text
+    predated the ios-v28 ship). Doc contracts ALL PASS.
+  - Guide re-fired on the fixed channel: `last_status=ok` — Enrique HAS his
+    5-step setup guide (TestFlight → highest build = 30 → sign-in → new APNs
+    key → Signal ring test). Tonight's 23:00 UTC sunset delivers its wrap-up
+    to the same proven channel.
+- Ship gate at run start: ios-v28 -> run #30 -> build 30 VALID +
+  IN_BETA_TESTING — still the shipped latest; this run changed no app code,
+  so no new tag was cut (a build with zero user-facing delta is waste).
+- NEEDS ENRIQUE (now three, all phone/web-side): (1) APNs-capable .p8
+  (scripts/swap_apns_key.py installs it in one command), (2) phone — open
+  TestFlight, install the HIGHEST build (30), sign in once
+  (device_registered must flip true), (3) NEW: re-register his personal
+  Signal account (the DM bounces UNREGISTERED_FAILURE; groups work —
+  watchdog convention "personal -> DM" is broken until he does).
+- Next run: proceed down the backlog (call_enrique voice-tool wiring already
+  live; remaining polish is app-side and rides the next tag); 5d now proves
+  the announcer channel instead of assuming it.
+
 ## 2026-09-19 12:55 UTC (build-loop run) — SHIP GATE shipped: the poll-by-hand era ends; ios-v28 -> run #30 -> BUILD 30 VALID + IN_BETA_TESTING verified live and now provable in ONE command forever
 
 - This run's first act: verify last cycle's promise actually landed. Run 30
