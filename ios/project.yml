@@ -28,6 +28,14 @@ targets:
       path: JarvisApp/Info.plist
       properties:
         CFBundleDisplayName: JARVIS
+        # Build/version numbers MUST be variable references: xcodegen's hardcoded
+        # defaults write LITERALS (CFBundleVersion=1) into the generated plist,
+        # and a literal IGNORES CURRENT_PROJECT_VERSION at archive time — every
+        # archive then carries build 1 no matter what xcargs stamp (the
+        # -19232 duplicate rejection chain of 2026-09-19). With $(...) refs the
+        # build setting (incl. the Fastfile's GITHUB_RUN_NUMBER override) wins.
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         # Backlog #9: real launch screen (branded, no flash of white).
         UILaunchScreen:
           UIColorName: LaunchBackground

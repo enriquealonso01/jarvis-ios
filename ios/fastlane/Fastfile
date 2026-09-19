@@ -133,6 +133,10 @@ platform :ios do
   desc "Build and ship to TestFlight (installs on your iPhone via the TestFlight app — no Mac needed)"
   lane :beta do
     Dir.chdir(IOS_DIR) { sh("xcodegen") }
+    # Diagnostic: print the GENERATED Info.plist so a literal-vs-reference
+    # version bug is visible in the CI log instead of guessed at.
+    generated = File.join(IOS_DIR, "JarvisApp", "Info.plist")
+    UI.message("generated Info.plist → " + sh("plutil -p #{generated.shellescape}").gsub(/\s+/, " "))
     archive
     upload_to_testflight(
       api_key:                           asc_api_key,
