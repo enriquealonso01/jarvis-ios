@@ -1,4 +1,47 @@
-## 2026-09-19 09:15 UTC (build-loop run) — the app's OTHER network half pinned: new step 1f bridge-contract checker proves every Secrets/Calls endpoint the app calls EXISTS on the bridge and DECODES into the app's exact Swift models (9 live probes decode-OK incl. non-empty element shadows, selftest 10/10, full sweep ALL GREEN)
+## 2026-09-19 10:00 UTC (build-loop run) — the app's WRITE path pinned: new step 1g chat send-path contract checker proves the Chats tab's actual SEND surface (POST /work/{id}/chat, POST /project/task, GET /work/{id}/history) — routes, Swift models, and the pre-LLM 400 guards proven LIVE with ZERO model calls (selftest 10/10, full sweep ALL GREEN)
+
+- Backlog 1–9 re-verified DONE against the tree; live state unchanged (build
+  29 VALID + IN_BETA_TESTING, device_registered:false, push_ok:0, probe
+  verdict 403 InvalidProviderToken — both blockers still Enrique-side).
+  Next-highest value: 1e (08:19) pinned the seven Home/Chats READS and 1f
+  (09:15) the bridge Secrets/Calls surface, but the app's only WRITE path to
+  the dashboard — ChatsView.startTask → POST /api/control/project/task,
+  ChatView.send → POST /api/control/work/{id}/chat, and both threads'
+  GET /api/control/work/{id}/history poller — had no contract proof at all.
+  A dashboard rename would have surfaced as a silently dead chat; worse, a
+  refactor moving the empty-text guard BEHIND _run_jarvis_turn would have
+  turned every accidental empty send into a full LLM spin (the button's
+  sending state hangs) with nothing failing anywhere.
+- NEW scripts/check_chat_contract.py, wired into verify_all.sh as step 1g.
+  Layer A (offline): all 3 routes must exist in the deployed dashboard
+  source, the two pre-LLM 400 guards (detail="empty message" /
+  detail="empty task") must still sit in the handlers, and the Swift models
+  (WorkChatReply.reply req, WorkHistory available req + session_id/messages/
+  total opt, ChatsView's TaskReply.reply req) must declare the exact req/opt
+  split. Layer B (live): mints a dashboard bearer like 1e and proves —
+  (1) POST work chat with whitespace-only text → 400 {"detail": …}, which is
+  only possible because the guard precedes the agent turn, so the probe is
+  FREE (zero tokens, zero session writes); (2) POST project/task empty-text
+  → 400 same guarantee; (3) GET history for a nonexistent id → 200 decoding
+  into the app's WorkHistory shadow (the empty shape: available:false,
+  messages:[]); (4) NON-VACUOUS element shadow — takes the busiest real
+  session from /api/control/activity (same source as the Chats board) and
+  decodes its history (140 messages this run), checking each element's
+  required `role`. Offline-only when the dashboard is down (SKIP convention);
+  429 tolerated as alive.
+- Negative-tested IN-REPO (--selftest, tmp copies — the real tree is never
+  touched): route-vanish, struct-vanish, req-field-vanish,
+  req→opt misclassification (available: Bool? must FAIL), guard-vanish,
+  live decode-gap, element-role gap, real-shape-positive, 400-body gap,
+  clean-tree no-false-positive — 10/10 PASS.
+- verify_all ALL GREEN with 1g aboard: doc contracts, swift sanity, drop/
+  scheduler checks, APNs probe (warn), push counters, login (1d), CC reads
+  (1e), bridge (1f), chat send (1g), bearer probes, live health, parity,
+  watch+sentinel 18/18, native WebRTC e2e. ARCHITECTURE.md now documents the
+  full 1d–1g checker ladder ("Contract checkers" section).
+- NEEDS ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py
+  installs it), (2) phone — TestFlight → open BUILD 29 → sign in once;
+  device-watch announces each flip within 15 min.
 
 - Backlog 1–9 re-verified DONE against the tree; live state unchanged (build
   29 VALID + IN_BETA_TESTING, device_registered:false, push_ok:0, probe

@@ -120,6 +120,25 @@ end and is read-only otherwise. If the probe ever FAILs after a gateway
 change, the native call path is broken regardless of what the auth-gate check
 (step 3) says.
 
+## Contract checkers (the app's every network surface, pinned)
+verify_all.sh steps 1d–1g pin each layer of the app↔box conversation so a
+dashboard/bridge rename, dropped field, or moved guard fails the sweep before
+it ships in a build:
+- **1d login** (`check_login_contract.py`): the RFC 8252 PKCE sign-in round
+  trip against the live dashboard (authorize 302 + cookie, brokered password
+  login shape, loopback-redirect boundary).
+- **1e CC reads** (`check_cc_contract.py`): the seven Home/Chats GETs decode
+  into the app's exact Swift models.
+- **1f bridge** (`check_bridge_contract.py`): all eight Secrets/Calls routes
+  on the push bridge, decode + req/opt split both directions.
+- **1g chat send** (`check_chat_contract.py`): the app's WRITE path —
+  POST `/api/control/work/{id}/chat`, POST `/api/control/project/task`, GET
+  `/api/control/work/{id}/history` — routes, Swift models, AND the pre-LLM
+  400 guards (`detail="empty message"` / `"empty task"`) which sit BEFORE
+  `_run_jarvis_turn`; the live layer therefore proves the guards answer 400
+  `{detail}` with zero model calls, plus a non-vacuous history element shadow
+  against a real session.
+
 ## What only Enrique can do (the gated ladder)
 Xcode build on the Mac → TestFlight upload (fastlane lane or manual) → create
 the APNs p8 key and hand it over for install. See docs/BUILD.md, FASTLANE.md,
