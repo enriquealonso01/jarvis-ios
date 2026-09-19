@@ -1,3 +1,32 @@
+## 2026-09-19 12:05 UTC (build-loop run) — the isBinary keepalive fix was SITTING UNPUSHED: local main was 2 commits ahead of origin and no tag existed past ios-v27, so "fix rides the next tag build" had no vehicle — pushed main, cut ios-v28 → CI now builds build 30 carrying the TEXT-ping fix
+
+- Found by this run's first-ever local-vs-origin audit: `git log
+  origin/main..HEAD` = 2 commits (e77b26f the keepalive fix + ab62426 the
+  11:27 docs entry). The 11:27 run committed the fix locally but NEVER
+  pushed, and the latest tag was ios-v27 (build 29) — so the promise
+  "fix rides the next tag build" was structurally unreachable from this
+  box: nothing on GitHub carried the fix, and every future tag would be
+  cut from whatever HEAD happened to be local. Build 29 on TestFlight
+  still ships the binary ping. Lesson pinned here: every run begins with
+  `git fetch` + ahead/behind check BEFORE choosing work.
+- Sequence this run: verify_all ALL GREEN first (never push unverified),
+  then `git push origin HEAD:main` (95b888b..ab62426, verified via
+  ls-remote: origin/main == ab62426), then tag `ios-v28` + push → fires
+  ios-release.yml (tag pattern ios-v*; build number = GitHub run number →
+  this is BUILD 30) with the TEXT keepalive fix aboard.
+- Next run MUST: read the Actions run status for tag ios-v28 (run list via
+  authenticated API — anonymous /actions/runs is 404) and poll ASC for
+  build 30 (upload row cfBundleVersion=30 COMPLETE → BUILD: 30 VALID +
+  IN_BETA_TESTING); on green, repoint NEEDS-ENRIQUE at build 30. Cycle is
+  ~90 min end-to-end per the ios-v27 precedent.
+- Live state unchanged: build 29 VALID + IN_BETA_TESTING (count 2),
+  device_registered:false, push_ok:0, probe verdict 403
+  InvalidProviderToken — both blockers still Enrique-side.
+- NEEDS ENRIQUE unchanged: (1) APNs-capable .p8 (scripts/swap_apns_key.py
+  installs it), (2) phone — TestFlight → open the HIGHEST build (29 now,
+  30 once this tag lands green) → sign in once; device-watch announces
+  each flip within 15 min.
+
 ## 2026-09-19 11:27 UTC (build-loop run) — REAL BUG on the native call path: the app's data-channel keepalive shipped as a BINARY ping (isBinary:true) — pipecat only counts TEXT pings, so every iOS call since build 1 has run with a dead keepalive + per-second json.loads error spam on the gateway; fixed + pinned
 
 - Audit this run walked the app↔gateway WebRTC contract against pipecat's
