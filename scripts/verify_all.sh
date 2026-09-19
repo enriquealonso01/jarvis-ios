@@ -117,11 +117,30 @@ jobs = json.load(open('/root/.hermes/cron/jobs.json'))
 jobs = jobs.get('jobs', jobs) if isinstance(jobs, dict) else jobs
 by_name = {j.get('name'): j for j in (jobs if isinstance(jobs, list) else jobs.values())}
 ok = True
+# 5d semantics (fixed 2026-09-19 13:40 run): a fired one-shot is NOT a loss —
+# the 13:00 apple-setup-guide self-disables on completion, and the old
+# enabled-only check cried MISSING forever after. What IS a loss: state ==
+# completed with last_status != ok (e.g. delivery_failed = content existed
+# but never reached Enrique — exactly what happened at 13:03, Signal RPC
+# down). Recurring jobs must simply exist and stay enabled.
 for name in ('jarvis-ios-build-loop', 'jarvis-ios-loop-sunset', 'jarvis-ios-apple-setup-guide'):
     j = by_name.get(name)
-    enabled = bool(j and j.get('enabled', j.get('paused', True)) is not False)
-    print(f"cron {name} -> {'armed' if enabled else 'MISSING/DISABLED'}")
-    ok = ok and enabled
+    if not j:
+        print(f"cron {name} -> MISSING")
+        ok = False
+        continue
+    is_once = (j.get('schedule') or {}).get('kind') == 'once'
+    if is_once and j.get('state') == 'completed':
+        status = j.get('last_status')
+        if status == 'ok':
+            print(f"cron {name} -> DELIVERED (one-shot completed ok)")
+        else:
+            print(f"cron {name} -> DELIVERY FAILED (completed, last_status={status}) — re-fire it")
+            ok = False
+    else:
+        enabled = j.get('enabled', j.get('paused', True)) is not False
+        print(f"cron {name} -> {'armed' if enabled else 'MISSING/DISABLED'}")
+        ok = ok and enabled
 sys.exit(0 if ok else 1)
 PY
 
