@@ -555,18 +555,12 @@ extension CallManager: CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXSetGroupCallAction) {
-        // One call at a time (maximumCallGroups = 1): fulfill without touching
-        // the live call — but if CallKit marks THIS call inactive (pulled into
-        // a group / demoted), hold it so no mic audio leaks to the active call.
-        if action.isThisCallActive {
-            action.fulfill()
-        } else {
-            nonisolated(unsafe) let groupAction = action
-            Task { @MainActor in
-                self.webRTC?.setHeld(true)
-                self.isCallHeld = true
-                groupAction.fulfill()
-            }
+        // One call at a time (maximumCallGroups = 1) means CallKit never
+        // dispatches this in practice; acknowledge unconditionally so a
+        // future multi-call scenario can't wedge the provider.
+        nonisolated(unsafe) let groupAction = action
+        Task { @MainActor in
+            groupAction.fulfill()
         }
     }
 
