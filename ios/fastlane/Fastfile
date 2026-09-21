@@ -94,25 +94,30 @@ platform :ios do
 
     # Force manual signing for this archive only. Edits happen on the ephemeral
     # runner's checkout; the committed project stays Automatic for local Xcode use.
-    # SCOPED per target: an unscoped call overwrites the previous target's
-    # mapping (the run-3 push-entitlement failure), so app and widget each get
-    # their own profile mapping.
-    update_code_signing_settings(
-      path:                  XCODEPROJ,
-      use_automatic_signing: false,
-      team_id:               ENV.fetch("APPLE_TEAM_ID"),
-      bundle_identifier:     APP_ID,
-      code_sign_identity:    "Apple Distribution",
-      profile_name:          "match AppStore #{APP_ID}"
-    )
-    update_code_signing_settings(
-      path:                  XCODEPROJ,
-      use_automatic_signing: false,
-      team_id:               ENV.fetch("APPLE_TEAM_ID"),
-      bundle_identifier:     WIDGET_APP_ID,
-      code_sign_identity:    "Apple Distribution",
-      profile_name:          "match AppStore #{WIDGET_APP_ID}"
-    )
+    # NOT update_code_signing_settings: its bundle_identifier is a SUBSTRING
+    # match, so "com.enriquecodes.jarvis" also hit the Widgets target and the
+    # two calls crossed each other's profiles (run 35621493561). Edit the
+    # project directly — exact per-target settings instead.
+    require "xcodeproj"
+    team = ENV.fetch("APPLE_TEAM_ID")
+    signing_map = {
+      "JarvisApp"     => { "PRODUCT_BUNDLE_IDENTIFIER"          => APP_ID,
+                           "PROVISIONING_PROFILE_SPECIFIER"     => "match AppStore #{APP_ID}" },
+      "JarvisWidgets" => { "PRODUCT_BUNDLE_IDENTIFIER"          => WIDGET_APP_ID,
+                           "PROVISIONING_PROFILE_SPECIFIER"     => "match AppStore #{WIDGET_APP_ID}" }
+    }
+    project = Xcodeproj::Project.open(XCODEPROJ)
+    project.targets.each do |t|
+      settings = signing_map[t.name]
+      next unless settings
+      t.build_configurations.each do |cfg|
+        settings.each { |k, v| cfg.build_settings[k] = v }
+        cfg.build_settings["CODE_SIGN_STYLE"]    = "Manual"
+        cfg.build_settings["CODE_SIGN_IDENTITY"] = "Apple Distribution"
+        cfg.build_settings["DEVELOPMENT_TEAM"]   = team
+      end
+    end
+    project.save
 
     # TestFlight requires a unique build number per upload. Stamp it at archive
     # time via xcargs (project.yml's base value is just a local fallback; CI
