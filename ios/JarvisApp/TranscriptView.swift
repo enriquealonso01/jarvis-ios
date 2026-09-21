@@ -19,6 +19,68 @@ struct TranscriptView: View {
             case toolName = "tool_name"
             case toolCalls = "tool_calls"
         }
+
+        /// tool_calls arrives as a JSON-encoded string on current builds, but
+        /// some dashboard versions emit a real array — re-encode arrays to a
+        /// string so projection code has ONE shape to parse.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(Int.self, forKey: .id)
+            role = try c.decode(String.self, forKey: .role)
+            content = try c.decodeIfPresent(String.self, forKey: .content)
+            toolName = try c.decodeIfPresent(String.self, forKey: .toolName)
+            timestamp = try c.decodeIfPresent(Double.self, forKey: .timestamp)
+            if let s = try c.decodeIfPresent(String.self, forKey: .toolCalls) {
+                toolCalls = s
+            } else if let arr = try c.decodeIfPresent(FlexibleArray.self,
+                                                      forKey: .toolCalls) {
+                toolCalls = String(data: JSONEncoder().encode(arr), encoding: .utf8)
+            } else {
+                toolCalls = nil
+            }
+        }
+    }
+
+    /// Lossy JSON array wrapper (any element shape).
+    struct FlexibleArray: Codable {
+        let items: [AnyEncodableBox]
+        init(from decoder: Decoder) throws {
+            var container = try decoder.unkeyedContainer()
+            items = []
+            while !container.isAtEnd {
+                items.append(try container.decode(AnyEncodableBox.self))
+            }
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.unkeyedContainer()
+            for item in items { try c.encode(item) }
+        }
+    }
+
+    struct AnyEncodableBox: Codable {
+        let value: Any
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let b = try? c.decode(Bool.self) { value = b }
+            else if let i = try? c.decode(Int.self) { value = i }
+            else if let d = try? c.decode(Double.self) { value = d }
+            else if let s = try? c.decode(String.self) { value = s }
+            else if let arr = try? c.decode([AnyEncodableBox].self) { value = arr }
+            else if let dict = try? c.decode([String: AnyEncodableBox].self) { value = dict }
+            else { value = NSNull() }
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch value {
+            case let b as Bool: try c.encode(b)
+            case let i as Int: try c.encode(i)
+            case let d as Double: try c.encode(d)
+            case let s as String: try c.encode(s)
+            case let arr as [AnyEncodableBox]: try c.encode(arr)
+            case let dict as [String: AnyEncodableBox]: try c.encode(dict)
+            default: try c.encodeNil()
+            }
+        }
     }
 
     /// One rendered unit: either a text bubble (user/assistant) or a collapsed
