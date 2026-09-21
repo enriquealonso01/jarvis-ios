@@ -96,7 +96,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         // Pre-warm the session so the first audio unit start happens with
         // permission already granted and the category set.
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .defaultToSpeaker])
+        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
         return true
     }
 
@@ -105,13 +105,14 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         activeAudioSession = session
         // Re-assert the FULL category (not just mode): CallKit hands us its own
         // audio session in didActivate and its defaults carry no options —
-        // without these, the native call screen's speaker toggle has nothing
-        // to override (no .defaultToSpeaker baseline) and Bluetooth HFP
-        // headsets aren't offered as routes. .defaultToSpeaker is only the
-        // BASELINE route: the native speaker button still toggles the
-        // overrideOutputAudioPort on top of it, exactly like WhatsApp.
+        // without these Bluetooth HFP headsets aren't offered as routes.
+        // NOTE: no .defaultToSpeaker. Speaker output was feeding JARVIS's TTS
+        // straight into the mic faster than the AEC could converge — JARVIS
+        // heard himself and answered himself. Earpiece-first (phone-call
+        // default) keeps the mic out of the speaker's path; the native
+        // speaker button can still override via overrideOutputAudioPort.
         try? session.setCategory(.playAndRecord, mode: .voiceChat,
-                                 options: [.allowBluetoothHFP, .defaultToSpeaker])
+                                 options: [.allowBluetoothHFP])
         try? session.setPreferredSampleRate(48000)
         try? session.setPreferredIOBufferDuration(0.005)
         try? session.setActive(true)
