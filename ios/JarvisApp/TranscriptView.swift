@@ -46,10 +46,11 @@ struct TranscriptView: View {
         let items: [AnyEncodableBox]
         init(from decoder: Decoder) throws {
             var container = try decoder.unkeyedContainer()
-            items = []
+            var loaded: [AnyEncodableBox] = []
             while !container.isAtEnd {
-                items.append(try container.decode(AnyEncodableBox.self))
+                loaded.append(try container.decode(AnyEncodableBox.self))
             }
+            items = loaded
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.unkeyedContainer()
@@ -254,8 +255,11 @@ struct TranscriptView: View {
                     summary: Self.summarize(name, output: m.content ?? ""),
                     output: m.content ?? "")
                 if out.last?.role == "assistant" {
-                    out[out.count - 1].details.append(detail)
-                    out[out.count - 1].toolCount = max(out[out.count - 1].toolCount, out[out.count - 1].details.count)
+                    var last = out[out.count - 1]
+                    last.details.append(detail)
+                    last.toolCount = max(last.toolCount, last.details.count)
+                    last.toolNames.append(detail.name)
+                    out[out.count - 1] = last
                 } else {
                     var t = Turn(id: "a\(m.id)", role: "assistant", text: nil)
                     t.details = [detail]
