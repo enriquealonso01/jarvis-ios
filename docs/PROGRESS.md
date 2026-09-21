@@ -1762,3 +1762,19 @@
   fully implemented (and foreground outgoing calls work TODAY), but background/
   lock-screen rings can't be live-verified until the new key lands
   (`scripts/swap_apns_key.py`). Same key unblocks WidgetKit push reloads later.
+- Widgets SHIPPED (R2 #5 extension request, 2026-09-21): JarvisWidgets target
+  (xcodegen app-extension, com.enriquecodes.jarvis.Widgets) with THREE WidgetKit
+  widgets — JARVIS Status (gateway/CPU/MEM/DISK + medium Current Work + Sessions/
+  Calls quick links), JARVIS Metrics (LLM windows + crons), JARVIS Attention
+  (attention feed w/ all-clear state) — small+medium families, timeline .after
+  (+20min), deep links jarvis://sessions|calls|more|status → onOpenURL tab switch.
+  Data path: WidgetBridge publishes CC snapshot + bearer/refresh tokens into App
+  Group group.com.enriquecodes.jarvis on every Home refresh/auth change; extension
+  reads cache + refreshes live (WidgetAPI.fetchLive, per-endpoint resilience).
+  Apple-side: APP_GROUPS capability enabled on BOTH bundle IDs via ASC API
+  POST /v1/bundleIdCapabilities (enum APP_GROUPS; GROUP_CONTAINER invalid;
+  /v1/appGroups 404s — group record+attach = ensure_widget_portal lane via
+  `produce group`/`associate_group`, idempotent, before every archive; match
+  per-target force:true so profiles carry the entitlement). atomically co-
+  committed with wiring per 11eb3d1's directive. Build target: 40+ (39 was the
+  parallel workstream's CallKit run).

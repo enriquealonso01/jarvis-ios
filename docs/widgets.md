@@ -1,7 +1,42 @@
 # JARVIS iOS — Widgets: Research & Implementation Plan (Feedback Round 2, item 5)
 
-**Status:** Plan complete; App Group scaffold in place; extension target deferred (deliberately).
-**Date:** 2026-09-21 · **Author:** senior-iOS-eng agent (feedback round 2)
+**Status:** SHIPPED 2026-09-21 — extension target live, three widgets riding build 38+.
+(Original plan below, kept for the design record; the "deferred" decision was
+overridden when Enrique asked for the widgets directly.)
+
+## Shipped implementation (2026-09-21)
+
+- **Target:** `JarvisWidgets` (xcodegen `app-extension`), bundle
+  `com.enriquecodes.jarvis.Widgets`, embedded via the app's `dependencies: - target: JarvisWidgets`.
+- **Widgets** (WidgetKit, `StaticConfiguration`, shared `SnapshotProvider`):
+  1. *JARVIS Status* — small (gateway dot, CPU/MEM/DISK) + medium (adds Current Work + Sessions/Calls quick links).
+  2. *JARVIS Metrics* — small (top LLM window + crons line) + medium (all LLM windows + crons).
+  3. *JARVIS Attention* — small (count + top alert, All-clear state) + medium (top 3 alerts).
+- **Data path:** Path A as planned — app publishes a CC snapshot into the App Group
+  (`UserDefaults(suiteName: "group.com.enriquecodes.jarvis")`) on every Home refresh
+  (`WidgetBridge.sync`) and mirrors bearer/refresh tokens (`WidgetBridge.publishAuth`);
+  the extension reads the cache AND can refresh live via the dashboard API itself
+  (`WidgetAPI.fetchLive`), falling back to the cache offline.
+- **Cadence:** timeline `.after(+20min)` (above WidgetKit's ~15min floor); app re-kicks
+  `WidgetCenter.reloadAllTimelines()` on every Home refresh. Budget stays well under
+  the ~40-70 reloads/day window.
+- **Deep links:** `jarvis://sessions|calls|more|status` via `.widgetURL` + `onOpenURL`
+  tab switching in `RootTabView`; scheme registered in project.yml (`CFBundleURLTypes`).
+- **Apple-side registration:** bundle ID created + `APP_GROUPS` capability enabled on
+  BOTH bundle IDs via ASC API `POST /v1/bundleIdCapabilities` (note: enum is
+  `APP_GROUPS`; `GROUP_CONTAINER` is invalid; `/v1/appGroups` does NOT exist — 404).
+  The group record + attach = `ensure_widget_portal` lane (fastlane `produce group` /
+  `associate_group`, idempotent, runs before every archive); match runs per-target with
+  `force: true` so profiles carry the new entitlement.
+- **Limitations:** widgets show cached data until the app has logged in once on-device
+  (tokens live in the Keychain; the group container gets them at first login/refresh);
+  no push-to-refresh yet (needs the APNs-capable key, same blocker as VoIP — Path B
+  later); lock-screen accessory families not yet built; extension cannot exceed the
+  ~20min self-refresh floor regardless of API health.
+
+---
+
+## Original plan (2026-09-21, feedback round 2)
 
 ---
 

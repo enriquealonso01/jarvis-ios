@@ -287,5 +287,9 @@ struct HomeView: View {
         // its last-known-good card.
         error = (vitals == nil && zai == nil && autos == nil && activity == nil && attention == nil && bridge == nil)
             ? "Can't reach the dashboard." : nil
+        // Publish the fresh CC data to the home-screen widgets (WidgetKit
+        // timelines re-kick from here too — see WidgetBridge.swift).
+        WidgetBridge.sync(vitals: vitals, bridge: bridge, zai: zai, autos: autos,
+                          attention: attention, health: bridgeHealth, activity: activity)
     }
 }

@@ -117,6 +117,9 @@ final class AuthStore: ObservableObject {
             Self.saveString(refreshKey, tokens.refresh_token)
             Self.saveString(expiresKey, String(tokens.expires_at))
             isAuthed = true
+            // Mirror the fresh tokens into the app-group container so the
+            // widget extension can call the dashboard on its own cadence.
+            WidgetBridge.publishAuth()
         } catch let err as AuthError {
             lastError = err.message
         } catch {
@@ -145,6 +148,7 @@ final class AuthStore: ObservableObject {
             Self.saveString(refreshKey, tokens.refresh_token)
             Self.saveString(expiresKey, String(tokens.expires_at))
             isAuthed = true
+            WidgetBridge.publishAuth()
             return true
         } catch {
             return false
@@ -180,6 +184,7 @@ final class AuthStore: ObservableObject {
         }
         lastError = nil
         isAuthed = true
+        WidgetBridge.publishAuth()
         // Manual-token path: RootTabView is already on screen (Settings lives
         // inside it), so its .task won't re-fire — re-kick /register here so
         // this auth route also lands the device registration.

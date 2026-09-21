@@ -27,10 +27,18 @@ targets:
       - JarvisApp
     dependencies:
       - package: WebRTC
+      # Widget extension: built + embedded into the app's PlugIns automatically.
+      - target: JarvisWidgets
     info:
       path: JarvisApp/Info.plist
       properties:
         CFBundleDisplayName: JARVIS
+        # Deep links from the home-screen widgets (jarvis://sessions etc.)
+        # land here — without a registered scheme widget taps do nothing.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.enriquecodes.jarvis
+            CFBundleURLSchemes:
+              - jarvis
         # Build/version numbers MUST be variable references: xcodegen's hardcoded
         # defaults write LITERALS (CFBundleVersion=1) into the generated plist,
         # and a literal IGNORES CURRENT_PROJECT_VERSION at archive time — every
@@ -67,13 +75,31 @@ targets:
         # push path: without it the signed profile carries no push capability and
         # APNs rejects every push (calls never ring even with the .p8 installed).
         CODE_SIGN_ENTITLEMENTS: JarvisApp/JarvisApp.entitlements
-        # App Group (widget scaffold — see docs/widgets.md): shared container
-        # for the FUTURE WidgetKit extension. The capability must exist on the
-        # App ID before any profile carrying this entitlement is minted; the
-        # current readonly match profile does NOT carry the application-groups
-        # entitlement yet. It is ADDED ONLY AT EXTENSION TIME via a one-time
-        # `fastlane bootstrap_signing` (readonly: false) re-run, which
-        # registers the group and regenerates the profile. Harmless (unused
-        # key) until then; if the next beta ever fails provisioning with
-        # "application-groups", the fix is that bootstrap re-run (or a
-        # one-line revert of this key) — the app does not read the group yet.
+  # Home-screen WidgetKit extension (status / metrics / attention widgets).
+  # App group entitlement mirrors the app's — the group itself is registered
+  # and attached to BOTH bundle IDs by `produce` in the Fastfile's
+  # ensure_widget_portal lane (ASC v1 API cannot manage app groups).
+  JarvisWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widgets
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: JARVIS Widgets
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.enriquecodes.jarvis.Widgets
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+        CODE_SIGN_ENTITLEMENTS: Widgets/JarvisWidgets.entitlements
+        # App Group: capability APP_GROUPS was enabled on BOTH bundle IDs via
+        # the ASC API (POST /v1/bundleIdCapabilities, 2026-09-21 — the enum is
+        # APP_GROUPS, not GROUP_CONTAINER); the group itself + its attach to
+        # both IDs happen in the Fastfile's ensure_widget_portal lane, because
+        # /v1/appGroups does not exist in ASC v1 (404, verified).

@@ -29,15 +29,30 @@ struct JarvisApp: App {
 /// Root tab bar, sessions-first: Sessions / Calls / More.
 struct RootTabView: View {
     @StateObject private var caps = CapabilityRegistry.shared
+    /// Selection is bound so widget deep links (jarvis://…) can switch tabs.
+    @State private var tab: Int = 0
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             SessionsView()
                 .tabItem { Label("Sessions", systemImage: "bubble.left.and.bubble.right.fill") }
+                .tag(0)
             CallsView()
                 .tabItem { Label("Calls", systemImage: "phone.fill") }
+                .tag(1)
             MoreView()
                 .tabItem { Label("More", systemImage: "ellipsis.circle.fill") }
+                .tag(2)
+        }
+        // Home-screen widget taps land on the matching tab (widgets.swift
+        // emits jarvis://sessions, jarvis://calls, jarvis://more, jarvis://status).
+        .onOpenURL { url in
+            switch url.host {
+            case "sessions": tab = 0
+            case "calls": tab = 1
+            case "more", "status": tab = 2
+            default: break
+            }
         }
         // Reaching this view means isAuthed just flipped true (password login,
         // manual token) OR the app cold-launched already authed. Either way,

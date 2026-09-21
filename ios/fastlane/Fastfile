@@ -1,6 +1,8 @@
 default_platform(:ios)
 
 APP_ID    = "com.enriquecodes.jarvis"
+WIDGET_APP_ID = "com.enriquecodes.jarvis.Widgets"
+APP_GROUP = "group.com.enriquecodes.jarvis"
 SCHEME    = "JarvisApp"
 IOS_DIR   = File.expand_path("..", __dir__) # ios/
 XCODEPROJ = File.join(IOS_DIR, "JarvisApp.xcodeproj")
@@ -14,6 +16,22 @@ def asc_api_key
     key_content:           ENV.fetch("ASC_KEY_P8"),
     is_key_content_base64: true
   )
+end
+
+# produce (portal side) authenticates via an api-key JSON file, not the
+# lane-level key object — assemble one from the same CI secrets.
+def asc_api_key_json_file
+  require "base64"
+  require "json"
+  path = "/tmp/asc_api_key.json"
+  File.write(path, JSON.generate({
+    key_id:    ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key:       Base64.decode64(ENV.fetch("ASC_KEY_P8")).strip,
+    in_house:  false
+  }))
+  File.chmod(0600, path)
+  path
 end
 
 platform :ios do
@@ -33,18 +51,50 @@ platform :ios do
     )
   end
 
+  # App Groups + the widget bundle ID cannot be managed through the ASC v1
+  # API (404 NOT_FOUND on /v1/appGroups, verified 2026-09-21) — they are
+  # developer-portal resources, so `produce` does it here instead. Every
+  # step is idempotent (produce checks-before-creates), so this is safe to
+  # run before EVERY archive. Order matters: group exists → bundle ID
+  # exists → group attached to both IDs → only then may match create
+  # profiles carrying the app-group entitlement.
+  private_lane :ensure_widget_portal do
+    key_path = asc_api_key_json_file
+    sh("bundle exec fastlane produce group -g #{APP_GROUP} -n 'JARVIS widgets' --api_key_path #{key_path}")
+    sh("bundle exec fastlane produce -a #{WIDGET_APP_ID} -n 'JARVIS Widgets' --platform ios --skip_itc true --api_key_path #{key_path}")
+    sh("bundle exec fastlane produce associate_group -a #{APP_ID} #{APP_GROUP} --api_key_path #{key_path}")
+    sh("bundle exec fastlane produce associate_group -a #{WIDGET_APP_ID} #{APP_GROUP} --api_key_path #{key_path}")
+    File.delete(key_path)
+  end
+
   # Pulls signing material and produces a signed, App Store-ready .ipa.
   private_lane :archive do
+    ensure_widget_portal
+
+    # force + readonly:false: the group entitlement was just attached, and
+    # cached profiles in the match repo predate it — profiles must be
+    # RE-created or codesign rejects the app-group entitlement at archive.
+    # (App Store profiles have no device cost; renewing each build is free.)
     match(
       type:              "appstore",
       app_identifier:    APP_ID,
       api_key:           asc_api_key,
-      readonly:          true,
+      readonly:          false,
+      force:             true,
+      keychain_password: ""
+    )
+    match(
+      type:              "appstore",
+      app_identifier:    WIDGET_APP_ID,
+      api_key:           asc_api_key,
+      readonly:          false,
+      force:             true,
       keychain_password: ""
     )
 
     # Force manual signing for this archive only. Edits happen on the ephemeral
     # runner's checkout; the committed project stays Automatic for local Xcode use.
+    # Two calls: one per target (app + widget extension).
     update_code_signing_settings(
       path:                  XCODEPROJ,
       use_automatic_signing: false,
@@ -52,6 +102,14 @@ platform :ios do
       bundle_identifier:     APP_ID,
       code_sign_identity:    "Apple Distribution",
       profile_name:          "match AppStore #{APP_ID}"
+    )
+    update_code_signing_settings(
+      path:                  XCODEPROJ,
+      use_automatic_signing: false,
+      team_id:               ENV.fetch("APPLE_TEAM_ID"),
+      bundle_identifier:     WIDGET_APP_ID,
+      code_sign_identity:    "Apple Distribution",
+      profile_name:          "match AppStore #{WIDGET_APP_ID}"
     )
 
     # TestFlight requires a unique build number per upload. Stamp it at archive
@@ -104,7 +162,8 @@ platform :ios do
       "method"                          => "app-store",
       "signingStyle"                    => "manual",
       "teamID"                          => ENV.fetch("APPLE_TEAM_ID"),
-      "provisioningProfiles"            => { APP_ID => "match AppStore #{APP_ID}" },
+      "provisioningProfiles"            => { APP_ID => "match AppStore #{APP_ID}",
+                                           WIDGET_APP_ID => "match AppStore #{WIDGET_APP_ID}" },
       # Explicit false: absence is not safe on Xcode 26 (default flipped).
       "manageAppVersionAndBuildNumber"  => false
     }.to_plist)

@@ -10,5 +10,14 @@
 	     TestFlight/App Store are rewritten to `production` automatically. -->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- App Groups: shared container with the JarvisWidgets extension
+	     (snapshot + auth mirroring, see WidgetBridge.swift). The group must
+	     be attached to BOTH App IDs in the developer portal (ASC API,
+	     scripts/asc_widgets_setup.py) or profile creation for this pair
+	     fails. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.enriquecodes.jarvis</string>
+	</array>
 </dict>
 </plist>
