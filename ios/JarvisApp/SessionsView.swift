@@ -284,7 +284,7 @@ private struct CronRunRow: View {
                 Text("cron run").font(.caption2).foregroundStyle(.secondary)
                 Spacer()
                 if let ts = row.lastActive ?? row.startedAt {
-                    Text(SessionsView.SessionRow.fmt(ts)).font(.caption2).foregroundStyle(.secondary)
+                    Text(SessionRowView.fmt(ts)).font(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
