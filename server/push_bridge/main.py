@@ -45,7 +45,11 @@ def _shared_secret() -> str:
     if env:
         return env
     f = Path(os.environ.get("BRIDGE_SHARED_SECRET_FILE", ""))
-    return f.read_text().strip() if f.exists() else ""
+    # Guard: BRIDGE_SHARED_SECRET_FILE pointing at a directory (or cwd when
+    # the var is unset-and-empty → Path('')) must not crash import.
+    if f and f != Path(".") and f.is_file():
+        return f.read_text().strip()
+    return ""
 
 
 SECRET = _shared_secret()
@@ -654,3 +658,104 @@ async def schedule(request: Request, x_bridge_sig: str = Header(default="")):
 
 if not os.environ.get("BRIDGE_NO_SCHEDULER"):
     threading.Thread(target=_scheduler_loop, daemon=True).start()
+
+
+# ------------------------------------------------------------- feedback -----
+# In-app "something is not going correctly" reports from the redesigned iOS
+# app. Stored durably (feedback.json), then JARVIS is notified in the
+# background via the dashboard's project-task turn engine so the report
+# actually LANDS with him (requirement #3), not just with a file.
+
+FEEDBACK_PATH = STATE_DIR / "feedback.json"
+
+
+def _load_feedback() -> list:
+    try:
+        return json.loads(FEEDBACK_PATH.read_text())
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _save_feedback(items: list) -> None:
+    tmp = FEEDBACK_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items[-500:], indent=1))
+    tmp.replace(FEEDBACK_PATH)
+
+
+def _notify_jarvis_feedback(report: dict) -> None:
+    """Fire-and-forget: hand the report to JARVIS via the dashboard turn
+    engine (same path the CC project-task button uses). Never raises."""
+    import httpx
+    try:
+        headers = {"Cookie": f"hermes_session_at={_mint_dash_token()}"}
+        text = (f'[iOS app feedback — session {report.get("session_id", "?")}]\n'
+                f'Category: {report.get("category", "unspecified")}\n'
+                f'{report.get("text") or "(no details written)"}')
+        httpx.post("http://127.0.0.1:9119/api/control/project/task",
+                   json={"project": "jarvis-ios", "text": text},
+                   headers=headers, timeout=30.0)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[bridge] feedback notify failed: {exc}", flush=True)
+
+
+def _mint_dash_token() -> str:
+    """Mint the dashboard basic-provider HMAC access token (same scheme the
+    voice gateway uses to call the dashboard over loopback)."""
+    import yaml
+    try:
+        cfg = yaml.safe_load(open(DASH_CONFIG_PATH))
+    except Exception:  # noqa: BLE001
+        return ""
+    ba = (cfg.get("dashboard") or {}).get("basic_auth") or {}
+    raw = ba.get("secret", "")
+    secret = None
+    for decoder in (base64.b64decode, bytes.fromhex):
+        try:
+            cand = decoder(raw)
+            if len(cand) >= 16:
+                secret = cand
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    if secret is None:
+        secret = raw.encode()
+    payload = {"sub": ba.get("username", "ios-bridge"),
+               "kind": "access", "exp": int(time.time()) + 3600}
+    blob = json.dumps(payload, separators=(",", ":")).encode()
+    sig = hmac.new(secret, blob, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(blob + sig).decode()
+
+
+@app.post("/feedback")
+async def feedback(request: Request, x_bridge_sig: str = Header(default="")):
+    raw = await request.body()
+    _auth_dual(request, x_bridge_sig, raw)   # app: dashboard Bearer; agents: HMAC
+    body = json.loads(raw or b"{}")
+    session_id = str(body.get("session_id") or "")[:120]
+    category = str(body.get("category") or "something went wrong")[:80]
+    text = str(body.get("text") or "")[:4000]
+    message_id = body.get("message_id")
+    if not session_id and not text:
+        raise HTTPException(status_code=400,
+                            detail="feedback needs a session_id and/or text")
+    report = {
+        "id": str(uuid.uuid4())[:8],
+        "ts": time.time(),
+        "session_id": session_id,
+        "message_id": message_id if isinstance(message_id, int) else None,
+        "category": category,
+        "text": text,
+    }
+    items = _load_feedback()
+    items.append(report)
+    _save_feedback(items)
+    threading.Thread(target=_notify_jarvis_feedback, args=(report,), daemon=True).start()
+    return {"ok": True, "id": report["id"], "notified": True}
+
+
+@app.get("/feedback/list")
+async def feedback_list(request: Request, x_bridge_sig: str = Header(default="")):
+    raw = await request.body()
+    _auth_dual(request, x_bridge_sig, raw)
+    items = _load_feedback()
+    return {"items": items[-100:], "total": len(items)}

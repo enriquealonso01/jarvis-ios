@@ -26,18 +26,18 @@ struct JarvisApp: App {
     }
 }
 
-/// Root tab bar: Home / Chats / Secrets / Calls.
+/// Root tab bar, sessions-first: Sessions / Calls / More.
 struct RootTabView: View {
+    @StateObject private var caps = CapabilityRegistry.shared
+
     var body: some View {
         TabView {
-            HomeView()
-                .tabItem { Label("Home", systemImage: "circle.grid.2x2.fill") }
-            ProjectsView()
-                .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right.fill") }
-            SecretsView()
-                .tabItem { Label("Secrets", systemImage: "key.fill") }
+            SessionsView()
+                .tabItem { Label("Sessions", systemImage: "bubble.left.and.bubble.right.fill") }
             CallsView()
                 .tabItem { Label("Calls", systemImage: "phone.fill") }
+            MoreView()
+                .tabItem { Label("More", systemImage: "ellipsis.circle.fill") }
         }
         // Reaching this view means isAuthed just flipped true (password login,
         // manual token) OR the app cold-launched already authed. Either way,
