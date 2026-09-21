@@ -34,7 +34,8 @@ struct TranscriptView: View {
                 toolCalls = s
             } else if let arr = try c.decodeIfPresent(FlexibleArray.self,
                                                       forKey: .toolCalls) {
-                toolCalls = String(data: JSONEncoder().encode(arr), encoding: .utf8)
+                let data = try JSONEncoder().encode(arr)
+                toolCalls = String(data: data, encoding: .utf8)
             } else {
                 toolCalls = nil
             }
