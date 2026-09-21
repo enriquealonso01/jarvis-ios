@@ -152,6 +152,12 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         client.localAudioTrack = track
         pc.add(track, streamIds: ["jarvis-stream"])
 
+        // Data channel MUST exist before the offer is generated: it negotiates
+        // an m=application section into the SDP. Created after the handshake
+        // (the old order) it never opens — gateway queued hello/transcripts
+        // until overflow and the call was ring-only (no audio, no replies).
+        client.openAppChannel()
+
         let offerConstraints = RTCMediaConstraints(
             mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "false"],
             optionalConstraints: nil)
@@ -199,11 +205,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
             }
         }
 
-        // App data channel + liveness pings (mirror of voice_page.html):
-        // the gateway session only treats the client as on-the-line while
-        // literal "ping" strings arrive, and it pushes hello/state/transcript
-        // JSON back over this channel.
-        client.openAppChannel()
+        // (The "app" data channel + pings were set up pre-offer — see connect().)
         return client
     }
 
