@@ -27,6 +27,9 @@ targets:
       - JarvisApp
     dependencies:
       - package: WebRTC
+      # Embed the widget extension into the app bundle (PlugIns/). Without
+      # this dependency the extension target never rides the archive.
+      - target: JarvisWidgets
     info:
       path: JarvisApp/Info.plist
       properties:
@@ -73,3 +76,27 @@ targets:
         # push path: without it the signed profile carries no push capability and
         # APNs rejects every push (calls never ring even with the .p8 installed).
         CODE_SIGN_ENTITLEMENTS: JarvisApp/JarvisApp.entitlements
+  # Home-screen WidgetKit extension (status / metrics / attention widgets).
+  # Data path: SHARED KEYCHAIN — keychain-access-groups on both targets
+  # (com.enriquecodes.*.widgetshared, same team prefix). No app group: the
+  # APP_GROUPS portal attach is web-UI-only (ASC v1 API has no appGroups
+  # resource; produce cannot log in with an API key — see Fastfile).
+  JarvisWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widgets
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: JARVIS Widgets
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.enriquecodes.jarvis.Widgets
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+        CODE_SIGN_ENTITLEMENTS: Widgets/JarvisWidgets.entitlements

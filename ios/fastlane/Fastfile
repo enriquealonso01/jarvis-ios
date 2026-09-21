@@ -81,15 +81,22 @@ platform :ios do
       keychain_password: ""
     )
 
+    # Widget profile must exist too — same team, force re-create so the
+    # keychain-access-groups entitlement is present in the profile.
+    match(
+      type:              "appstore",
+      app_identifier:    WIDGET_APP_ID,
+      api_key:           asc_api_key,
+      readonly:          false,
+      force:             true,
+      keychain_password: ""
+    )
+
     # Force manual signing for this archive only. Edits happen on the ephemeral
     # runner's checkout; the committed project stays Automatic for local Xcode use.
-    # Single target: the JarvisWidgets extension is DISABLED (target removed from
-    # project.yml) until the App Group group.com.enriquecodes.jarvis exists and is
-    # attached to both App IDs in the developer portal — the ASC v1 API cannot do
-    # that (/v1/appGroups 404; produce cannot log in with an API key), and profiles
-    # for an unattached group are auto-invalidated by Apple within seconds
-    # (verified 2026-09-21, runs 35615218503/35615948820). Re-enable per
-    # docs/widgets.md once the group is attached via the portal web UI.
+    # SCOPED per target: an unscoped call overwrites the previous target's
+    # mapping (the run-3 push-entitlement failure), so app and widget each get
+    # their own profile mapping.
     update_code_signing_settings(
       path:                  XCODEPROJ,
       use_automatic_signing: false,
@@ -97,6 +104,14 @@ platform :ios do
       bundle_identifier:     APP_ID,
       code_sign_identity:    "Apple Distribution",
       profile_name:          "match AppStore #{APP_ID}"
+    )
+    update_code_signing_settings(
+      path:                  XCODEPROJ,
+      use_automatic_signing: false,
+      team_id:               ENV.fetch("APPLE_TEAM_ID"),
+      bundle_identifier:     WIDGET_APP_ID,
+      code_sign_identity:    "Apple Distribution",
+      profile_name:          "match AppStore #{WIDGET_APP_ID}"
     )
 
     # TestFlight requires a unique build number per upload. Stamp it at archive
