@@ -1784,3 +1784,5 @@
   on BOTH targets; WidgetBridge/WidgetCore now SecItem-backed (delete+add,
   AfterFirstUnlock); APP_GROUPS capability enabled on both bundle IDs via ASC API.
   NOTE: app's default keychain access group changed -> one re-login after update.
+
+- Widgets SHIPPED in build 54 (2026-09-21 16:15 UTC, run 35624021711): JarvisWidgets app-extension compiled+embedded (appex validated in-archive), upload accepted, ASC processing VALID. Data path pivoted app-group → shared keychain (com.enriquecodes.*.widgetshared) because the APP_GROUPS portal attach is web-UI-only (ASC v1 API has no appGroups resource; produce cannot log in with an API key). Keychain needs no portal state. Signing: exact per-target manual settings via xcodeproj (update_code_signing_settings substring-matches and crosses profiles) + widget entry in ExportOptions.plist. Swift 6: OnceBox @unchecked Sendable bridges TimelineProvider callbacks to detached tasks; model structs made internal. Commits 6607d20→6587fd6.

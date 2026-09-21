@@ -1,6 +1,6 @@
 # JARVIS iOS — Widgets: Research & Implementation Plan (Feedback Round 2, item 5)
 
-**Status:** SHIPPED 2026-09-21 — extension target live, three widgets riding build 40+.
+**Status:** SHIPPED 2026-09-21 — three widgets (status/quick actions, key metrics, attention feed) live in TestFlight build 54. Data path: SHARED KEYCHAIN (keychain-access-groups on both targets) — app groups are web-UI-only on the portal and were dropped.
 (Original plan below, kept for the design record; the "deferred" decision was
 overridden when Enrique asked for the widgets directly.)
 
