@@ -11,7 +11,7 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "2.0.0"
     # Local-fallback only — CI stamps the real build number from the GitHub
     # run number via xcargs (Fastfile); a literal here never reaches TestFlight
     # because the plist references $(CURRENT_PROJECT_VERSION), not a value.
