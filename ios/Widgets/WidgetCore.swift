@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// Data the app publishes into the shared keychain access group.
 /// MUST mirror the Codable shapes in ios/JarvisApp/WidgetBridge.swift — the

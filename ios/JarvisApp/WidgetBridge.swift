@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import WidgetKit
 
 /// App → widget bridge. Publishes a compact Control-Center snapshot plus the
@@ -94,9 +95,9 @@ enum WidgetBridge {
             refresh: AuthStore.shared.refreshToken ?? "",
             expiresAt: AuthStore.shared.expiresAt
         )
-        if let data = try? JSONEncoder().encode(auth) {{
+        if let data = try? JSONEncoder().encode(auth) {
             kcSet(data, key: authKey)
-        }}
+        }
     }
 
     /// Build a snapshot from the freshly loaded Home data, persist it, and
@@ -129,9 +130,9 @@ enum WidgetBridge {
             deviceRegistered: health?.device_registered ?? false,
             apnsConfigured: health?.apns_configured ?? false
         )
-        if let data = try? JSONEncoder().encode(snap) {{
+        if let data = try? JSONEncoder().encode(snap) {
             kcSet(data, key: snapshotKey)
-        }}
+        }
         WidgetCenter.shared.reloadAllTimelines()
     }
 
