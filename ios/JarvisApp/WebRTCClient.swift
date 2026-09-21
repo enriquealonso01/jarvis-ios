@@ -95,8 +95,11 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         }
         // Pre-warm the session so the first audio unit start happens with
         // permission already granted and the category set.
+        // NOTE: options here MUST match activateAudioSession (incl.
+        // .defaultToSpeaker) — a mismatched re-assert after the unit starts
+        // silently kills mic capture (24ab72b regression).
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .defaultToSpeaker])
         return true
     }
 
@@ -105,14 +108,17 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         activeAudioSession = session
         // Re-assert the FULL category (not just mode): CallKit hands us its own
         // audio session in didActivate and its defaults carry no options —
-        // without these Bluetooth HFP headsets aren't offered as routes.
-        // NOTE: no .defaultToSpeaker. Speaker output was feeding JARVIS's TTS
-        // straight into the mic faster than the AEC could converge — JARVIS
-        // heard himself and answered himself. Earpiece-first (phone-call
-        // default) keeps the mic out of the speaker's path; the native
-        // speaker button can still override via overrideOutputAudioPort.
+        // without these, the native call screen's speaker toggle has nothing
+        // to override (no .defaultToSpeaker baseline) and Bluetooth HFP
+        // headsets aren't offered as routes. .defaultToSpeaker is only the
+        // BASELINE route: the native speaker button still toggles the
+        // overrideOutputAudioPort on top of it, exactly like WhatsApp.
+        // HISTORY: 24ab72b removed .defaultToSpeaker (echo fix attempt) — that
+        // KILLED MIC CAPTURE entirely (server saw connected track, zero user
+        // audio turns, "No audio frame received" x25 in 5 min on 2026-09-21
+        // 20:30-20:35). Reverted; echo is now handled by the prompt ECHO GUARD.
         try? session.setCategory(.playAndRecord, mode: .voiceChat,
-                                 options: [.allowBluetoothHFP])
+                                 options: [.allowBluetoothHFP, .defaultToSpeaker])
         try? session.setPreferredSampleRate(48000)
         try? session.setPreferredIOBufferDuration(0.005)
         try? session.setActive(true)
