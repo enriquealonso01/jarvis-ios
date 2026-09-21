@@ -14,7 +14,9 @@ struct MoreView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(caps.packs) { pack in
+                    // `any CapabilityPack` is not Identifiable-conforming as a
+                    // collection element in Swift 6 — key by index instead.
+                    ForEach(Array(caps.packs.enumerated()), id: \.offset) { _, pack in
                         HStack {
                             Image(systemName: pack.symbol)
                                 .frame(width: 26)
