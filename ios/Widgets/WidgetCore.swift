@@ -128,7 +128,7 @@ enum SharedStore {
 
 // MARK: - Live refresh (dashboard Control Center API, same shapes as the app)
 
-private struct Vitals: Decodable {
+struct Vitals: Decodable {
     var cpu_pct: Double?
     var mem_used_mb: Int?
     var mem_total_mb: Int?
@@ -137,12 +137,12 @@ private struct Vitals: Decodable {
     var uptime_seconds: Int?
 }
 
-private struct Overview: Decodable {
+struct Overview: Decodable {
     struct Bridge: Decodable { var reachable: Bool? }
     var bridge: Bridge?
 }
 
-private struct ZaiUsage: Decodable {
+struct ZaiUsage: Decodable {
     struct Window: Decodable {
         var label: String
         var used: Int?
@@ -152,12 +152,12 @@ private struct ZaiUsage: Decodable {
     var windows: [Window]
 }
 
-private struct Automations: Decodable {
+struct Automations: Decodable {
     var active: Int?
     var failing: Int?
 }
 
-private struct Attention: Decodable {
+struct Attention: Decodable {
     struct Alert: Decodable {
         var severity: String
         var title: String
@@ -168,7 +168,7 @@ private struct Attention: Decodable {
     var critical: Int?
 }
 
-private struct Activity: Decodable {
+struct Activity: Decodable {
     struct Session: Decodable {
         var title: String?
         var source: String?
@@ -178,7 +178,7 @@ private struct Activity: Decodable {
     var sessions: [Session]?
 }
 
-private struct BridgeHealth: Decodable {
+struct BridgeHealth: Decodable {
     var apns_configured: Bool?
     var device_registered: Bool?
 }
