@@ -404,6 +404,16 @@ extension CallManager: PKPushRegistryDelegate {
         // lives; each attempt re-reads the token so it upgrades itself to
         // authed the moment login completes.
         let cfg = ServerConfig.shared.config
+        // Expired-Bearer guard: the Keychain access token outlives its ~12h
+        // expiry, and a cold launch fires /register BEFORE any /api call has
+        // triggered CCClient's 401-refresh — the bridge then 401s a stale
+        // token for all 5 backoff attempts and device_registered stays false
+        // (found live 2026-09-21: four 401s at 08:00 EDT, phone on build 30).
+        // Refresh first when expiring; on refresh failure fall through and
+        // let the loop try anyway (CCClient's ladder still owns recovery).
+        if AuthStore.shared.isExpiringSoon {
+            await AuthStore.shared.refresh()
+        }
         let url = URL(string: cfg.bridgeBaseURL + "/register")
         guard let url else { return }
         for attempt in 0..<5 {
