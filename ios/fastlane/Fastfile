@@ -51,26 +51,17 @@ platform :ios do
     )
   end
 
-  # App Groups + the widget bundle ID cannot be managed through the ASC v1
-  # API (404 NOT_FOUND on /v1/appGroups, verified 2026-09-21) — they are
-  # developer-portal resources, so `produce` does it here instead. Every
-  # step is idempotent (produce checks-before-creates), so this is safe to
-  # run before EVERY archive. Order matters: group exists → bundle ID
-  # exists → group attached to both IDs → only then may match create
-  # profiles carrying the app-group entitlement.
-  #
-  # App Groups + widget bundle ID registration: DONE directly via the ASC v1
-  # API on 2026-09-21 — bundle IDs com.enriquecodes.jarvis and
-  # com.enriquecodes.jarvis.Widgets exist, GROUP_CONTAINERS capability is on
-  # BOTH, and the app group is created and attached. fastlane `produce`
-  # cannot run on this runner: its portal login is Apple-ID-only
-  # (Produce::Group#login -> Spaceship.login(username) -> "No value found
-  # for 'username'", run 35614797372), and this runner authenticates with an
-  # API key only. If portal state is ever wiped, re-run registration via the
-  # ASC API (bundleIds + bundleIdCapabilities + appGroups endpoints) — not
-  # produce.
+  # Widget extension data path: SHARED KEYCHAIN (keychain-access-groups on
+  # both targets), not an app group. The APP_GROUPS portal attach between a
+  # group and a bundle ID is a web-UI-only operation — the ASC v1 API has no
+  # appGroups resource (404, verified 2026-09-21) — and produce's portal
+  # login is Apple-ID-only (Spaceship.login(username), run 35614797372),
+  # incompatible with this API-key runner. Keychain needs no portal state:
+  # same team prefix on both targets. The APP_GROUPS *capability* was still
+  # enabled on both bundle IDs via the ASC API on 2026-09-21 (harmless if
+  # unused; a future app-group migration only needs the UI attach).
   private_lane :ensure_widget_portal do
-    UI.message("Widget portal state pre-registered via ASC API (app group + GROUP_CONTAINERS on both bundle IDs) — nothing to do here.")
+    UI.message("Widget data path: shared keychain access group (no app group, no portal setup needed).")
   end
 
   # Pulls signing material and produces a signed, App Store-ready .ipa.

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Data the app publishes into the shared app-group container.
+/// Data the app publishes into the shared keychain access group.
 /// MUST mirror the Codable shapes in ios/JarvisApp/WidgetBridge.swift — the
 /// app writes, this target reads. Same JSON keys on both sides (explicit
 /// snake_case CodingKeys); change them in BOTH files together.
@@ -55,7 +55,7 @@ struct WidgetSnapshot: Codable {
     }
 }
 
-/// Auth material the app mirrors into the group container so widgets can hit
+/// Auth material the app mirrors into the shared keychain so widgets can hit
 /// the same dashboard API as the app (bearer + refresh tokens; the password
 /// itself is never stored). Bearer-in-group-container tradeoff documented in
 /// docs/WIDGETS.md.
@@ -72,34 +72,56 @@ struct WidgetAuth: Codable {
 }
 
 enum SharedStore {
-    static let groupID = "group.com.enriquecodes.jarvis"
+    // Shared keychain access group (team-prefixed by the build system). Both
+    // targets declare exactly this one group, so it is the DEFAULT access
+    // group for every SecItem call — no kSecAttrAccessGroup needed anywhere.
+    static let accessGroup = "com.enriquecodes.jarvis.widgetshared"
     private static let snapshotKey = "jarvis.widget.snapshot.v1"
     private static let authKey = "jarvis.widget.auth.v1"
 
-    /// nil when the app-group entitlement isn't on the installed build yet
-    /// (pre-widget app version) — every caller degrades to "no data".
-    static var defaults: UserDefaults? {
-        UserDefaults(suiteName: groupID)
+    private static func set(_ data: Data, key: String) {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+        ]
+        SecItemDelete(base as CFDictionary)
+        var add = base
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        SecItemAdd(add as CFDictionary, nil)
+    }
+
+    private static func get(_ key: String) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var out: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data else { return nil }
+        return data
     }
 
     static func loadSnapshot() -> WidgetSnapshot? {
-        guard let d = defaults, let data = d.data(forKey: snapshotKey) else { return nil }
+        guard let data = get(snapshotKey) else { return nil }
         return try? JSONDecoder().decode(WidgetSnapshot.self, from: data)
     }
 
     static func saveSnapshot(_ snap: WidgetSnapshot) {
-        guard let d = defaults, let data = try? JSONEncoder().encode(snap) else { return }
-        d.set(data, forKey: snapshotKey)
+        guard let data = try? JSONEncoder().encode(snap) else { return }
+        set(data, key: snapshotKey)
     }
 
     static func loadAuth() -> WidgetAuth? {
-        guard let d = defaults, let data = d.data(forKey: authKey) else { return nil }
+        guard let data = get(authKey) else { return nil }
         return try? JSONDecoder().decode(WidgetAuth.self, from: data)
     }
 
     static func saveAuth(_ auth: WidgetAuth) {
-        guard let d = defaults, let data = try? JSONEncoder().encode(auth) else { return }
-        d.set(data, forKey: authKey)
+        guard let data = try? JSONEncoder().encode(auth) else { return }
+        set(data, key: authKey)
     }
 }
 

@@ -4,17 +4,17 @@ import WidgetKit
 /// App → widget bridge. Publishes a compact Control-Center snapshot plus the
 /// auth material into the shared app-group container so the JarvisWidgets
 /// extension can render live data without holding credentials of its own.
+/// Storage is the shared keychain access group (NOT an app group — the
+/// APP_GROUPS portal attach is web-UI-only; verified 2026-09-21).
 /// JSON shapes MUST mirror ios/Widgets/WidgetCore.swift — the widget decodes
 /// exactly these keys. Change both files together.
 enum WidgetBridge {
-    static let groupID = "group.com.enriquecodes.jarvis"
+    // Shared keychain access group, mirrored in JarvisApp.entitlements and
+    // Widgets/JarvisWidgets.entitlements. Single declared group on both
+    // targets = default access group; SecItem needs no explicit attr.
+    static let accessGroup = "com.enriquecodes.jarvis.widgetshared"
     private static let snapshotKey = "jarvis.widget.snapshot.v1"
     private static let authKey = "jarvis.widget.auth.v1"
-
-    /// nil when the group isn't on the installed provisioning profile yet.
-    static var sharedDefaults: UserDefaults? {
-        UserDefaults(suiteName: groupID)
-    }
 
     // Codable shapes mirroring WidgetCore.swift (explicit snake_case keys).
     struct Snapshot: Codable {
@@ -86,7 +86,6 @@ enum WidgetBridge {
     /// hold a live bearer + refresh pair.
     @MainActor
     static func publishAuth() {
-        guard let d = sharedDefaults else { return }
         let cfg = ServerConfig.shared.config
         let auth = Auth(
             baseURL: cfg.baseURL,
@@ -95,9 +94,9 @@ enum WidgetBridge {
             refresh: AuthStore.shared.refreshToken ?? "",
             expiresAt: AuthStore.shared.expiresAt
         )
-        if let data = try? JSONEncoder().encode(auth) {
-            d.set(data, forKey: authKey)
-        }
+        if let data = try? JSONEncoder().encode(auth) {{
+            kcSet(data, key: authKey)
+        }}
     }
 
     /// Build a snapshot from the freshly loaded Home data, persist it, and
@@ -106,7 +105,6 @@ enum WidgetBridge {
     static func sync(vitals: Vitals?, bridge: Overview.Bridge?, zai: ZaiUsage?,
                      autos: Automations?, attention: Attention?, health: BridgeHealth?,
                      activity: Activity?) {
-        guard let d = sharedDefaults else { return }
         let snap = Snapshot(
             ts: Date().timeIntervalSince1970,
             gatewayOK: bridge?.reachable ?? true,
@@ -131,10 +129,22 @@ enum WidgetBridge {
             deviceRegistered: health?.device_registered ?? false,
             apnsConfigured: health?.apns_configured ?? false
         )
-        if let data = try? JSONEncoder().encode(snap) {
-            d.set(data, forKey: snapshotKey)
-        }
+        if let data = try? JSONEncoder().encode(snap) {{
+            kcSet(data, key: snapshotKey)
+        }}
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private static func kcSet(_ data: Data, key: String) {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+        ]
+        SecItemDelete(base as CFDictionary)
+        var add = base
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        SecItemAdd(add as CFDictionary, nil)
     }
 
     private static func memLabel(_ v: Vitals?) -> String {

@@ -1778,3 +1778,9 @@
   per-target force:true so profiles carry the entitlement). atomically co-
   committed with wiring per 11eb3d1's directive. Build target: 40+ (39 was the
   parallel workstream's CallKit run).
+- Widgets data-path pivot (2026-09-21, build 40 attempt): App Group attach is
+  web-UI-only (no ASC API resource; verified) -> storage switched to shared
+  keychain access group $(AppIdentifierPrefix)com.enriquecodes.jarvis.widgetshared
+  on BOTH targets; WidgetBridge/WidgetCore now SecItem-backed (delete+add,
+  AfterFirstUnlock); APP_GROUPS capability enabled on both bundle IDs via ASC API.
+  NOTE: app's default keychain access group changed -> one re-login after update.

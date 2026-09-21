@@ -62,7 +62,7 @@ hard part (App Group + data path + scaffold) is ready when the ask lands.
 | Timelines | `Timeline(entries:policy:)` — `.after(date)` preferred over `.atEnd` (predictable, protects refresh budget ~40-70 reloads/day). |
 | Interactive widgets | iOS 17+: `Button`/`Toggle` inside widget via App Intents `perform()` — runs in extension process. |
 | Push-to-refresh | `WidgetCenter.shared.reloadTimelines(ofKind:)` (app) or `WidgetPushHandler` (server push → widget reload). |
-| Data sharing | **App Group** (`UserDefaults(suiteName:)` or shared file container) is the standard app↔extension channel. |
+| Data sharing | App Group is the standard channel BUT needs a web-UI portal attach; shared **keychain access group** achieves the same app↔extension sharing with zero portal setup (used here). |
 | Deep links | `.widgetURL(_:)` for tap-through. |
 
 ### Key architectural conclusion for JARVIS
@@ -176,7 +176,7 @@ JarvisApp  ──writes JSON snapshot──▶  App Group container
 | Second signing profile on CI | Match handles N app IDs; just list both. |
 | Extension target breaks main app build | Extension is a separate target — a compile failure there fails CI, not the app target; the app archive still references the extension so CI fails loudly (good — no silent shipping of broken extensions). |
 | Refresh budget exhaustion (widget "freezes") | Use `.after(nextCheckpoint)` timelines; batch entries; migrate to push reload after APNs key lands. |
-| App Group name collisions | Single group per app; documented name here. |
+| App Group name collisions | Moot — data path is the shared keychain; APP_GROUPS capability enabled on both bundle IDs (2026-09-21) if a group is ever wanted (needs one web-UI attach). |
 
 ## 6. Decision record — why the extension target is deferred
 
