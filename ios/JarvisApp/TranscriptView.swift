@@ -43,6 +43,7 @@ struct TranscriptView: View {
     @State private var loading = false
     @State private var errorText: String?
     @State private var showFeedback = false
+    @State private var showCallMe = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -78,15 +79,25 @@ struct TranscriptView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showFeedback = true
-                } label: {
-                    Image(systemName: "exclamationmark.bubble")
+                HStack(spacing: 14) {
+                    Button {
+                        showCallMe = true
+                    } label: {
+                        Image(systemName: "phone.badge.plus")
+                    }
+                    Button {
+                        showFeedback = true
+                    } label: {
+                        Image(systemName: "exclamationmark.bubble")
+                    }
                 }
             }
         }
         .sheet(isPresented: $showFeedback) {
             FeedbackSheet(sessionId: sessionId)
+        }
+        .sheet(isPresented: $showCallMe) {
+            CallMeSheet(sessionContext: "About session \(sessionId)")
         }
         .task { if turns.isEmpty { await load() } }
     }

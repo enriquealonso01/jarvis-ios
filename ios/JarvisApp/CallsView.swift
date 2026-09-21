@@ -34,6 +34,7 @@ struct CallsView: View {
     @State private var calling = false
     @State private var status: String?
     @State private var showSchedule = false
+    @State private var showCallMe = false
 
     var body: some View {
         NavigationStack {
@@ -81,6 +82,18 @@ struct CallsView: View {
                             Image(systemName: "calendar.badge.plus")
                                 .foregroundStyle(Color.jarvisAccent)
                             Text("Schedule a call…")
+                                .font(.callout)
+                            Spacer()
+                        }
+                    }
+                    Button {
+                        Haptics.tap()
+                        showCallMe = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "clock.badge.checkmark")
+                                .foregroundStyle(Color.jarvisAccent)
+                            Text("Ask JARVIS to call me back…")
                                 .font(.callout)
                             Spacer()
                         }
@@ -198,6 +211,9 @@ struct CallsView: View {
                 ScheduleCallSheet { at, reason in
                     await scheduleCall(at: at, reason: reason)
                 }
+            }
+            .sheet(isPresented: $showCallMe) {
+                CallMeSheet()
             }
         }
     }
