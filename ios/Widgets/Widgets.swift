@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import WidgetKit
 
 // JARVIS palette (mirrors JarvisApp.swift — separate target, no shared code).
@@ -14,22 +15,42 @@ struct SnapshotEntry: TimelineEntry {
 }
 
 /// One provider serves all three widgets: a single fetch → cached-or-live
-/// snapshot, refreshed at WidgetKit's cadence. Uses the async TimelineProvider
-/// API — Swift 6 strict concurrency rejects the completion-capture pattern of
-/// the callback API (run 35622186018, "sending parameter" data-race error).
+/// snapshot, refreshed at WidgetKit's cadence.
+///
+/// Swift 6 strict concurrency (iOS 18 SDK): the raw completion closure is not
+/// Sendable, so capturing it straight into a Task fails with a "sending
+/// parameter" data-race error (run 35622186018). The OnceBox wrapper is
+/// @unchecked Sendable — each completion is called exactly once, from one
+/// task, guarded by a lock — which is the sanctioned bridge between the
+/// callback-based protocol and concurrent code.
+private final class OnceBox<T>: @unchecked Sendable {
+    private let fn: (T) -> Void
+    private var done = false
+    private let lock = NSLock()
+    init(_ fn: @escaping (T) -> Void) { self.fn = fn }
+    func call(_ value: T) {
+        lock.lock(); defer { lock.unlock() }
+        guard !done else { return }
+        done = true
+        fn(value)
+    }
+}
+
 struct SnapshotProvider: TimelineProvider {
     func placeholder(in context: Context) -> SnapshotEntry {
         SnapshotEntry(date: Date(), snap: nil)
     }
 
-    func snapshot(in context: Context, completion: @escaping @Sendable (SnapshotEntry) -> Void) {
+    func getSnapshot(in context: Context, completion: @escaping (SnapshotEntry) -> Void) {
+        let box = OnceBox(completion)
         Task.detached {
             let live = await WidgetAPI.fetchLive()
-            completion(SnapshotEntry(date: Date(), snap: live ?? SharedStore.loadSnapshot()))
+            box.call(SnapshotEntry(date: Date(), snap: live ?? SharedStore.loadSnapshot()))
         }
     }
 
-    func timeline(in context: Context, completion: @escaping @Sendable (Timeline<SnapshotEntry>) -> Void) {
+    func getTimeline(in context: Context, completion: @escaping (Timeline<SnapshotEntry>) -> Void) {
+        let box = OnceBox(completion)
         Task.detached {
             let live = await WidgetAPI.fetchLive()
             if let live {
@@ -39,7 +60,7 @@ struct SnapshotProvider: TimelineProvider {
             // WidgetKit enforces a ~15-minute reload floor; ask for 20 so
             // we sit comfortably above it. The app also re-kicks timelines
             // via WidgetCenter whenever Home refreshes.
-            completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(20 * 60))))
+            box.call(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(20 * 60))))
         }
     }
 }
