@@ -75,8 +75,13 @@ struct FeedbackSheet: View {
                 "text": text,
             ]
             if let m = messageId { body["message_id"] = m }
+            // Feedback lives on the PUSH BRIDGE, not the dashboard: Caddy
+            // strips the /bridge prefix, so the endpoint is <bridgeBase>/feedback
+            // (bridgeBaseURL default https://jarvis.enriquecodes.com/bridge).
+            let bridgeBase = ServerConfig.shared.config.bridgeBaseURL
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
             let ack = try await CCClient.shared.post(
-                "/feedback", body: body, as: FeedbackAck.self)
+                bridgeBase + "/feedback", body: body, as: FeedbackAck.self)
             success = ack.ok
             resultText = ack.ok ? "Sent to JARVIS" : "Bridge rejected the report"
             if success {
