@@ -1723,3 +1723,42 @@
   (`scripts/swap_apns_key.py`); 2) install the HIGHEST TestFlight build (30)
   + sign in enriquealonsorequejo@icloud.com once (device_registered must flip
   true); 3) re-register his personal Signal account (groups deliver fine).
+
+## 2026-09-21 ~15:00 UTC — Feedback R2 items 4-5: native CallKit parity shipped (build 39 VALID), widget plan doc
+
+- CallKit (R2 #4) — the native full-screen call UI ALREADY existed (CXProvider +
+  PushKit wired in build 30-37); what was missing was WhatsApp-grade behavior.
+  Shipped in fc8c9d5 (+c0dce4b fix): CXSetMutedCallAction + CXSetHeldCallAction
+  handlers gating the WebRTC mic track (mute/hold now work from the native screen
+  AND lock screen); per-call mute/hold state reset + re-applied at connect;
+  audio session in didActivate now re-asserts FULL category
+  (playAndRecord/voiceChat/allowBluetoothHFP/defaultToSpeaker) so the native
+  speaker toggle has a baseline route to override and BT headsets are offered;
+  reportOutgoingCall(connectedAt:) moved AFTER media connect (native timer no
+  longer runs during dialing); timedOutPerforming, CXPlayDTMFCallAction,
+  CXSetGroupCallAction handlers (unblock CallKit's state machine, incl. the
+  iOS 26 SDK trap: CXSetGroupCallAction has NO isThisCallActive — build38
+  error, fixed in c0dce4b); supportsHolding on the incoming update;
+  includesCallsInRecents=false (JARVIS calls never pollute Phone Recents).
+- Widget (R2 #5): docs/widgets.md = full implementation plan (WidgetKit +
+  App Intents config, sizes, timelines + refresh budget, App Group data path,
+  xcodegen target recipe — NO manual pbxproj surgery needed; extension target
+  itself deferred with rationale + paste-ready steps). App Group name reserved
+  (group.com.enriquecodes.jarvis.shared) with signing caveats documented.
+- TestFlight: run 35612261837 (commit 11eb3d1) → build 39 uploaded
+  ("Successfully uploaded the new binary"; CFBundleVersion=39 verified in the
+  .ipa), ASC: VALID, internalBuildState IN_BETA_TESTING, autoNotify on.
+  Tester cbb32f92-… assigned via /individualTesters (202, verified 200);
+  internal group "App Store Connect Users" carries build 39 (verified via
+  /betaGroups/{id}/builds). NOTE: first dispatch (35611660971) failed fast on
+  the isThisCallActive error above; ONE CI error per run pattern held again.
+- CONFLICT OF THE DAY: a parallel workstream's widget files (WidgetBridge.swift
+  referencing 7 nonexistent types + ios/Widgets/* + App Group entitlement edit)
+  appeared in the shared checkout mid-flight and were swept into c0dce4b by
+  `git add -A`. HEAD would NOT have compiled. Reverted in 11eb3d1 (`git rm
+  --cached`, files left on disk untracked for their owner). LESSON: never
+  `git add -A` in this repo while other agents are active — add explicit paths.
+- STILL BLOCKED on the APNs-capable .p8: PushKit/CallKit incoming-call flow is
+  fully implemented (and foreground outgoing calls work TODAY), but background/
+  lock-screen rings can't be live-verified until the new key lands
+  (`scripts/swap_apns_key.py`). Same key unblocks WidgetKit push reloads later.
