@@ -87,6 +87,8 @@ CONTRACT = [
      [], ["cancelled"], None),
     ("POST", "/call", "CallsView.swift", "CallResp",
      ["call_id", "pushed"], [], None),
+    ("POST", "/feedback", "FeedbackSheet.swift", "FeedbackAck",
+     ["ok"], ["id", "notified"], None),
 ]
 
 # Swift structs each file must still declare (route decode models + element
@@ -95,6 +97,7 @@ SWIFT_STRUCTS = {
     "SecretsView.swift": ["SecretMeta", "SecretsListResp", "SecretWriteResp"],
     "CallsView.swift": ["ScheduledCall", "DroppedCall", "CancelResp", "CallResp"],
     "CallManager.swift": [],
+    "FeedbackSheet.swift": ["FeedbackAck"],
 }
 
 

@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// Bridge ack for POST /feedback (pinned by scripts/check_bridge_contract.py).
+struct FeedbackAck: Decodable { let ok: Bool; let id: String?; let notified: Bool? }
+
 /// In-session feedback: "something is not going correctly" — lands with
 /// JARVIS via the push bridge, which notifies JARVIS (WhatsApp) and stores
 /// the report. POST /feedback on the bridge (dashboard Bearer auth).
@@ -64,6 +67,7 @@ struct FeedbackSheet: View {
         resultText = nil
         defer { sending = false }
         struct Ack: Decodable { let ok: Bool; let id: String?; let notified: Bool? }
+
         do {
             var body: [String: Any] = [
                 "session_id": sessionId,
@@ -72,7 +76,7 @@ struct FeedbackSheet: View {
             ]
             if let m = messageId { body["message_id"] = m }
             let ack = try await CCClient.shared.post(
-                "/feedback", body: body, as: Ack.self)
+                "/feedback", body: body, as: FeedbackAck.self)
             success = ack.ok
             resultText = ack.ok ? "Sent to JARVIS" : "Bridge rejected the report"
             if success {
