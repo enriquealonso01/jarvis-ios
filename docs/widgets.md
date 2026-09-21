@@ -1,6 +1,6 @@
 # JARVIS iOS — Widgets: Research & Implementation Plan (Feedback Round 2, item 5)
 
-**Status:** SHIPPED 2026-09-21 — extension target live, three widgets riding build 38+.
+**Status:** SHIPPED 2026-09-21 — extension target live, three widgets riding build 40+.
 (Original plan below, kept for the design record; the "deferred" decision was
 overridden when Enrique asked for the widgets directly.)
 
@@ -16,7 +16,9 @@ overridden when Enrique asked for the widgets directly.)
   (`UserDefaults(suiteName: "group.com.enriquecodes.jarvis")`) on every Home refresh
   (`WidgetBridge.sync`) and mirrors bearer/refresh tokens (`WidgetBridge.publishAuth`);
   the extension reads the cache AND can refresh live via the dashboard API itself
-  (`WidgetAPI.fetchLive`), falling back to the cache offline.
+  (`WidgetAPI.fetchLive`), falling back to the cache offline. NOTE: the group is
+  `group.com.enriquecodes.jarvis` — the `.shared` suffix reserved in the original
+  plan below was NOT used; both entitlements files are the source of truth.
 - **Cadence:** timeline `.after(+20min)` (above WidgetKit's ~15min floor); app re-kicks
   `WidgetCenter.reloadAllTimelines()` on every Home refresh. Budget stays well under
   the ~40-70 reloads/day window.

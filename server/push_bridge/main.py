@@ -461,6 +461,34 @@ class SecretReq(BaseModel):
     updated_by: str | None = "ios-app"
 
 
+NAMING_CACHE_PATH = Path("/root/.hermes/cache/session_naming.json")
+
+
+def _load_naming_cache() -> dict:
+    """Session titles + project tags written by server/session_naming.py."""
+    try:
+        return json.loads(NAMING_CACHE_PATH.read_text() or "{}")
+    except Exception:
+        return {}
+
+
+@app.get("/projects/meta")
+async def projects_meta(request: Request, x_bridge_sig: str = Header(default="")):
+    """Per-session project tags + human titles for the iOS Sessions view.
+
+    Auth: same dual scheme as the other GETs (dashboard Bearer or HMAC sig).
+    Served from the naming agent's cache (root-only file) — never exposes
+    transcript content.
+    """
+    _auth_dual(request, x_bridge_sig, b"")
+    cache = _load_naming_cache()
+    return {
+        "projects": cache.get("projects") or {},
+        "titles": {k.split(":", 1)[0]: v for k, v in (cache.get("titles") or {}).items()},
+        "updated_at": cache.get("projects_updated_at"),
+    }
+
+
 @app.get("/secrets")
 async def secrets_list(request: Request, x_bridge_sig: str = Header(default="")):
     """List stored secret NAMES with masked previews. Values never leave the box."""
