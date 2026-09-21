@@ -115,7 +115,13 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         try? session.setPreferredSampleRate(48000)
         try? session.setPreferredIOBufferDuration(0.005)
         try? session.setActive(true)
-        RTCAudioSession.sharedInstance().useManualAudio = true
+        // useManualAudio must be configured BEFORE the audio unit starts; with
+        // manual audio the unit only starts on audioSessionDidActivate — which
+        // can fire BEFORE connect() creates the track (fast-fulfill answer),
+        // leaving the unit never started = ringing call with no audio at all.
+        // Automatic mode lets WebRTC start the unit as soon as the session is
+        // active and the track exists, whichever order they happen in.
+        RTCAudioSession.sharedInstance().useManualAudio = false
         RTCAudioSession.sharedInstance().isAudioEnabled = true
     }
 
@@ -131,6 +137,8 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         client.baseURL = offerURL
         client.tokenProvider = tokenProvider
 
+        RTCAudioSession.sharedInstance().useManualAudio = false
+        RTCAudioSession.sharedInstance().isAudioEnabled = true
         let config = RTCConfiguration()
         config.iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
         config.sdpSemantics = .unifiedPlan
