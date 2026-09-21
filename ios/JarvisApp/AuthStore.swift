@@ -86,7 +86,8 @@ final class AuthStore: ObservableObject {
             loginReq.httpMethod = "POST"
             loginReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
             loginReq.httpBody = try JSONEncoder().encode(
-                PasswordLoginBody(provider: "basic", username: username, password: password)
+                PasswordLoginBody(provider: "basic", username: username, password: password,
+                                  codeChallenge: challenge, redirectURI: redirect, state: state)
             )
             let (data, resp) = try await Self.send(loginReq, cookieJar: jar)
             struct LoginResp: Decodable { let ok: Bool; let next: String }
@@ -201,11 +202,22 @@ final class AuthStore: ObservableObject {
         let username: String
         let password: String
         let next: String
-        init(provider: String, username: String, password: String) {
+        // Cookie-less fallback: iOS URLSession can drop the __Host-/
+        // SameSite=None PKCE cookie between authorize and login. Resending
+        // the original PKCE parameters lets the server re-register the
+        // pending authorization and still mint the loopback code.
+        let code_challenge: String
+        let redirect_uri: String
+        let state: String
+        init(provider: String, username: String, password: String,
+             codeChallenge: String = "", redirectURI: String = "", state: String = "") {
             self.provider = provider
             self.username = username
             self.password = password
             self.next = ""
+            self.code_challenge = codeChallenge
+            self.redirect_uri = redirectURI
+            self.state = state
         }
     }
     struct NativeTokenBody: Encodable {
