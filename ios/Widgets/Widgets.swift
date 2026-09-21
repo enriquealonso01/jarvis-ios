@@ -14,21 +14,23 @@ struct SnapshotEntry: TimelineEntry {
 }
 
 /// One provider serves all three widgets: a single fetch → cached-or-live
-/// snapshot, refreshed at WidgetKit's cadence.
+/// snapshot, refreshed at WidgetKit's cadence. Uses the async TimelineProvider
+/// API — Swift 6 strict concurrency rejects the completion-capture pattern of
+/// the callback API (run 35622186018, "sending parameter" data-race error).
 struct SnapshotProvider: TimelineProvider {
     func placeholder(in context: Context) -> SnapshotEntry {
         SnapshotEntry(date: Date(), snap: nil)
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (SnapshotEntry) -> Void) {
-        Task {
+    func snapshot(in context: Context, completion: @escaping @Sendable (SnapshotEntry) -> Void) {
+        Task.detached {
             let live = await WidgetAPI.fetchLive()
             completion(SnapshotEntry(date: Date(), snap: live ?? SharedStore.loadSnapshot()))
         }
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<SnapshotEntry>) -> Void) {
-        Task {
+    func timeline(in context: Context, completion: @escaping @Sendable (Timeline<SnapshotEntry>) -> Void) {
+        Task.detached {
             let live = await WidgetAPI.fetchLive()
             if let live {
                 SharedStore.saveSnapshot(live)
