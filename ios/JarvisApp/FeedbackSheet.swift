@@ -62,6 +62,7 @@ struct FeedbackSheet: View {
         }
     }
 
+    @MainActor
     private func send() async {
         sending = true
         resultText = nil

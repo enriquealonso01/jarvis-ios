@@ -95,6 +95,7 @@ struct CallMeSheet: View {
         return f.string(from: d)
     }
 
+    @MainActor
     private func send() async {
         sending = true
         resultText = nil

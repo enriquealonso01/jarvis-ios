@@ -111,6 +111,7 @@ struct SessionsView: View {
         }
     }
 
+    @MainActor
     private func load() async {
         loading = true
         errorText = nil
@@ -129,6 +130,7 @@ struct SessionsView: View {
         }
     }
 
+    @MainActor
     private func regroup() {
         var byProject: [String: [SessionRow]] = [:]
         var order: [String] = []

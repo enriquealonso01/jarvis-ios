@@ -139,6 +139,7 @@ struct TranscriptView: View {
 
     // MARK: - Loading / projection
 
+    @MainActor
     private func load() async {
         loading = true
         errorText = nil
