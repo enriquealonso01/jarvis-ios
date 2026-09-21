@@ -471,12 +471,16 @@ extension CallManager: CXProviderDelegate {
         // published state. Bind the non-Sendable action once so Swift 6.2's
         // region check doesn't flag the capture (same as CXEndCallAction).
         nonisolated(unsafe) let answerAction = action
+        // Fulfill IMMEDIATELY: the answer action must not wait on the WebRTC
+        // handshake (the offer POST alone has 20-66s spikes). A late fulfill
+        // times out system-side on the lock screen — "can't answer unless the
+        // app is open" — while a fast fulfill + async connect is the pattern
+        // Apple expects (media config continues after didActivate).
+        answerAction.fulfill()
         Task { @MainActor in
             do {
                 try await self.connectWebRTC()
-                answerAction.fulfill()
             } catch {
-                answerAction.fail()
                 // Full teardown (CallKit ended + log + PC hangup + state
                 // clear). Without clearing activeCallUUID the one-call-at-
                 // a-time guard would block every future call attempt.
