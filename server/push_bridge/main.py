@@ -136,7 +136,7 @@ def _send_voip(device_token: str, payload: dict) -> bool:
     token = jwt.encode({"iss": team_id, "iat": int(time.time())}, p8.read_text(), algorithm="ES256", headers={"kid": key_id})
     headers = {
         "authorization": f"bearer {token}",
-        "apns-topic": cfg.get("APNS_BUNDLE_ID", "com.enriquecodes.jarvis"),
+        "apns-topic": cfg.get("APNS_BUNDLE_ID", "com.enriquecodes.jarvis") + ".voip",
         "apns-push-type": "voip",
         "apns-priority": "10",
     }
