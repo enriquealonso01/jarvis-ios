@@ -331,6 +331,11 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
             // Only terminal if we never got connected (a normal hangup closes
             // the PC deliberately and CallManager already handles that path).
             if !connected { onConnectionFailed?("media connection closed before connecting") }
+            else {
+                // Remote (server/JARVIS) hung up: peerLeft over the app channel
+                // normally delivers this first; .closed is the belt-and-braces.
+                DispatchQueue.main.async { self.onConnectionFailed?("remote ended the call") }
+            }
         case .disconnected:
             // Transient while it lasts. If we NEVER connected it's terminal
             // immediately; if we had, allow a grace window — a Wi-Fi→cellular

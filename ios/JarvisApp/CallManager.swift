@@ -326,6 +326,14 @@ final class CallManager: NSObject, ObservableObject {
     }
 
     private func handleAppMessage(_ msg: [String: Any]) {
+        // Pipecat signalling envelope: {"type":"signalling","message":{...}}.
+        // "peerLeft" = the server (JARVIS) hung up — end the CallKit call.
+        if msg["type"] as? String == "signalling",
+           let inner = msg["message"] as? [String: Any],
+           inner["type"] as? String == "peerLeft" {
+            Task { @MainActor in self.endActiveCall() }
+            return
+        }
         switch msg["type"] as? String {
         case "hello":
             let brain = (msg["brain"] as? String ?? "").split(separator: ":").last.map(String.init) ?? ""
