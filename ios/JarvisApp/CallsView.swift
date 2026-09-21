@@ -294,7 +294,7 @@ struct CallsView: View {
                     Haptics.tap()
                 }
             }
-        } catch CCClient.Failure(message: let message) where message == "HTTP 404" {
+        } catch let failure as CCClient.Failure where failure.message == "HTTP 404" {
             // Bridge 1j: an id that matches nothing 404s loudly (it used to
             // return cancelled:0). Same UX as the race: the row is stale —
             // refresh the list and say so.
