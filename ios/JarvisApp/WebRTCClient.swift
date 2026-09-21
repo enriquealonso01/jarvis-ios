@@ -145,6 +145,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         guard let offerURL = URL(string: offerURL) else { throw CallError.gateway("bad offer URL") }
         var req = URLRequest(url: offerURL)
         req.httpMethod = "POST"
+        req.timeoutInterval = 90   // gateway bootstraps the voice session (brain context+tools) inside the offer POST; 20-66s spikes seen in the wild — default 60s was too tight (voice-failure-diagnosis.md fault #3)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         var payload: [String: Any] = [

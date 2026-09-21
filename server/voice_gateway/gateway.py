@@ -306,8 +306,19 @@ _handler = SmallWebRTCRequestHandler(ice_servers=_ice, connection_mode=Connectio
 
 @app.post("/voice-gw/api/offer")
 async def voice_gw_offer(request: Request):
-    body = await request.json()
-    req = SmallWebRTCRequest.from_dict(body)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "offer body is not valid JSON")
+    if not isinstance(body, dict) or not str(body.get("sdp") or "").strip():
+        # Malformed offers used to 500 (fault #4 in voice-failure-diagnosis.md)
+        # — 400 with the exact missing piece so client bugs don't read as
+        # "server error" in monitoring.
+        raise HTTPException(400, "offer body must be {\"sdp\": <offer SDP>, \"type\": \"offer\"} (sdp missing/empty)")
+    try:
+        req = SmallWebRTCRequest.from_dict(body)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"offer rejected: {exc}")
 
     # Native clients (iOS) pass {surface, reason} via request_data; the web
     # page sends none and stays "cc_pwa". The reason gives the voice session
