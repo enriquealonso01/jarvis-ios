@@ -59,42 +59,18 @@ platform :ios do
   # exists → group attached to both IDs → only then may match create
   # profiles carrying the app-group entitlement.
   #
-  # Config is passed via PRODUCE_* ENV VARS, never CLI flags: flag spelling
-  # drifts across fastlane versions and api_key_path isn't registered as a
-  # CLI option at all (run 35614220790 died on "invalid option:
-  # --api_key_path"). Env names are stable ancient config — they bypass the
-  # CLI parser entirely.
+  # App Groups + widget bundle ID registration: DONE directly via the ASC v1
+  # API on 2026-09-21 — bundle IDs com.enriquecodes.jarvis and
+  # com.enriquecodes.jarvis.Widgets exist, GROUP_CONTAINERS capability is on
+  # BOTH, and the app group is created and attached. fastlane `produce`
+  # cannot run on this runner: its portal login is Apple-ID-only
+  # (Produce::Group#login -> Spaceship.login(username) -> "No value found
+  # for 'username'", run 35614797372), and this runner authenticates with an
+  # API key only. If portal state is ever wiped, re-run registration via the
+  # ASC API (bundleIds + bundleIdCapabilities + appGroups endpoints) — not
+  # produce.
   private_lane :ensure_widget_portal do
-    key_path = asc_api_key_json_file
-    ENV["PRODUCE_API_KEY_PATH"] = key_path
-
-    # 1. Ensure the App Group record exists.
-    ENV["PRODUCE_GROUP_IDENTIFIER"] = APP_GROUP
-    ENV["PRODUCE_GROUP_NAME"] = "JARVIS widgets"
-    sh("bundle exec fastlane produce group")
-    ENV.delete("PRODUCE_GROUP_IDENTIFIER")
-    ENV.delete("PRODUCE_GROUP_NAME")
-
-    # 2. Ensure the widget extension bundle ID exists (portal side only —
-    #    never create an App Store record for it, hence skip_itc).
-    ENV["PRODUCE_APP_IDENTIFIER"] = WIDGET_APP_ID
-    ENV["PRODUCE_APP_NAME"] = "JARVIS Widgets"
-    ENV["PRODUCE_PLATFORM"] = "ios"
-    ENV["PRODUCE_SKIP_ITC"] = "true"
-    sh("bundle exec fastlane produce")
-
-    # 3. Attach the group to BOTH app IDs (positional args, no flags).
-    ENV["PRODUCE_APP_IDENTIFIER"] = APP_ID
-    sh("bundle exec fastlane produce associate_group #{APP_GROUP}")
-    ENV["PRODUCE_APP_IDENTIFIER"] = WIDGET_APP_ID
-    sh("bundle exec fastlane produce associate_group #{APP_GROUP}")
-
-    ENV.delete("PRODUCE_APP_IDENTIFIER")
-    ENV.delete("PRODUCE_APP_NAME")
-    ENV.delete("PRODUCE_PLATFORM")
-    ENV.delete("PRODUCE_SKIP_ITC")
-    ENV.delete("PRODUCE_API_KEY_PATH")
-    File.delete(key_path)
+    UI.message("Widget portal state pre-registered via ASC API (app group + GROUP_CONTAINERS on both bundle IDs) — nothing to do here.")
   end
 
   # Pulls signing material and produces a signed, App Store-ready .ipa.
