@@ -32,6 +32,13 @@ final class CallManager: NSObject, ObservableObject {
     /// Call-log bookkeeping for the live call (entry id + wall-clock start).
     private var logEntryID: String?
     private var callStart: Date?
+    /// Native call screen mute/hold state for the LIVE call (toggled from the
+    /// CallKit UI). Kept here (not only on the WebRTCClient) so it survives
+    /// client re-creation, is re-applied to the fresh mic track at connect
+    /// time, and is reset per call — a muted previous call must never start
+    /// the next one muted.
+    private var isCallMuted = false
+    private var isCallHeld = false
     /// call_id -> end time for calls that JUST finished. APNs re-delivers
     /// pushes (at-least-once) and those retries can arrive AFTER the call was
     /// answered/ended — the active-call dedupe guard no longer matches then
@@ -115,6 +122,9 @@ final class CallManager: NSObject, ObservableObject {
         update.remoteHandle = CXHandle(type: .generic, value: "JARVIS")
         update.hasVideo = false
         update.localizedCallerName = "JARVIS"
+        // Native screen parity: show the hold button (Siri/cellular-call
+        // interruptions use it) alongside the always-present mute/speaker.
+        update.supportsHolding = true
 
         lastPayload = p
         // Post-end redelivery guard: a push for a call that JUST ended (in any
@@ -170,6 +180,11 @@ final class CallManager: NSObject, ObservableObject {
             return
         }
         pendingAnswerPayload = p
+        // Reset per-call native-screen state: mute/hold flags left on by the
+        // previous call must not bleed into this one (they are re-applied to
+        // the fresh WebRTCClient's mic track at connect time).
+        isCallMuted = false
+        isCallHeld = false
         // Persistent log: record the incoming call even if it's never answered
         // (PushKit may wake us while killed; this is the only trace it happened).
         // Outcome is stamped later: "answered" on connect, "missed" on decline.
@@ -229,6 +244,9 @@ final class CallManager: NSObject, ObservableObject {
         config.maximumCallsPerCallGroup = 1
         config.maximumCallGroups = 1
         config.supportedHandleTypes = [.generic]
+        // WhatsApp behavior: ending a JARVIS call should NOT populate the
+        // Phone app's Recents list with fake "cellular" entries.
+        config.includesCallsInRecents = false
         let prov = CXProvider(configuration: config)
         // Xcode 26 SDK: CXProvider.delegate became ObjC-direct and is no
         // longer visible to Swift — setDelegate(_:queue:) is the exposed API.
@@ -266,6 +284,10 @@ final class CallManager: NSObject, ObservableObject {
             Task { @MainActor in self?.handleConnectionFailure(boxedWhy) }
         }
         webRTC = client
+        // Re-apply the live call's native-screen mute/hold to this fresh
+        // client's mic track (state can flip while media is still connecting).
+        client.setMuted(isCallMuted)
+        client.setHeld(isCallHeld)
         // Connect deadline: the call is only "active" once media actually
         // flows. If ICE never connects (dead gateway, NAT mismatch, network
         // drop), this throws after 15s and the caller's catch path fails the
@@ -471,10 +493,14 @@ extension CallManager: CXProviderDelegate {
         nonisolated(unsafe) let startProvider = provider
         Task { @MainActor in
             do {
-                // CallKit contract: report the call as outgoing-connected so
-                // the system audio UI engages, then connect media.
-                startProvider.reportOutgoingCall(with: startAction.callUUID, connectedAt: Date())
+                // CallKit contract: report outgoing-connected AT REAL CONNECT
+                // TIME. Reporting Date() here (before media exists) started the
+                // native call timer during dialing — the screen said "connected"
+                // while ICE was still negotiating. reportOutgoingCall is also
+                // what makes iOS show the full-screen native UI; the actual
+                // WebRTC dial happens right after (CallKit contract).
                 try await self.connectWebRTC()
+                startProvider.reportOutgoingCall(with: startAction.callUUID, connectedAt: Date())
                 startAction.fulfill()
             } catch {
                 startAction.fail()
@@ -502,8 +528,83 @@ extension CallManager: CXProviderDelegate {
         }
     }
 
+    nonisolated func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        // Native call screen's mute button (WhatsApp parity). Bind the
+        // non-Sendable action once for the MainActor hop (house pattern).
+        nonisolated(unsafe) let muteAction = action
+        let muted = action.isMuted
+        Task { @MainActor in
+            self.isCallMuted = muted
+            self.webRTC?.setMuted(muted)
+            muteAction.fulfill()
+        }
+    }
+
+    /// Hold/unhold from the native call screen (or a second incoming call).
+    /// CallKit deactivates/reactivates the audio session around this itself
+    /// (each transition passes through didDeactivate/didActivate); we only
+    /// gate the mic track here.
+    nonisolated func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {
+        nonisolated(unsafe) let heldAction = action
+        let onHold = action.isOnHold
+        Task { @MainActor in
+            self.isCallHeld = onHold
+            self.webRTC?.setHeld(onHold)
+            heldAction.fulfill()
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXSetGroupCallAction) {
+        // One call at a time (maximumCallGroups = 1): fulfill without touching
+        // the live call — but if CallKit marks THIS call inactive (pulled into
+        // a group / demoted), hold it so no mic audio leaks to the active call.
+        if action.isThisCallActive {
+            action.fulfill()
+        } else {
+            nonisolated(unsafe) let groupAction = action
+            Task { @MainActor in
+                self.webRTC?.setHeld(true)
+                self.isCallHeld = true
+                groupAction.fulfill()
+            }
+        }
+    }
+
+    /// DTMF from the native keypad (iOS shows one for generic handles).
+    /// JARVIS is not a PBX — acknowledge so the action doesn't time out.
+    nonisolated func provider(_ provider: CXProvider, perform action: CXPlayDTMFCallAction) {
+        nonisolated(unsafe) let dtmfAction = action
+        Task { @MainActor in
+            dtmfAction.fulfill()
+        }
+    }
+
+    // MARK: Audio interruptions / action timeouts
+
+    /// If any CallKit action stalls (e.g. the audio session was yanked by an
+    /// interruption — Siri, cellular call, alarm — and the answer/start action
+    /// never completed), iOS calls this after its timeout. Fail the action so
+    /// CallKit's state machine unblocks instead of wedging the provider.
+    nonisolated func provider(_ provider: CXProvider, timedOutPerforming action: CXAction) {
+        nonisolated(unsafe) let timedOutAction = action
+        Task { @MainActor in
+            print("[CallManager] CXAction timed out: \(type(of: timedOutAction))")
+            timedOutAction.fail()
+        }
+    }
+
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        WebRTCClient.activateAudioSession(audioSession)
+        // AVAudioSession is non-Sendable; bind for the Task hop (house pattern).
+        nonisolated(unsafe) let activatedSession = audioSession
+        // Interruption recovery: on re-activation after a Siri/cellular-call
+        // interruption, re-assert the mute/hold gate on the mic track (the
+        // audio unit restarts enabled by default). State read on MainActor.
+        WebRTCClient.activateAudioSession(activatedSession)
+        Task { @MainActor in
+            guard let rtc = self.webRTC else { return }
+            rtc.setMuted(rtc.isMuted)
+            rtc.setHeld(rtc.isHeld)
+        }
     }
 
     nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {

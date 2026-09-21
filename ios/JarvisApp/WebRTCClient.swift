@@ -17,6 +17,29 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     private var baseURL: String = ""
     private(set) var connected = false
 
+    /// Native-call-screen mute (CallKit CXSetMutedCallAction): disables the
+    /// local mic track so nothing is captured, while the call stays fully
+    /// connected (downlink audio keeps flowing — WhatsApp behavior).
+    private(set) var isMuted = false
+    /// Held via the native UI (CXSetHeldCallAction). CallKit deactivates the
+    /// audio session itself on hold; we only gate the mic track so an unhold
+    /// glitch can never leak mic audio while held.
+    private(set) var isHeld = false
+
+    /// Mute/unmute the mic. Idempotent; safe before the track exists (the
+    /// flag still sticks and is applied when the track is created).
+    func setMuted(_ muted: Bool) {
+        isMuted = muted
+        localAudioTrack?.isEnabled = !muted && !isHeld
+    }
+
+    /// Hold/unhold. CallKit owns the audio-session deactivation for holds;
+    /// we gate the mic track (belt-and-suspenders — see isHeld above).
+    func setHeld(_ held: Bool) {
+        isHeld = held
+        localAudioTrack?.isEnabled = !held && !isMuted
+    }
+
     typealias TokenProvider = @Sendable () async throws -> String
     private var tokenProvider: TokenProvider!
 
@@ -80,7 +103,15 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
 
     static func activateAudioSession(_ session: AVAudioSession) {
         activeAudioSession = session
-        try? session.setMode(.voiceChat)
+        // Re-assert the FULL category (not just mode): CallKit hands us its own
+        // audio session in didActivate and its defaults carry no options —
+        // without these, the native call screen's speaker toggle has nothing
+        // to override (no .defaultToSpeaker baseline) and Bluetooth HFP
+        // headsets aren't offered as routes. .defaultToSpeaker is only the
+        // BASELINE route: the native speaker button still toggles the
+        // overrideOutputAudioPort on top of it, exactly like WhatsApp.
+        try? session.setCategory(.playAndRecord, mode: .voiceChat,
+                                 options: [.allowBluetoothHFP, .defaultToSpeaker])
         try? session.setPreferredSampleRate(48000)
         try? session.setPreferredIOBufferDuration(0.005)
         try? session.setActive(true)
