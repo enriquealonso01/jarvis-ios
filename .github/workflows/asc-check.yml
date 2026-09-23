@@ -1,0 +1,56 @@
+name: ASC build check
+
+# Polls App Store Connect for a build's processing state using the CI ASC API
+# key (the local apns.key copy is stale — NOT_AUTHORIZED). Dispatch-only.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Build number (CFBundleVersion) to check"
+        required: true
+        default: "64"
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyjwt cryptography httpx
+      - name: Poll build status
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          python3 - <<'PY'
+          import base64, jwt, time, httpx, os
+          key = base64.b64decode(os.environ["ASC_KEY_P8"]).decode()
+          now = int(time.time())
+          tok = jwt.encode({"iss": os.environ["ASC_ISSUER_ID"], "iat": now,
+                            "exp": now + 1200, "aud": "appstoreconnect-v1"},
+                           key, algorithm="ES256",
+                           headers={"kid": os.environ["ASC_KEY_ID"]})
+          ver = os.environ.get("VERSION") or "64"
+          for attempt in range(20):
+              r = httpx.get(
+                  "https://api.appstoreconnect.apple.com/v1/builds",
+                  params={"filter[version]": ver, "filter[app]": "6813590605"},
+                  headers={"Authorization": f"Bearer {tok}"})
+              if r.status_code == 200:
+                  data = r.json().get("data", [])
+                  if data:
+                      attrs = data[0]["attributes"]
+                      print("BUILD:", attrs["version"], attrs["processingState"])
+                      if attrs["processingState"] == "VALID":
+                          break
+                  else:
+                      print("attempt", attempt, "- no build record yet")
+              else:
+                  print("HTTP", r.status_code, r.text[:200])
+              time.sleep(30)
+          PY
