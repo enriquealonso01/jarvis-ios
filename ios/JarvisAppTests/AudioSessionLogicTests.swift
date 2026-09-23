@@ -1,4 +1,5 @@
 import XCTest
+import AVFAudio
 @testable import JarvisApp
 
 /// Pure-logic tests for the call path's audio-session + routing contract.
