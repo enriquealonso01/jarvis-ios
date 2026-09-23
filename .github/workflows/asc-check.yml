@@ -10,7 +10,8 @@ on:
         required: true
         default: "64"
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   check:
