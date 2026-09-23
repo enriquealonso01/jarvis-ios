@@ -1786,3 +1786,25 @@
   NOTE: app's default keychain access group changed -> one re-login after update.
 
 - Widgets SHIPPED in build 54 (2026-09-21 16:15 UTC, run 35624021711): JarvisWidgets app-extension compiled+embedded (appex validated in-archive), upload accepted, ASC processing VALID. Data path pivoted app-group → shared keychain (com.enriquecodes.*.widgetshared) because the APP_GROUPS portal attach is web-UI-only (ASC v1 API has no appGroups resource; produce cannot log in with an API key). Keychain needs no portal state. Signing: exact per-target manual settings via xcodeproj (update_code_signing_settings substring-matches and crosses profiles) + widget entry in ExportOptions.plist. Swift 6: OnceBox @unchecked Sendable bridges TimelineProvider callbacks to detached tasks; model structs made internal. Commits 6607d20→6587fd6.
+
+- Call-system overhaul + automated ship gate (2026-09-23, ios-v29 prep): ROOT
+  CAUSES FIXED. (1) "Automated call" hangup: app's placeDirectCall() always sent
+  request_data.reason, and gateway.py's `if reason:` branch injected the
+  "(Automatic notice: this is a JARVIS-initiated call…)" prompt WITH an end_call
+  instruction for ANY reasoned call — so outgoing app calls announced themselves
+  and self-terminated. Fix: iOS sends NO reason on direct calls (reason reserved
+  for JARVIS-initiated VoIP-push calls); gateway notice text now instructs a
+  reason+goodbye+end_call flow and a 40s server-side backstop stop() guarantees
+  hangup even if the model misfires (observed: model once called call_enrique
+  instead of end_call). (2) Speaker revert: WebRTCClient now keeps per-call
+  speakerEnabled state, re-asserts overrideOutputAudioPort(.speaker) on EVERY
+  AVAudioSession.routeChangeNotification (BT/headphones yank), restores it on
+  CallKit re-activation, clears on deactivate; CallsView gained a speaker
+  toggle mirroring CallManager.isSpeakerOn. (3) HARNESS: scripts/test_callflow.py
+  (T1-T9: health, bearer gate, malformed offer, data-channel-pre-offer SDP,
+  full ICE+DC+audio media path w/ silent mic track, no-self-hangup contract,
+  reasoned-call self-termination, live pc_id hangup, repo-mirror parity) runs
+  against the LIVE gateway; wired as REQUIRED `callflow` job in ios-release.yml
+  before `build` (needs: callflow); build job also runs xcodebuild unit tests
+  (JarvisAppTests: audio-session category contract + speaker state machine) on
+  the simulator BEFORE fastlane upload. DASH_SECRET_B64 repo secret set for CI.

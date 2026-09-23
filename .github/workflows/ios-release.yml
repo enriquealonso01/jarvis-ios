@@ -4,6 +4,11 @@ name: iOS Release
 # No local Mac required — mirrors HeRoseFromDeath_App's ios-release pipeline.
 #   - Push a tag like `ios-v1.0.0`  -> builds and ships to TestFlight (beta lane).
 #   - Manual run (Actions tab)      -> pick bootstrap_signing / beta.
+#
+# SHIP GATE (2026-09-23): the callflow job exercises the LIVE voice gateway
+# end-to-end (WebRTC offer/answer, ICE + data channel + audio track, greeting
+# contract, reasoned-call self-termination, hangup) with zero humans. The
+# build job `needs: callflow` — a red gate means NO TestFlight upload.
 
 on:
   push:
@@ -18,13 +23,43 @@ on:
         options:
           - beta
           - bootstrap_signing
+      skip_callflow_gate:
+        description: "EMERGENCY ONLY: skip the call-flow gate"
+        type: boolean
+        default: false
 
 concurrency:
   group: ios-release
   cancel-in-progress: false
 
 jobs:
+  callflow:
+    # Automated pre-deploy call-flow test harness against the live gateway
+    # (same path the iOS app uses: https://jarvis.enriquecodes.com). Fails
+    # the pipeline on any error BEFORE fastlane touches App Store Connect.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install WebRTC test client
+        run: pip install aiortc pyyaml
+
+      - name: Run call-flow harness against live gateway
+        env:
+          VOICE_GW_BASE: https://jarvis.enriquecodes.com/voice-gw
+          DASH_SECRET_B64: ${{ secrets.DASH_SECRET_B64 }}
+        run: python scripts/test_callflow.py
+
   build:
+    needs: callflow
+    if: github.event.inputs.skip_callflow_gate != 'true'
     # Apple requires Xcode 26 / iOS 26 SDK for any App Store Connect upload
     # (TestFlight included). macos-15 runners bundle it.
     runs-on: macos-15
@@ -45,6 +80,22 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Run unit tests (audio-session + call logic) on simulator
+        working-directory: ios
+        run: |
+          set -o pipefail
+          SIM_NAME=$(xcrun simctl list devices available | grep -m1 -o 'iPhone [^(]*' | sed 's/[[:space:]]*$//')
+          echo "Using simulator: $SIM_NAME"
+          xcodebuild test \
+            -project JarvisApp.xcodeproj \
+            -scheme JarvisApp \
+            -destination "platform=iOS Simulator,name=$SIM_NAME,OS=latest" \
+            -quiet CODE_SIGNING_ALLOWED=NO | tail -40
 
       - name: Setup Ruby + Fastlane
         uses: ruby/setup-ruby@v1

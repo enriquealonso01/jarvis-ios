@@ -23,6 +23,9 @@ final class CallManager: NSObject, ObservableObject {
     /// "state", "transcript", "metrics" messages) — surfaced on the Calls tab.
     @Published var sessionInfo: String = ""
     @Published var lastTranscript: String?
+    /// Current speaker pick (mirrors WebRTCClient.speakerEnabled) so the UI
+    /// toggle reflects route-change re-assertions too.
+    @Published var isSpeakerOn: Bool = false
 
     private var callController: CXCallController?
     private var provider: CXProvider?
@@ -53,6 +56,14 @@ final class CallManager: NSObject, ObservableObject {
     func trackOutgoingLog(entryID: String) {
         logEntryID = entryID
         callStart = Date()
+    }
+
+    /// Speaker on/off for the active call. The override is re-asserted by
+    /// WebRTCClient's route-change observer, so the pick holds for the whole
+    /// call (Bluetooth/headphone events can't silently revert it).
+    func setSpeaker(_ on: Bool) {
+        isSpeakerOn = on
+        WebRTCClient.setSpeaker(on)
     }
 
     struct VoIPPayload {
@@ -213,8 +224,14 @@ final class CallManager: NSObject, ObservableObject {
         guard activeCallUUID == nil else { return } // one call at a time
         let uuid = UUID()
         activeCallUUID = uuid
+        // NO reason on direct outgoing calls: the gateway reserves a
+        // non-empty request_data.reason for JARVIS-INITIATED calls (VoIP
+        // push bridge /call). A direct call that carried a reason got the
+        // "(Automatic notice: this is a JARVIS-initiated call…)" prompt +
+        // end_call instruction injected server-side — the call announced
+        // itself as automated and hung up (the exact bug Enrique reported).
         pendingAnswerPayload = VoIPPayload(
-            reason: "JARVIS call (from iOS app)",
+            reason: "",
             callID: uuid.uuidString.prefix(8).description,
             gatewayWS: "/voice-gw",
             scheduledBy: "ios-app-direct")
@@ -266,7 +283,9 @@ final class CallManager: NSObject, ObservableObject {
         let offerURL = base + payload.gatewayWS + "/api/offer"
         let client = try await WebRTCClient.connect(offerURL: offerURL,
                                                     tokenProvider: { @Sendable in try await AuthStore.shared.validAccessToken() },
-                                                    requestData: ["surface": "ios", "reason": payload.reason])
+                                                    requestData: payload.reason.isEmpty
+                                                        ? ["surface": "ios"]           // conversational (outgoing)
+                                                        : ["surface": "ios", "reason": payload.reason])
         // Gateway app messages ride the WebRTC data channel (same as the CC
         // voice page): hello carries brain/tts/stt, "state" drives the call
         // state label, transcripts show what JARVIS said.
@@ -610,6 +629,10 @@ extension CallManager: CXProviderDelegate {
             guard let rtc = self.webRTC else { return }
             rtc.setMuted(rtc.isMuted)
             rtc.setHeld(rtc.isHeld)
+            // Keep the toggle's state in sync with whatever the session was
+            // restored to (interrupt recovery resets the override to the
+            // category default; speakerEnabled re-applies it).
+            self.isSpeakerOn = WebRTCClient.speakerEnabled ?? false
         }
     }
 

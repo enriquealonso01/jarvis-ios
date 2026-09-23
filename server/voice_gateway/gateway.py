@@ -335,9 +335,19 @@ async def voice_gw_offer(request: Request):
             asyncio.get_running_loop().call_later(
                 6.0, lambda: asyncio.ensure_future(
                     s.say(f"(Automatic notice: this is a JARVIS-initiated call. Reason: {reason}. "
-                          f"Mention it naturally in one short sentence, then ask how he's doing.)")
+                          f"Speak the reason in one short sentence NOW, then immediately say a brief "
+                          f"goodbye and call the end_call tool. Do not use any other tool. Do not "
+                          f"wait for a reply — nobody will answer.)")
                 ) if not s.closed else None
             )
+            # Deterministic backstop: the realtime model sometimes answers the
+            # notice with a wrong tool (seen 2026-09-23: call_enrique instead
+            # of end_call), leaving the "initiated" call on the line forever.
+            # A reasoned call is fire-and-forget — hang it up server-side.
+            def _auto_stop(session=s):
+                if not session.closed:
+                    asyncio.ensure_future(session.stop())
+            asyncio.get_running_loop().call_later(40.0, _auto_stop)
 
     answer = await _handler.handle_web_request(request=req, webrtc_connection_callback=on_connection)
     return answer

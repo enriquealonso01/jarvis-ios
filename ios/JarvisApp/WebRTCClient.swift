@@ -122,6 +122,12 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         try? session.setPreferredSampleRate(48000)
         try? session.setPreferredIOBufferDuration(0.005)
         try? session.setActive(true)
+        // Restore the user's speaker pick across CallKit re-activations
+        // (hold/unhold, interruption recovery) — defaults are per-call state.
+        if let enabled = speakerEnabled {
+            try? session.overrideOutputAudioPort(enabled ? .speaker : .none)
+        }
+        startRouteObservation()
         // useManualAudio must be configured BEFORE the audio unit starts; with
         // manual audio the unit only starts on audioSessionDidActivate — which
         // can fire BEFORE connect() creates the track (fast-fulfill answer),
@@ -133,8 +139,58 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     }
 
     static func deactivateAudioSession(_ session: AVAudioSession) {
+        stopRouteObservation()
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
         activeAudioSession = nil
+    }
+
+    // MARK: Speaker routing (bug: speaker selection reverted to earpiece)
+
+    /// The route the user picked for THIS call: true = speaker, false =
+    /// receiver/earpiece. nil = no call active. Re-asserted on EVERY route
+    /// change (Bluetooth connect/disconnect, headphones, CarPlay) — without
+    /// this iOS silently falls back to the receiver after the change, which
+    /// is exactly the "speaker toggles itself back" bug.
+    nonisolated(unsafe) static var speakerEnabled: Bool?
+    private nonisolated(unsafe) static var routeObserver: NSObjectProtocol?
+
+    /// User tapped speaker on/off mid-call. Persists for the whole call via
+    /// the route-change observer (NOT just a one-shot override).
+    static func setSpeaker(_ on: Bool) {
+        speakerEnabled = on
+        guard let session = activeAudioSession else { return }
+        try? session.overrideOutputAudioPort(on ? .speaker : .none)
+        // A category re-assert after the override can drop it; re-apply.
+        try? session.overrideOutputAudioPort(on ? .speaker : .none)
+    }
+
+    static func startRouteObservation() {
+        guard routeObserver == nil else { return }
+        // Static context: `self` is the metatype (not weakable); the observer
+        // is removed explicitly in stopRouteObservation().
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil
+        ) { note in
+            guard let enabled = Self.speakerEnabled,
+                  let session = Self.activeAudioSession else { return }
+            // Re-assert on EVERY change; the risky ones are newDeviceAvailable
+            // (Bluetooth grabs the route) and oldDeviceUnavailable (headphones
+            // yanked -> iOS picks the receiver, ignoring the override).
+            if enabled {
+                try? session.overrideOutputAudioPort(.speaker)
+            }
+        }
+    }
+
+    /// Test hook (JarvisAppTests): same path as CallKit's didActivate.
+    static func activateAudioSessionForTesting(_ session: AVAudioSession) {
+        activateAudioSession(session)
+    }
+
+    static func stopRouteObservation() {
+        if let obs = routeObserver { NotificationCenter.default.removeObserver(obs) }
+        routeObserver = nil
+        speakerEnabled = nil
     }
 
     /// Full connect: build PC, create offer, POST to the gateway, set answer.

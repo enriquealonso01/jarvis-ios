@@ -53,6 +53,16 @@ struct CallsView: View {
                     }
                     .disabled(mgr.activeCallUUID != nil)
                     if mgr.activeCallUUID != nil && mgr.callState != "idle" {
+                        // Speaker toggle for the in-app call UI (the native
+                        // CallKit screen has its own; both drive the same
+                        // route override, which now HOLDS for the call).
+                        Button {
+                            mgr.setSpeaker(!mgr.isSpeakerOn)
+                            Haptics.tap()
+                        } label: {
+                            Label(mgr.isSpeakerOn ? "Speaker on" : "Speaker off",
+                                  systemImage: mgr.isSpeakerOn ? "speaker.wave.3.fill" : "speaker.wave.1")
+                        }
                         Button(role: .destructive) {
                             mgr.endActiveCall()
                         } label: {

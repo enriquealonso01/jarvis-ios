@@ -100,3 +100,27 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: Widgets/JarvisWidgets.entitlements
+  # Unit tests for the call path (audio-session contract + speaker
+  # routing). Runs headless on CI (xcodebuild test, iOS Simulator) as part
+  # of the pre-deploy gate — no human device testing required for these.
+  JarvisAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - JarvisAppTests
+    dependencies:
+      - target: JarvisApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.enriquecodes.jarvis.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  JarvisApp:
+    build:
+      targets:
+        JarvisApp: all
+        JarvisAppTests: [test]
+    test:
+      targets:
+        - JarvisAppTests
