@@ -1808,3 +1808,15 @@
   before `build` (needs: callflow); build job also runs xcodebuild unit tests
   (JarvisAppTests: audio-session category contract + speaker state machine) on
   the simulator BEFORE fastlane upload. DASH_SECRET_B64 repo secret set for CI.
+
+
+- ios-v29 SHIPPED (2026-09-23 14:23 UTC): build 64 uploaded, ASC processingState=VALID (verified via
+  new .github/workflows/asc-check.yml — the local apns.key is stale for ASC API (401 NOT_AUTHORIZED);
+  CI secrets hold the working ASC key). CI ladder now: callflow gate (11/11 vs live gw incl.
+  T6 no-self-hangup, T7 reasoned self-terminate, T8 hangup, T9 pins) -> xcodebuild unit tests
+  (AudioSessionLogicTests, needs AVFAudio import) -> fastlane beta upload. ROOT CAUSES: (1) app
+  placeDirectCall always sent reason -> gateway "JARVIS-initiated" notice + end_call self-hangup;
+  (2) speaker route reverted on route changes; (3) pyrnnoise 0.4.3 x audiolab 0.5.2 Graph(rate=)
+  kwarg drift crashed the gateway audio-input task -> NO inbound audio on every session since
+  Sep 22 15:50 (fixed pyrnnoise 0.4.5, pinned server/voice_gateway/requirements-pin.md).
+  Untested on device: real-call mic capture after RNNoise fix, speaker toggle UX, lock-screen answer.
