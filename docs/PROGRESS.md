@@ -1870,3 +1870,23 @@
   loops burned (runs 66/67) on the Swift type fixes above — budgeted per ios-ci-swift-fix-loop.
   UNTESTED ON DEVICE: the live verification call for bug B (round 3 fires exactly one, checks
   the audio summary + dashboard call record).
+
+- ios-v2.0.0 build 68 SHIPPED (2026-09-30 18:02 UTC, CI run 36754668402, ASC "BUILD: 68 VALID"
+  via asc-check run 7): ROUND-3 call-system fixes. (1) BUG A — dashboard ControlCenterPage
+  mounted TWO VoiceConsole instances (mobile mstack + desktop voicedock, one CSS-hidden); the
+  hidden twin auto-reconnected on brain 'reset' events and POSTed ghost cc_pwa offers 0-2s after
+  every real iOS call (confused session-replace + polluted logs). Fix: desktop voicedock gated on
+  !isNarrow (mutual exclusion), web/src rebuilt + stamp rewritten. (2) BUG B — silent
+  push-answered calls: CXAnswerCallAction fulfilled instantly (Pitfall G) so CallKit didActivate
+  fired while connectWebRTC() was still POSTing the offer; WebRTCClient's audio-session-activate
+  signal was consumed before the PC/track existed -> audio unit never started, zero audio both
+  ways. Fix: answer path now waits (bounded 10s) for WebRTCClient.isAudioSessionConfigured before
+  connect; new AnswerPathAudioGateTests. Verification added: gateway AudioCounterObserver logs
+  "audio summary pc=... in=N out=M frames" per session + first-frame lines; app logs remote-track
+  receipt + 5s playout stats (packets/emitted/concealed). GATES: callflow 11/11 vs live gw;
+  xcodebuild unit tests green; two CI Swift fixes en route (run 66: 'async' call in sync
+  nonisolated CXAnswerCallAction provider callback -> wait moved inside the Task; run 67:
+  RTCTrack.kind is String? in stasel M130 (compare literal "audio") + RTCStatisticsReport values
+  are [String: NSObject] (stringify via .map)). LIVE VERIFICATION CALL: pending — 2 rings
+  18:12/18:16 UTC unanswered (push_ok 22->23, Apple accepted both); call only verifies once
+  build 68 is installed on the phone.
