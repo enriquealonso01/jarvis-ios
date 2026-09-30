@@ -303,6 +303,32 @@ _sessions = VoiceSessionManager()
 _ice = [IceServer(urls=os.environ.get("VOICE_STUN", "stun:stun.l.google.com:19302"))]
 _handler = SmallWebRTCRequestHandler(ice_servers=_ice, connection_mode=ConnectionMode.MULTIPLE)
 
+# --- one-live-session-per-host guard (2026-09-30) -----------------------------
+# Evidence 2026-09-30 15:12: two offers 14s apart both became LIVE pipelines
+# (#13 + #14) and JARVIS talked over himself; both then died on ICE. The app
+# can double-fire (PWA reconnect racing a fresh offer), so a new offer now
+# REPLACES the previous live session: stop old, then start new. Best UX — the
+# newest device wins, no overlapping voices. (pipecat's MULTIPLE mode is kept
+# for the request handler; the guard below is what actually serializes.)
+_replace_lock = asyncio.Lock()
+
+
+async def _replace_previous_session() -> None:
+    """Stop any live session(s) before a new one starts (serialized so two
+    racing offers can't both be mid-teardown and mid-start together)."""
+    async with _replace_lock:
+        stale = [s for s in _sessions.list()
+                 if not s.get("closed") and s.get("surface") in ("ios", "cc_pwa")]
+        for snap in stale:
+            s = _sessions.get(snap["pc_id"])
+            if s is not None and not s.closed:
+                log.info("session-replace: stopping previous live session pc=%s surface=%s",
+                         snap["pc_id"], snap["surface"])
+                try:
+                    await s.stop()
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("session-replace: stop failed for %s: %s", snap["pc_id"], exc)
+
 
 @app.post("/voice-gw/api/offer")
 async def voice_gw_offer(request: Request):
@@ -328,16 +354,30 @@ async def voice_gw_offer(request: Request):
     reason = str(rd.get("reason") or "").strip()
 
     async def on_connection(connection: SmallWebRTCConnection):
+        # One live session per host: the newest offer replaces the previous
+        # session cleanly (stop old → start new). This is the fix for the
+        # 2026-09-30 duplicate-session bug (two pipelines talking over each
+        # other, then both dying on ICE).
+        await _replace_previous_session()
         s = await _sessions.start(surface, connection)
         if reason:
             # Queue after start; the greeting fires on client-connected, so the
             # reason lands as a follow-up line right after the greeting.
+            # (2026-09-30: session.inject_user_text now queues/retries until
+            # the realtime websocket is ready — this notice can no longer be
+            # silently dropped with "websocket not ready".)
             asyncio.get_running_loop().call_later(
-                6.0, lambda: asyncio.ensure_future(
-                    s.say(f"(Automatic notice: this is a JARVIS-initiated call. Reason: {reason}. "
-                          f"Speak the reason in one short sentence NOW, then immediately say a brief "
-                          f"goodbye and call the end_call tool. Do not use any other tool. Do not "
-                          f"wait for a reply — nobody will answer.)")
+                5.0, lambda: asyncio.ensure_future(
+                    s.say(f"(System note, never read aloud verbatim: You placed this call "
+                          f"yourself. Reason you called: {reason}. Open like a person who "
+                          f"rang with a purpose — one natural sentence greeting him and "
+                          f"delivering the reason conversationally (use your own words, do "
+                          f"not say 'reason' or 'notice' or 'call'). If it is a result you "
+                          f"promised him, lead with the result itself. Then chat briefly: "
+                          f"he may respond. When the conversation naturally winds down — or "
+                          f"if he does not pick up the thread after two exchanges — say a "
+                          f"short goodbye and call the end_call tool. Do not use any other "
+                          f"tool, do not call call_enrique.)")
                 ) if not s.closed else None
             )
             # Deterministic backstop: the realtime model sometimes answers the

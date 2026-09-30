@@ -62,6 +62,7 @@ from pipecat.services.whisper.stt import Model as WhisperModel
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
+from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
@@ -232,6 +233,10 @@ class UIObserver(BaseObserver):
         self._assistant_buf = []
         if not text:
             return
+        try:
+            text = brain_mod.speakable(text)
+        except Exception:  # noqa: BLE001 - display-only, never break a call
+            pass
         # An interrupted response re-emits its tail after the flush; drop
         # near-duplicates of what was just shown.
         import re as _re
@@ -303,7 +308,8 @@ class VoiceSession:
         system_prompt = brain_mod.build_system_prompt(ctx)
         tools = brain_mod.Tools(dashboard, self.thread_id, self.status,
                                 task_getter=lambda: self.task,
-                                inject=self.inject_user_text, ui=self.ui)
+                                inject=self.inject_user_text, ui=self.ui,
+                                ender=self.stop)
         tools_schema = await tools.build()
         self.tools = tools
 
@@ -353,6 +359,7 @@ class VoiceSession:
                 webrtc_connection=self.connection,
                 params=TransportParams(
                     audio_in_enabled=True,
+                    audio_in_filter=RNNoiseFilter(),
                     audio_out_enabled=True,
                     audio_in_sample_rate=in_rate,
                     audio_out_sample_rate=24000,
@@ -375,10 +382,11 @@ class VoiceSession:
                 g = greeting()
                 if g and self.task:
                     if self.realtime:
-                        await self.task.queue_frame(LLMMessagesAppendFrame(
-                            messages=[{"role": "user", "content":
-                                       "(Automatic notice: the call just connected. Say exactly "
-                                       + repr(g) + " and nothing else.)"}], run_llm=True))
+                        # Same dead-frame issue as _greet_later: speak the
+                        # greeting via direct client events.
+                        await self.inject_user_text(
+                            "(Automatic notice: the call just connected. Say exactly "
+                            + repr(g) + " and nothing else.)")
                     else:
                         await self.task.queue_frame(TTSSpeakFrame(g))
 
@@ -437,10 +445,14 @@ class VoiceSession:
         if not g or not self.task or self.closed:
             return
         if self.realtime:
-            await self.task.queue_frame(LLMMessagesAppendFrame(
-                messages=[{"role": "user", "content":
-                           "(Automatic notice: the call just connected. Say exactly "
-                           + repr(g) + " and nothing else.)"}], run_llm=True))
+            # LLMMessagesAppendFrame is a no-op on the realtime service (its
+            # handler is literally `logger.error("NEED TO IMPLEMENT")`), so the
+            # Discord greeting never fired — he sat in silence and had to speak
+            # first. Inject a user-role notice + response.create directly, same
+            # as inject_user_text does.
+            await self.inject_user_text(
+                "(Automatic notice: the call just connected. Say exactly "
+                + repr(g) + " and nothing else.)")
         else:
             await self.task.queue_frame(TTSSpeakFrame(g))
 
@@ -486,28 +498,55 @@ class VoiceSession:
         respond. Cascade: an LLMMessagesAppendFrame through the aggregator.
         Realtime: Pipecat 1.10's OpenAIRealtimeLLMService leaves message-append
         unimplemented (a context update only forwards tool results), so send
-        the client events directly: conversation.item.create + response.create."""
+        the client events directly: conversation.item.create + response.create.
+
+        Reliability contract (2026-09-30): an injection is NEVER silently
+        dropped. The old code bailed with `realtime inject skipped: websocket
+        not ready` when the realtime socket hadn't finished its session
+        bootstrap — the greeting/notice was lost on exactly those calls.
+        Now we wait (bounded) for the socket, and retry after short
+        reconnect blips. If the session closes first, we log a loud error.
+        """
         text = (text or "").strip()
         if not text or not self.task:
             return
         llm = getattr(self, "llm", None)
-        if self.realtime and llm is not None and getattr(llm, "_websocket", None):
-            # Right after connect the realtime session is still receiving its
-            # instructions + greeting; a message injected in that window got a
-            # persona-less "Hey there! happy to help" (seen in testing). Wait it out.
-            since = time.time() - getattr(self, "_connected_at", 0.0)
-            if since < 3.5:
-                await asyncio.sleep(3.5 - since)
-            try:
-                from pipecat.services.openai.realtime import events as rt
-                item = rt.ConversationItem(
-                    type="message", role="user",
-                    content=[rt.ItemContent(type="input_text", text=text)])
+        if self.realtime:
+            from pipecat.services.openai.realtime import events as rt
+            item = rt.ConversationItem(
+                type="message", role="user",
+                content=[rt.ItemContent(type="input_text", text=text)])
+
+            async def _rt_send() -> bool:
+                sock = getattr(llm, "_websocket", None)
+                if sock is None:
+                    return False
+                # Right after connect the realtime session is still receiving
+                # its instructions + greeting; a message injected in that
+                # window got a persona-less "Hey there! happy to help" (seen
+                # in testing). Wait that window out before the first send.
+                since = time.time() - getattr(self, "_connected_at", 0.0)
+                if since < 3.5:
+                    await asyncio.sleep(3.5 - since)
                 await llm.send_client_event(rt.ConversationItemCreateEvent(item=item))
                 await llm.send_client_event(rt.ResponseCreateEvent())
-                return
-            except Exception as exc:  # noqa: BLE001 - fall back to the frame path
-                log.warning("realtime inject failed ({}); falling back to append frame", exc)
+                return True
+
+            # Bounded wait+retry: 10s for the initial bootstrap, then up to 3
+            # short retries for a mid-call reconnect (total ceiling ~16s).
+            deadline = time.time() + 10.0
+            while True:
+                try:
+                    if await _rt_send():
+                        return
+                except Exception as exc:  # noqa: BLE001 - fall through to retry
+                    log.warning("realtime inject attempt failed: {}", exc)
+                if self.closed or time.time() > deadline:
+                    log.error("realtime inject DROPPED (websocket never ready, "
+                              "session closed={}) — text: {!r}", self.closed, text[:120])
+                    return
+                await asyncio.sleep(1.0)
+                llm = getattr(self, "llm", None)
         await self.task.queue_frame(
             LLMMessagesAppendFrame(messages=[{"role": "user", "content": text}], run_llm=True))
 

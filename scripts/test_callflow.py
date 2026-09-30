@@ -330,12 +330,16 @@ def t_gateway_pins() -> None:
             else:
                 record(f"T9 gateway pins ({name})", False, "gateway.py not readable")
             continue
-        # The notice must be scoped to REASONED calls (inside `if reason:`)
-        # and must be self-terminating (end_call instruction present).
-        scoped = re.search(r"if reason:.*?JARVIS-initiated call", src_text, re.S) is not None
-        selfterm = "end_call" in src_text.split("JARVIS-initiated", 1)[-1][:400]
-        record(f"T9 reason-notice scoped+self-terminating ({name})", scoped and selfterm,
-               f"scoped={scoped} selfterminating={selfterm}")
+        # The notice must be scoped to REASONED calls (inside `if reason:`),
+        # must be self-terminating (end_call instruction present), and must
+        # NOT carry the robotic "(Automatic notice: ..." phrasing (2026-09-30
+        # overhaul: the notice now reads like a purposeful person — the model
+        # is told to open naturally and lead with the result).
+        scoped = re.search(r"if reason:.*?Reason you called", src_text, re.S) is not None
+        selfterm = "end_call" in src_text.split("Reason you called", 1)[-1][:900]
+        robotic = "Automatic notice: this is a JARVIS-initiated call" in src_text
+        record(f"T9 reason-notice scoped+self-terminating ({name})", scoped and selfterm and not robotic,
+               f"scoped={scoped} selfterminating={selfterm} robotic_notice={robotic}")
 
 
 async def main_async(base: str) -> int:

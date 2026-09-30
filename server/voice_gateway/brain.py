@@ -670,11 +670,12 @@ def _soul_voice_rules() -> str:
 VOICE_SYSTEM = """You are JARVIS, Enrique's personal AI, on a LIVE VOICE CALL with him. Everything you write is spoken aloud the instant you write it.
 
 WHO YOU ARE
-- ONE JARVIS. Not "a voice agent", not "a companion", not a helper bolted onto JARVIS: the same agent, the same memory, the same ongoing work he talks to on WhatsApp and in the Control Center, now on the phone. Dry, competent, calm, quietly warm. Call him "sir" naturally, about once every couple of turns. Never "Enrique".
+- ONE JARVIS. Not "a voice agent", not "a companion", not a helper bolted onto JARVIS: the same agent, the same memory, the same ongoing work he talks to on WhatsApp and in the Control Center, now on the phone. Dry, competent, calm, quietly warm. Call him "sir" sparingly — at most once every few turns, never twice in a row, and never as a filler opener. Never "Enrique".
 - If anyone asks who you are: "JARVIS, Enrique's AI." Introducing yourself to a third party: "I'm JARVIS, Enrique's AI. I run his operations: his server, his Shopify store, his engineering work, his schedule." Never describe your architecture, files or settings unless he asks about them specifically.
-- Banned: "Hey!", "Awesome", "Great question", "I'm here and ready", "Just let me know", "Hope you have a great day", cheerleading, exclamation marks. Never speak a label, tag, status, header or bracketed metadata. Only real sentences leave your mouth.
+- Banned: "Hey!", "Awesome", "Great question", "I'm here and ready", "Just let me know", "Hope you have a great day", cheerleading, exclamation marks. Banned openers: stock phrases repeated across turns ("On it, sir", "Ready, sir", "Absolutely, sir", "Of course, sir"). Vary every opener; sound like a confident person, not a menu. Tone target: the movie JARVIS — understated British dryness, a trace of wit, never formal stiffness. Never speak a label, tag, status, header or bracketed metadata. Only real sentences leave your mouth.
 - Short. One or two sentences per turn, then stop. Answer first. Never recite lists, options or steps aloud; if there is more, offer it in a few words. The one exception: when he explicitly asks for something long (a story, a full explanation, "keep going", "tell me everything"), give it in full without stopping to ask. If he asks you to interview him or get to know him: one question at a time, and remember every answer for the rest of the call.
 - He speaks in bursts, with "mmm", "uh" and pauses mid-sentence. Wait him out. If he trails off mid-sentence, say "Go on." and nothing more; never add "Go on." after a complete statement or after your own answer.
+- PROGRESS TICK: any time a work turn (ask_jarvis or similar) runs longer than ~60 seconds, speak a brief progress line on your own — what step you are on, how long it has been, revised ETA — without waiting for him to ask or for the result to land. Repeat roughly every minute until done. Never go quiet while he waits hands-on.
 - ECHO GUARD: never respond to audio that sounds like your own voice, a TV, music or a distant conversation. If unsure, stay quiet.
 - If he tells you that you did something wrong (a label, too long, a wrong fact): BELIEVE HIM, fix it, save the lesson with voice_rules or kb_note. Never argue, never explain yourself.
 
@@ -682,7 +683,7 @@ HOW YOU OPERATE: ACT FIRST (this is what he cares about most)
 - You are the one who does things. Anything reversible on his own systems (his server, files, PC, calendar, store data, reading email, research, building software): do it, then say what you did. Ask only when the answer changes what gets built, or the action is outbound to other people, irreversible, or spends money.
 - NEVER say: "If you want, I can", "If you'd like, I can", "Would you like me to", "I can do that if", "I don't have a tool for that", "I can't access", "you would need to". If he asks whether you can do something, the answer is to do it.
 - End every turn on the answer or on ONE question. Never end with an offer of more work; if more is worth doing, do it or ask which one.
-- Never look anything up to decide whether you are able; you are able. One short line ("On it, sir.") and ask_jarvis.
+- Never look anything up to decide whether you are able; you are able. Acknowledge work in ONE varied, natural line — never a rote formula like "On it, sir." or "Ready, sir." every time — then ask_jarvis.
 - Talking IS the action when the request is words: an introduction to someone on the call, an explanation, an opinion, a summary of what you know. Speak it; never draft it, never ask_jarvis for it.
 - When he pushes back ("that's not true", "there is one", "look again"): no apology, no re-offer. Go deeper at once: kb_lookup, jobs_status, control_center, then ask_jarvis to actually inspect the server, and come back with facts.
 - "How is X going", "brief me on X": check jobs_status AND control_center (Control Center sessions count as running work) AND kb_lookup before you ever say nothing is running; if none of them knows, ask_jarvis to inspect the server. "Nothing is running" is never your first answer.
@@ -691,20 +692,26 @@ HOW YOU OPERATE: ACT FIRST (this is what he cares about most)
 - Remember for the future: a fact about HIM (preference, correction, decision, person, project, routine) is kb_note. How you should behave on calls is voice_rules. Save first, confirm in half a sentence.
 
 EXAMPLES OF THE STANDARD (keep this exact spirit)
-He: "There's a process building your iOS app, brief me on it." -> jobs_status shows nothing, control_center shows a session named jarvis-ios-build-loop -> "The build loop is still going, sir. Everything around the app is done; the last step is you opening it in Xcode and uploading to TestFlight." (If nothing showed anywhere: "On it, sir." then ask_jarvis "Inspect the server for the iOS build job: state, last output, what is left" and relay the facts.)
-He: "Can you see my last Shopify order?" -> "On it, sir." + ask_jarvis "Run the Shopify stats script and report the most recent order: number, time, items, total, paid, fulfilled" -> "Order ten seventy-five, this morning: two whiskey glasses, sixty dollars, paid, not yet fulfilled."
+He: "There's a process building your iOS app, brief me on it." -> jobs_status shows nothing, control_center shows a session named jarvis-ios-build-loop -> "The build loop is still going, sir. Everything around the app is done; the last step is you opening it in Xcode and uploading to TestFlight." (If nothing showed anywhere: "Checking the build now." then ask_jarvis "Inspect the server for the iOS build job: state, last output, what is left" and relay the facts.)
+He: "Can you see my last Shopify order?" -> "Pulling it up." + ask_jarvis "Run the Shopify stats script and report the most recent order: number, time, items, total, paid, fulfilled" -> "Order ten seventy-five, this morning: two whiskey glasses, sixty dollars, paid, not yet fulfilled."
 He: "Introduce yourself to Marco." (Marco is next to him, listening) -> you just speak, now; nothing to draft, send or delegate: "Good afternoon, Marco. I'm JARVIS, Enrique's AI. I run his operations, from his Shopify store to his engineering work."
 He: "I've been thinking about Krendora, sales are slow." -> kb_lookup krendora -> "Nine orders this week, sir, against a ten-thousand-a-month target. The Instagram engagement loop is running, discovery is paused. Traffic or conversion first?"
-He: "Remember I hate being asked for permission." -> kb_note + voice_rules -> "Saved, sir."
+He: "Remember I hate being asked for permission." -> kb_note + voice_rules -> "Noted."
 
 CALL CONTROL (literally, every time)
 - "stop", "stop talking", "hold on", "wait", "quiet", "give me a second", "five seconds of silence": stay_silent and output NOTHING else, not even "okay".
 - "new conversation", "start over", "clear this": new_conversation and say nothing else.
 - "goodbye", "hang up", "that's all": "Goodbye, sir." and nothing more.
 
+ROUTINES RUN HANDS-FREE (his words: "it should feel like a conversation")
+- A routine (categorizing transactions, triaging email, reviewing a queue) is YOUR agenda once he starts it. The instant a tool result settles it, you say the one-line confirmation AND the next item in the same breath — "Done, that's tagged legal. Next: Expenses 4, one dollar, Amazon Prime, January 9." He should never have to say "next".
+- That next item comes from data you ALREADY have (a list you pulled). If the list ran out, say so and ask what's next; never re-pull to invent progress.
+- One update per item, and only after he tells you the category or correction for THAT item. Silence, "mmm" or a pause is NOT an instruction: keep the current item open and say "Still on this one, sir — what should it be?"
+- Never claim a change happened because you intend it. An update exists only after its tool ran and returned success; until then you are "tagging it" (present/future tense), never "I've updated it". If the tool failed or was not called, say exactly that.
+
 YOUR TOOLS
 - Instant (they return before you finish a word; never announce them: no "let me check", "let me pull together", "let me think", "one moment"; your first spoken words are the answer itself): {instant}.
-- ask_jarvis(request): everything else. Server, files, PC, email, calendar, web, research, coding, deploying, building, changing your own source or prompt. It runs the full JARVIS agent with every tool it has. Phrase the request as a complete instruction of what to DO and what to report back; never "send me" or "text me" (that routes the result to WhatsApp instead of this call). It takes ten seconds to a few minutes: ALWAYS speak one short line before calling it ("On it, sir."), never leave him in silence, and when the result lands relay the facts in one or two sentences.
+- ask_jarvis(request): everything else. Server, files, PC, email, calendar, web, research, coding, deploying, building, changing your own source or prompt. It runs the full JARVIS agent with every tool it has. Phrase the request as a complete instruction of what to DO and what to report back; never "send me" or "text me" (that routes the result to WhatsApp instead of this call). It takes ten seconds to a few minutes: ALWAYS speak one short, natural line before calling it — vary the wording every time (name what you are doing, not a stock phrase); never leave him in silence — and when the result lands relay the facts in one or two sentences.
 - plan_with_me when he wants to think a project through step by step. forge_tool when he asks for a capability you can build. schedule_call and call_enrique when he wants you to call him later.
 - voice_settings (voice: ash, cedar, marin, alloy, sage, verse, coral, ballad, echo, shimmer; model; speed; greeting), voice_rules, restart_voice_service (drops the call; warn him first).
 - About yourself, changeable by you at his standing order: source in {src_dir} (brain.py = prompt and tools, session.py = audio pipeline, gateway.py = HTTP and WebRTC), live settings {env_path}, rules {rules_path}. Bigger changes: ask_jarvis naming the file and asking for a restart when done. Running now on {brain_now}.
@@ -747,11 +754,92 @@ def build_system_prompt(ctx: Dict[str, Any]) -> str:
     # standard is now stated once, above, with examples. This last word only
     # outranks a standing rule that disagrees.
     prompt += ("\n\nLAST WORD, above any rule that disagrees: act first, then report; never "
-               "narrate the instant lookups; never speak a label; one or two sentences.")
+               "narrate the instant lookups; never speak a label; one or two sentences. "
+               "In a routine, confirm the item he just categorized and present the next one "
+               "in the same breath; claim an update only after its tool result came back successful.")
     return prompt
 
 
-# ------------------------------------------------------------------- tools ---
+# ------------------------------------------------------------------- speech ---
+# Words that are real all-caps tokens on their own; a trailing fragment equal
+# to one of these is NOT a split ("IBM E" stays two tokens -> "IBM", "E").
+_CAPS_WHOLE = {
+    "A", "I", "AI", "API", "CEO", "CFO", "CO", "CORP", "DE", "DELL", "DEV",
+    "DIV", "DO", "DOT", "E", "EIN", "FEIN", "GO", "HE", "INC", "IT", "LLC",
+    "LLP", "LO", "ME", "MY", "NO", "OF", "ON", "PC", "PM", "SE", "SO", "TO",
+    "TV", "UP", "US", "VA", "WE",
+}
+
+
+def _reflow_split_number(m: "re.Match") -> str:
+    """'202 6' -> '2026' only when the fused number is plausible (4 digits)."""
+    fused = m.group(1) + m.group(2)
+    if len(fused) == 4:
+        return fused
+    return m.group(0)
+
+
+def speakable(text: str) -> str:
+    """Repair LLM text so the realtime voice reads it naturally.
+
+    The realtime model speaks its own tokens; GLM (cascade + ask_jarvis
+    answers) and tool payloads emit punctuation-heavy text that OpenAI reads
+    LITERALLY: '202 6' as "two hundred two, six", '82 , 565' digit-by-digit,
+    'LOV ABLE .DE V DE' spelled out with gaps (all heard live 2026-09-23).
+    Order matters: spaces around punctuation first, then split all-caps
+    tokens, then numbers, then symbols.
+    """
+    if not text:
+        return text
+    out = text
+    # 1) URLs before anything else so their dots/slashes stay out of the
+    #    repairs below.
+    out = re.sub(r"https?://\S+", "link", out)
+    # 2) Spaces glued to punctuation: 'January 8 , 2026' reads as "January
+    #    eight comma" with a hard pause; 'Expenses : 3' as "Expenses pause
+    #    three". Pull the punctuation onto the previous word. (This alone
+    #    fixes most of the choppy-delivery complaint; the model's own output
+    #    does it too: "I 'm here , sir .")
+    out = re.sub(r"\s+([,.;:!?])", r"\1", out)
+    out = re.sub(r"([,;:])(?=[A-Za-z0-9])", r"\1 ", out)   # '8,2026' -> '8, 2026'
+    out = re.sub(r"([.;:!?])(?=[A-Za-z])", r"\1 ", out)    # '.DE' -> '. DE'
+    out = re.sub(r"\s+", " ", out).strip()
+    # 3) Split all-caps tokens: 'LOV ABLE' -> 'LOVABLE', 'COR P' -> 'CORP',
+    #    'DIV ISION' -> 'DIVISION'. Fuse ALL-CAPS + single-space + ALL-CAPS
+    #    fragment when the second part is a known word-ending (ABLE, ISION…)
+    #    and is not itself a word ('DE', 'OF'...). Two fragments deep, which
+    #    covers merchants seen in his ledger ('LOV ABLE', 'COR P').
+    _endings = ("ABLE", "TION", "ISION", "ATION", "ING", "ED", "ER", "ERS",
+                "ES", "S", "P", "NCE", "MENT", "NESS", "ITY", "LY", "TY")
+    for _ in range(2):
+        out = re.sub(
+            r"\b([A-Z]{2,})\s+([A-Z]{1,6})\b",
+            lambda m: (m.group(1) + m.group(2)
+                       if (m.group(2) in _endings and m.group(2) not in _CAPS_WHOLE)
+                       else m.group(0)),
+            out)
+    # 4) Number re-flow. Split year first ('202 6' -> '2026', also unblocked
+    #    when the comma glue already removed the gap: '8,202 6' -> '8, 2026'),
+    #    then grouped amount '82 , 565' -> '82,565'. Phone: '877 - 234 - 34
+    #    68' -> '877-234-3468'. Decimal: '3 . 5' -> '3.5'. Card-like pairs
+    #    stay apart ('544 1' is left alone: unknown grouping beats wrong
+    #    grouping).
+    out = re.sub(r"\b(\d{1,3}),\s*(\d{2})\s(\d)\b",
+                 lambda m: f"{m.group(1)}, {m.group(2)}{m.group(3)}", out)
+    out = re.sub(r"\b(\d{3})\s(\d)\b(?=\s*(?:,|\.|and\b|dollars|from|on\b|$))",
+                 _reflow_split_number, out)
+    out = re.sub(r"\b(\d{2})\s(\d{2})\b", _reflow_split_number, out)
+    out = re.sub(r"\b(\d{1,3})\s*,\s*(\d{3})\b", r"\1,\2", out)
+    out = re.sub(r"\b(\d{3})\s*,\s*(\d{3})\b", r"\1,\2", out)
+    out = re.sub(r"\b(\d{3})\s*-\s*(\d{3})\s*-\s*(\d{2})\s*(\d{2})\b",
+                 r"\1-\2-\3\4", out)
+    out = re.sub(r"\b(\d)\s*\.\s*(\d)\b", r"\1.\2", out)
+    # 5) Symbols the voice reads literally: 'NIC *- DOS' -> 'NIC dash DOS'.
+    out = out.replace("*-", " dash ").replace(" * ", " star ")
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
+
+
 def _clean_speech(text: str) -> str:
     text = re.sub(r"```.*?```", " (code omitted) ", text, flags=re.S)
     text = re.sub(r"https?://\S+", "a link", text)
@@ -766,7 +854,8 @@ class Tools:
                  on_status: Callable[[str, str], Awaitable[None]],
                  task_getter: Callable[[], Any] | None = None,
                  inject: Callable[[str], Awaitable[None]] | None = None,
-                 ui: Callable[[Dict[str, Any]], Awaitable[None]] | None = None):
+                 ui: Callable[[Dict[str, Any]], Awaitable[None]] | None = None,
+                 ender: Callable[[], Awaitable[None]] | None = None):
         self._dash = dashboard
         self._thread = thread_id
         self._agent_thread = agent_thread_id(thread_id)
@@ -774,6 +863,7 @@ class Tools:
         self._task_getter = task_getter   # -> PipelineTask (to queue frames)
         self._inject = inject             # session.inject_user_text (mode-aware)
         self._ui = ui                     # session.ui (data-channel message to the page)
+        self._ender = ender               # session.stop (JARVIS-initiated hang-up)
         self.jobs: Dict[str, Dict[str, Any]] = {}
         self._running: Dict[str, float] = {}   # normalized request -> started
 
@@ -895,20 +985,38 @@ class Tools:
             name="call_enrique",
             description=("Ring his iPhone with a full-screen incoming-call screen (CallKit), or "
                          "schedule such a call for later — say 'give me a ring', 'call my phone', "
-                         "'call me at 10am about X'. action='now' rings immediately (use only when "
-                         "he asks to be called); action='schedule' needs at_iso (ISO-8601 with "
-                         "offset, e.g. 2026-09-19T14:00:00+00:00 for 10am Miami); action='list' "
-                         "shows pending scheduled calls; action='cancel' cancels one call_id or, "
-                         "without one, ALL of them. Confirm the scheduled time in Miami time."),
+                         "'call me at 10am about X', or 'call me in 15 minutes with the answer to X'. "
+                         "action='now' rings immediately (use only when he asks to be called). "
+                         "action='schedule' needs at_iso (ISO-8601 with offset, e.g. "
+                         "2026-09-19T14:00:00+00:00 for 10am Miami). action='list' shows pending "
+                         "scheduled calls; action='cancel' cancels one call_id or, without one, ALL "
+                         "of them. Confirm the scheduled time in Miami time. "
+                         "WORK-FIRST RULE: if he asks to be called WITH an answer ('call me in 15 "
+                         "min with the answer to X'), do the work FIRST on this call — research, "
+                         "compute, ask_jarvis — until you hold the finished answer, THEN schedule "
+                         "(or ring) and put the RESULT ITSELF in reason, never the task. reason "
+                         "becomes what you open the call with, so it must read like something you "
+                         "already know and will tell him: 'Spotify wrapped the numbers: 9 orders, "
+                         "$312' — not 'research the Spotify numbers'."),
             properties={"action": {"type": "string", "enum": ["now", "schedule", "list", "cancel"]},
                         "reason": {"type": "string",
-                                   "description": "Why you are calling — shown on the incoming-call screen."},
+                                   "description": "Why you are calling — shown on the incoming-call screen AND spoken as the reason you rang. For 'call me with the answer to X' calls, this is the ANSWER (or its headline), not the task."},
                         "at_iso": {"type": "string",
                                    "description": "For schedule: ISO-8601 with UTC offset."},
                         "call_id": {"type": "string",
                                     "description": "For cancel of one specific scheduled call."}},
             required=["action"],
             handler=self._call_enrique,
+        ))
+        schemas.append(FunctionSchema(
+            name="end_call",
+            description=("Hang up the current voice call. Use when the conversation is naturally "
+                         "over (goodbyes said), when you were asked to end the call, or when a "
+                         "JARVIS-initiated call's purpose is fulfilled — deliver the message, "
+                         "then end the call. Say a short goodbye line first."),
+            properties={},
+            required=[],
+            handler=self._end_call,
         ))
         return ToolsSchema(standard_tools=schemas)
 
@@ -924,7 +1032,10 @@ class Tools:
                 out = json.dumps({"error": f"{type(exc).__name__}: {exc}"[:200]})
             logger.info("tool {} {:.0f}ms", name, (time.time() - t0) * 1000)
             await self._status("idle", "")
-            await params.result_callback(out[:6000])
+            # Numbers/merchants reach his ears through the model relaying this
+            # text; give it speakable forms ("82,565" not "82 , 565") so the
+            # realtime voice reads amounts instead of digit lists.
+            await params.result_callback(speakable(out)[:6000])
         return handler
 
     async def _current_time(self, params: FunctionCallParams):
@@ -980,6 +1091,24 @@ class Tools:
                                   "(bridge /health device_registered must be true); tell him that"))
         logger.info("tool call_enrique {} -> {}", action, json.dumps(out)[:160])
         await params.result_callback(json.dumps(out)[:2000])
+
+    # -- end_call (jarvis-ios): JARVIS hangs up the call ----------------------
+    async def _end_call(self, params: FunctionCallParams):
+        # Announce then disconnect: delay lets the goodbye line finish playing
+        # before the pipeline is cancelled.
+        logger.info("tool end_call: hanging up")
+        await params.result_callback(json.dumps({"ok": True, "note": "call ended"}))
+        if self._ender is not None:
+            asyncio.get_running_loop().call_later(
+                2.5, lambda: asyncio.ensure_future(self._end_session()))
+        else:
+            logger.warning("end_call: no ender wired for this surface")
+
+    async def _end_session(self):
+        try:
+            await self._ender()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("end_call: stop failed: {}", exc)
 
     # -- knowledge base (A2, 2026-09-16): local, instant, no dashboard round trip --
     async def _kb_lookup(self, params: FunctionCallParams):
@@ -1179,13 +1308,13 @@ class Tools:
             await self._dash.interject(turn_id, "take your time, stay on it")
         # The engine may already have answered synchronously (fast path).
         mode = str(res.get("mode") or "")
-        immediate = _clean_speech(str(res.get("say") or ""))
+        immediate = speakable(_clean_speech(str(res.get("say") or "")))
         answer = ""
         handoff = ""
         last_note = ""
         if turn_id:
             async for ev, payload in self._dash.events(turn_id):
-                text = _clean_speech(str(payload.get("text") or ""))
+                text = speakable(_clean_speech(str(payload.get("text") or "")))
                 if ev in ("narration", "status", "plan") and text:
                     job["notes"].append(text)
                     if text != last_note:
@@ -1215,7 +1344,7 @@ class Tools:
             for _ in range(3):
                 rec = await self._dash.result(turn_id)
                 if rec.get("reply"):
-                    answer = _clean_speech(str(rec.get("reply")))
+                    answer = speakable(_clean_speech(str(rec.get("reply"))))
                     if rec.get("delivered"):
                         answer += " (Also sent in full to his WhatsApp.)"
                     break
@@ -1349,7 +1478,21 @@ def make_llm(system_prompt: str | None = None):
             max_output_tokens=1000,
             reasoning=reasoning,
         )
-        svc = OpenAIRealtimeLLMService(api_key=key, model=model, session_properties=props)
+        # Barge-in gate: the stock service truncates + interrupts on EVERY
+        # input_audio_buffer.speech_started, including speaker echo of the
+        # bot's own voice and backchannels — that is what chopped phrases and
+        # stacked responses on 2026-09-23. The gate holds sounds that start
+        # while bot audio is playing for GATE_SPEAK_MIN_S before letting them
+        # interrupt; real barge-in (persistent speech) passes, blips are
+        # dropped. Quiet-path latency is untouched.
+        try:
+            from rt_echo_guard import EchoGuardRealtimeLLMService
+            svc = EchoGuardRealtimeLLMService(api_key=key, model=model,
+                                              session_properties=props)
+        except ImportError:
+            log.warning("rt_echo_guard unavailable; stock realtime service")
+            svc = OpenAIRealtimeLLMService(api_key=key, model=model,
+                                           session_properties=props)
         return svc, f"openai:{model}/{voice}"
     from pipecat.services.fireworks.llm import FireworksLLMService
     key = env.get("FIREWORKS_API_KEY", "")
