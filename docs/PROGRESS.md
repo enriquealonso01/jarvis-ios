@@ -1841,3 +1841,32 @@
   PASS (repo mirror == /opt/voice-gw). iOS side already correct from build 64 tree: CXAnswerCallAction
   fulfills immediately (no lock-screen timeout), no foreground-on-answer path exists, speaker =
   defaultToSpeaker baseline + per-call speakerEnabled re-asserted on every route change/activation.
+
+- ios-v31 SHIPPED (2026-09-30): dashboard phantom offers + CallKit answer-path audio gate,
+  build 68 (CI run 36754668402, ASC "BUILD: 68 VALID" via asc-check dispatch — Pitfall N
+  VERSION mapping fix 35afbf0 worked: log printed VERSION: 68). ROOT CAUSES + fixes:
+  (1) BUG A — DASHBOARD TWIN PHANTOM OFFERS: ControlCenterPage mounted TWO VoiceConsole
+  instances (mobile "mstack" + desktop "voicedock"), CSS-hiding one; the hidden twin
+  auto-reconnected on brain 'reset' events and POSTed ghost cc_pwa offers within 0-2s of
+  every real iOS call (gateway journal: 401/accept pairs seconds apart). Fix dashboard-side:
+  BOTH twins gated off each other with isNarrow = matchMedia('(max-width: 820px)') — mobile
+  mstack renders only when isNarrow, desktop voicedock only when !isNarrow; web_dist rebuilt
+  + build stamp rewritten (hermes_cli.main._write_web_ui_build_stamp). (2) BUG B — CALLKIT
+  ANSWER-PATH AUDIO RACE: push-answer fulfills instantly (Pitfall G), so CallKit didActivate
+  could fire BEFORE connectWebRTC() created the PC/track — WebRTCClient's automatic-mode audio
+  unit then never started (ring+connect, zero audio both ways; gateway: connected track, 930ms/
+  597ms TTS turns, then MediaStreamError when the phone stopped sending RTP). Fix: CallManager
+  answer path waits (bounded 10s) on WebRTCClient.isAudioSessionConfigured before
+  connectWebRTC; flag set/cleared in activate/deactivateAudioSession. CI lessons: the wait
+  must live INSIDE the Task (sync nonisolated CXAnswerCallAction callback cannot await);
+  stasel M130 types RTCTrack.kind as String (no .audio member) and RTCStatisticsReport
+  statistics values are [String: NSObject]. (3) Gateway instrumentation (live + parity with
+  repo mirror): AudioCounterObserver counts raw audio frames per direction and every session
+  logs "audio summary pc=... in=N frames out=M frames" at stop — in>0 proves mic capture,
+  out>0 proves bot audio sent (out>0 + user heard nothing = device playout fault); offer-post
+  instrumentation logs UA/bearer state on every POST /voice-gw/api/offer (ghost-offer forensics).
+  VERIFIED: callflow 11/11 vs live gateway (CI), xcodebuild unit tests green (JarvisAppTests
+  incl. new AnswerPathAudioGateTests), swift_sanity OK, build 68 uploaded + VALID. Two CI
+  loops burned (runs 66/67) on the Swift type fixes above — budgeted per ios-ci-swift-fix-loop.
+  UNTESTED ON DEVICE: the live verification call for bug B (round 3 fires exactly one, checks
+  the audio summary + dashboard call record).
