@@ -27,6 +27,10 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          # Pitfall N (hit 2026-09-30): without this mapping os.environ.get("VERSION")
+          # is always empty -> the fallback silently checked build 64 while the
+          # dispatch asked for 65, and the run still showed green.
+          VERSION: ${{ inputs.version || github.event.inputs.version }}
         run: |
           python3 - <<'PY'
           import base64, jwt, time, httpx, os
@@ -36,7 +40,7 @@ jobs:
                             "exp": now + 1200, "aud": "appstoreconnect-v1"},
                            key, algorithm="ES256",
                            headers={"kid": os.environ["ASC_KEY_ID"]})
-          ver = os.environ.get("VERSION") or "64"
+          ver = os.environ["VERSION"]
           for attempt in range(20):
               r = httpx.get(
                   "https://api.appstoreconnect.apple.com/v1/builds",
