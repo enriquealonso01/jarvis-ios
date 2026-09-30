@@ -160,7 +160,7 @@ def main() -> None:
             print(f"NOTE: {len(out['dropped'])} scheduled call(s) were DROPPED "
                   f"and never fired (full log: /schedule/list .dropped).",
                   file=sys.stderr)
-    else:
+    elif a.cmd == "cancel":
         # Cancel guard (1j, mirrored bridge-side): a whitespace-only --id must
         # fail HERE — it used to reach the bridge as a truthy-but-unmatchable
         # call_id and the request said nothing about what it would do.
