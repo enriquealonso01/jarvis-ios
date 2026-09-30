@@ -1820,3 +1820,24 @@
   kwarg drift crashed the gateway audio-input task -> NO inbound audio on every session since
   Sep 22 15:50 (fixed pyrnnoise 0.4.5, pinned server/voice_gateway/requirements-pin.md).
   Untested on device: real-call mic capture after RNNoise fix, speaker toggle UX, lock-screen answer.
+
+- ios-v30 SHIPPED (2026-09-30): call-system overhaul, build 65 (CI run 36739664207). ROOT CAUSES +
+  fixes: (1) DUPLICATE SESSIONS — 2026-09-30 15:12 evidence showed two offers 14s apart both became
+  LIVE pipelines (#13+#14, "agents talking over each other") then ICE-FAILED; gateway.py now runs a
+  serialized one-live-session guard (_replace_previous_session): a new ios/cc_pwa offer REPLACES the
+  previous live session (stop old -> start new); verified firing in the callflow gate log
+  ("session-replace: stopping previous live session"). (2) DROPPED REASON/GREETING — session.py
+  inject_user_text bailed with "realtime inject skipped: websocket not ready" when the realtime
+  socket wasn't bootstrapped; now bounded wait (10s) + retry on reconnect blips, and a 3.5s
+  persona-window wait after connect so the injected message lands AFTER the session instructions
+  (pre-fire produced the persona-less "Hey there! happy to help"). (3) ROBOTIC NOTICE — the
+  JARVIS-initiated reason notice said "(Automatic notice: this is a JARVIS-initiated call...)";
+  rewritten: model is told it placed the call itself, opens like a person with a purpose, leads
+  with the RESULT, converses, end_call on wind-down; backstop auto-stop kept. T9 pin updated
+  (scoped to if reason:, end_call present, robotic phrase banned). (4) REASONED/SCHEDULED CALLS —
+  brain.py call_enrique WORK-FIRST RULE: do the research/work BEFORE scheduling, put the finished
+  RESULT in reason (never the task); reason now also surfaces on the incoming-call screen.
+  VERIFIED: callflow gate 11/11 vs restarted live gateway (twice), swift_sanity OK, deploy parity
+  PASS (repo mirror == /opt/voice-gw). iOS side already correct from build 64 tree: CXAnswerCallAction
+  fulfills immediately (no lock-screen timeout), no foreground-on-answer path exists, speaker =
+  defaultToSpeaker baseline + per-call speakerEnabled re-asserted on every route change/activation.
