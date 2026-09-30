@@ -28,6 +28,7 @@ from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
+    AudioRawFrame,
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     Frame,
@@ -120,6 +121,28 @@ def get_tts() -> ElevenLabsTTSService:
 
 
 # ----------------------------------------------------------- UI relay -------
+class AudioCounterObserver(BaseObserver):
+    """Counts raw audio frames per direction (2026-09-30 round 2, bug B):
+    gateway-side proof of what actually flowed. in=N proves the phone's MIC
+    reached us; out=M proves we SENT bot audio. If M>0 and Enrique still
+    heard nothing, the fault is device-side playout (CallKit answer path).
+    Gateway turn-latency alone is NOT proof of audible audio."""
+
+    def __init__(self, session: "VoiceSession"):
+        super().__init__()
+        self._s = session
+
+    async def on_push_frame(self, data: FramePushed):
+        f = data.frame
+        if not isinstance(f, AudioRawFrame):
+            return
+        # UPSTREAM = device → gateway (mic), DOWNSTREAM = gateway → device.
+        if data.direction is not None and getattr(data.direction, "name", "") == "UPSTREAM":
+            self._s.count_audio_in(f)
+        else:
+            self._s.count_audio_out(f)
+
+
 class UIObserver(BaseObserver):
     """Watches frames go by and mirrors transcript + state to the client over
     the data channel, and records each finished exchange to the dashboard."""
@@ -275,6 +298,9 @@ class VoiceSession:
                                         "breakdown": None}
         self._lat: List[float] = []
         self._user_stopped_at: Optional[float] = None
+        self._audio_in_frames = 0
+        self._audio_out_frames = 0
+        self._audio_summary_done = False
         self.runner: Optional[PipelineRunner] = None
         self.task: Optional[PipelineTask] = None
         self.transport: Optional[SmallWebRTCTransport] = None
@@ -300,6 +326,28 @@ class VoiceSession:
 
     def mark_user_stopped(self) -> None:
         self._user_stopped_at = time.time()
+
+    # ---- audio verification counters (2026-09-30 round 2) ------------------
+    # "Verified end-to-end" from turn latency is NOT proof the phone played
+    # audio (bug B: gateway spoke, Enrique heard silence on push-answer).
+    # These counters + the disconnect summary give a hard signal: if audio_in
+    # stayed 0 the mic never reached us; if audio_out is thousands of frames
+    # but he heard nothing, the fault is device-side playout.
+    def count_audio_in(self, frame) -> None:
+        self._audio_in_frames += 1
+        # First inbound audio proves the phone's mic/capture path works.
+        if self._audio_in_frames == 1:
+            log.info("audio-in first frame pc={} surface={} (mic confirmed)", self.pc_id, self.surface)
+
+    def count_audio_out(self, frame) -> None:
+        self._audio_out_frames += 1
+        if self._audio_out_frames == 1:
+            log.info("audio-out first frame pc={} surface={} (bot audio being sent)", self.pc_id, self.surface)
+
+    def _log_audio_summary(self) -> None:
+        log.info("audio summary pc={} surface={} in={} frames out={} frames "
+                 "(out>0 + he heard nothing = device playout fault; in=0 = device capture fault)",
+                 self.pc_id, self.surface, self._audio_in_frames, self._audio_out_frames)
 
     # ---- lifecycle --------------------------------------------------------
     async def start(self) -> None:
@@ -427,7 +475,7 @@ class VoiceSession:
             params=PipelineParams(allow_interruptions=True, enable_metrics=True,
                                   audio_in_sample_rate=self._in_rate,
                                   audio_out_sample_rate=24000),
-            observers=[self._ui_observer, latency],
+            observers=[self._ui_observer, latency, AudioCounterObserver(self)],
         )
         self.runner = PipelineRunner(handle_sigint=False)
         asyncio.create_task(self._run())
@@ -585,6 +633,11 @@ class VoiceSession:
         if self.closed:
             return
         self.closed = True
+        # Audio verification summary (bug B forensics) — exactly once, even if
+        # stop() is called from several paths (guard, hangup, disconnect).
+        if not self._audio_summary_done:
+            self._audio_summary_done = True
+            self._log_audio_summary()
         try:
             if self.task:
                 await self.task.cancel()

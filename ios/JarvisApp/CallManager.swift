@@ -504,6 +504,29 @@ extension CallManager: CXProviderDelegate {
         // app is open" — while a fast fulfill + async connect is the pattern
         // Apple expects (media config continues after didActivate).
         answerAction.fulfill()
+        // ROUND-2 FIX (bug B, silent push-answer calls): on THIS path
+        // CallKit fires didActivate (audio-session activation) while
+        // connectWebRTC() is still inside its offer POST. On the OUTGOING
+        // path connectWebRTC() completes BEFORE didActivate (it's awaited
+        // ahead of reportOutgoingCall), so the WebRTC audio unit always
+        // starts against an already-configured session. On the answer path
+        // the unit was already running when didActivate re-asserted the
+        // category — the exact 24ab72b mic-kill failure class, but hitting
+        // BOTH directions this time (dead playout + dead capture; gateway
+        // saw connected track, spoke 930ms/597ms turns, then "Media stream
+        // error while reading the audio" when the phone stopped sending RTP
+        // seconds in). Gate the connect on didActivate: wait until the
+        // session is configured (bounded), then dial.
+        // Bounded wait: didActivate normally lands within ~50-300ms of
+        // fulfill on the answer path. 10s ceiling = fails the call rather
+        // than a silent black hole if CallKit never activates.
+        if !WebRTCClient.isAudioSessionConfigured {
+            print("[CallManager] answer path: waiting for didActivate before connect")
+            let deadline = Date().addingTimeInterval(10)
+            while !WebRTCClient.isAudioSessionConfigured && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
         Task { @MainActor in
             do {
                 try await self.connectWebRTC()

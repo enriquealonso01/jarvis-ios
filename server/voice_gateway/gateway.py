@@ -232,6 +232,14 @@ async def _auth_gate(request: Request, call_next):
     bearer = _bearer_from(request)
     if bearer and _bearer_valid(bearer):
         return await call_next(request)
+    # Forensics (2026-09-30 round 2): unauthenticated offer POSTs were part of
+    # the phantom-offer bursts (401 in every burst). Log WHO before refusing —
+    # the UA names the client (app vs PWA tab vs script) without auth round-trips.
+    if path.rstrip("/") == "/voice-gw/api/offer":
+        client_ip = request.client.host if request.client else "?"
+        ua = (request.headers.get("user-agent") or "-").strip()[:160]
+        log.warning("offer-post REJECTED 401 ip=%s ua='%s' bearer=%s cookie=%s",
+                    client_ip, ua, bool(bearer), bool(token))
     if path.rstrip("/") in ("/voice-gw", "/voice-gw/index.html") and "text/html" in request.headers.get("accept", ""):
         return RedirectResponse(url="/login?next=/voice-gw/", status_code=302)
     return JSONResponse({"error": "unauthorized"}, status_code=401)
@@ -313,17 +321,34 @@ _handler = SmallWebRTCRequestHandler(ice_servers=_ice, connection_mode=Connectio
 _replace_lock = asyncio.Lock()
 
 
-async def _replace_previous_session() -> None:
-    """Stop any live session(s) before a new one starts (serialized so two
-    racing offers can't both be mid-teardown and mid-start together)."""
+def _session_is_live(s) -> bool:
+    """A session is only 'live' (replaceable) once its REMOTE PEER actually
+    connected. A session whose client never completed ICE (phantom/stale tab
+    offers, backgrounded-PWA offers that time out 60s later) is NOT live:
+    stopping it must never be able to kill a connected call, and it must
+    never block a real call from starting (2026-09-30 15:43 evidence)."""
+    return (not s.closed and getattr(s, "_connected_at", 0.0) > 0.0)
+
+
+async def _replace_previous_session(*, surface: str = "?") -> None:
+    """Stop any live (peer-CONNECTED) session(s) before the new one takes
+    over. Serialized so two racing offers can't both be mid-teardown and
+    mid-start together.
+
+    Order safety (2026-09-30 round 2): replacement fires in on_connection,
+    which runs only after ICE connectivity for THIS offer is established —
+    and it only tears down sessions whose own client actually connected
+    (_connected_at set). A never-connected phantom offer therefore can't
+    stop anything, and a newer offer always wins over an older connected
+    call (newest device wins, no overlapping voices)."""
     async with _replace_lock:
-        stale = [s for s in _sessions.list()
-                 if not s.get("closed") and s.get("surface") in ("ios", "cc_pwa")]
+        stale = [snap for snap in _sessions.list()
+                 if snap.get("surface") in ("ios", "cc_pwa")]
         for snap in stale:
             s = _sessions.get(snap["pc_id"])
-            if s is not None and not s.closed:
-                log.info("session-replace: stopping previous live session pc=%s surface=%s",
-                         snap["pc_id"], snap["surface"])
+            if s is not None and _session_is_live(s):
+                log.info("session-replace: stopping connected session pc=%s surface=%s (new offer surface=%s)",
+                         snap["pc_id"], snap["surface"], surface)
                 try:
                     await s.stop()
                 except Exception as exc:  # noqa: BLE001
@@ -353,12 +378,23 @@ async def voice_gw_offer(request: Request):
     surface = str(rd.get("surface") or "cc_pwa")
     reason = str(rd.get("reason") or "").strip()
 
+    # Offer forensics (2026-09-30 round 2): phantom surface-less offers arrive
+    # 0-2s from every real iOS call. All requests come in as 127.0.0.1 through
+    # Caddy, so log the client IP + User-Agent + body shape on EVERY offer —
+    # the next phantom burst names its source definitively.
+    client_ip = request.client.host if request.client else "?"
+    ua = (request.headers.get("user-agent") or "-").strip()[:160]
+    body_keys = ",".join(sorted(str(k) for k in body.keys()))
+    log.info("offer-post ip=%s ua='%s' surface=%s body_keys=%s bytes=%s",
+             client_ip, ua, surface, body_keys, len(str(body)))
+
     async def on_connection(connection: SmallWebRTCConnection):
-        # One live session per host: the newest offer replaces the previous
-        # session cleanly (stop old → start new). This is the fix for the
-        # 2026-09-30 duplicate-session bug (two pipelines talking over each
-        # other, then both dying on ICE).
-        await _replace_previous_session()
+        # One live session per host: the newest CONNECTED offer replaces the
+        # previous CONNECTED session cleanly (stop old → start new). Never-
+        # connected sessions (phantom offers) are ignored by the guard, so a
+        # racing duplicate can't kill a live call, and a connected call can
+        # never be stopped by an offer whose ICE never completes.
+        await _replace_previous_session(surface=surface)
         s = await _sessions.start(surface, connection)
         if reason:
             # Queue after start; the greeting fires on client-connected, so the

@@ -106,6 +106,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
 
     static func activateAudioSession(_ session: AVAudioSession) {
         activeAudioSession = session
+        isAudioSessionConfigured = true
         // Re-assert the FULL category (not just mode): CallKit hands us its own
         // audio session in didActivate and its defaults carry no options —
         // without these, the native call screen's speaker toggle has nothing
@@ -142,7 +143,14 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         stopRouteObservation()
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
         activeAudioSession = nil
+        isAudioSessionConfigured = false
     }
+
+    /// True once CallKit's didActivate has configured the audio session for
+    /// the CURRENT call (round-2 bug B: the push-answer path must not build
+    /// the WebRTC audio unit against an unconfigured session — the category
+    /// re-assert after the unit starts killed BOTH playout and capture).
+    nonisolated(unsafe) static var isAudioSessionConfigured = false
 
     // MARK: Speaker routing (bug: speaker selection reverted to earpiece)
 
@@ -352,6 +360,8 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         pc?.close()
         pc = nil
         connected = false
+        statsTimer?.cancel()
+        statsTimer = nil
     }
 
     private func post(path: String, body: [String: Any]) async throws -> Data {
@@ -435,7 +445,47 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {
+        // ROUND-2 (bug B verification): the remote (JARVIS) audio track is
+        // live. Log it — without this there is no app-side signal that the
+        // downlink exists, which is how "gateway spoke, phone silent" passed
+        // as verified before.
+        if transceiver.receiver.track?.kind == .audio {
+            print("[WebRTCClient] remote audio track receiving (playout path armed)")
+            startPlayoutWatchdog()
+        }
+    }
+
+    // MARK: Playout watchdog (bug B verification signal)
+
+    /// Polls the inbound-audio stats every 5s and logs packets/level so a
+    /// "silent call" is diagnosable from the phone's own logs: gateway logs
+    /// `audio summary ... out=N` (what it SENT); these lines prove what the
+    /// phone RECEIVED (jitterBufferEmittedCount / concealedSamples). If the
+    /// gateway sent >0 and the phone shows no packets, the loss is on the
+    /// device/route side — no more guessing.
+    private var statsTimer: DispatchSourceTimer?
+    private func startPlayoutWatchdog() {
+        guard statsTimer == nil, let pc else { return }
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + 3, repeating: 5.0)
+        t.setEventHandler { [weak self] in
+            guard let self, let pc = self.pc else { return }
+            pc.statistics { report in
+                for stat in report.statistics.values {
+                    guard let type = stat.values["type"] as? String,
+                          type == "inbound-rtp",
+                          (stat.values["kind"] as? String ?? stat.values["mediaType"] as? String) == "audio" else { continue }
+                    let packets = stat.values["packetsReceived"] ?? "?"
+                    let emitted = stat.values["jitterBufferEmittedCount"] ?? "?"
+                    let concealed = stat.values["concealedSamples"] ?? "?"
+                    print("[WebRTCClient] playout stats: packetsReceived=\(packets) emitted=\(emitted) concealed=\(concealed)")
+                }
+            }
+        }
+        t.resume()
+        statsTimer = t
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
         // Required by RTCPeerConnectionDelegate (M130). The gateway client
         // creates its own "app" data channel in openAppChannel(); if the
