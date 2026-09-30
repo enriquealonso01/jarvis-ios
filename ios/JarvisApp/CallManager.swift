@@ -519,15 +519,18 @@ extension CallManager: CXProviderDelegate {
         // session is configured (bounded), then dial.
         // Bounded wait: didActivate normally lands within ~50-300ms of
         // fulfill on the answer path. 10s ceiling = fails the call rather
-        // than a silent black hole if CallKit never activates.
-        if !WebRTCClient.isAudioSessionConfigured {
-            print("[CallManager] answer path: waiting for didActivate before connect")
-            let deadline = Date().addingTimeInterval(10)
-            while !WebRTCClient.isAudioSessionConfigured && Date() < deadline {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-        }
+        // than a silent black hole if CallKit never activates. The wait
+        // lives INSIDE the Task: this provider callback is a sync
+        // nonisolated func (cannot await), and blocking it would only
+        // delay CallKit — fulfill() already happened above.
         Task { @MainActor in
+            if !WebRTCClient.isAudioSessionConfigured {
+                print("[CallManager] answer path: waiting for didActivate before connect")
+                let deadline = Date().addingTimeInterval(10)
+                while !WebRTCClient.isAudioSessionConfigured && Date() < deadline {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+            }
             do {
                 try await self.connectWebRTC()
             } catch {
