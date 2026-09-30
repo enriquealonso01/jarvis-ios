@@ -450,7 +450,7 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         // live. Log it — without this there is no app-side signal that the
         // downlink exists, which is how "gateway spoke, phone silent" passed
         // as verified before.
-        if transceiver.receiver.track?.kind == .audio {
+        if let track = transceiver.receiver.track, track.kind == "audio" {
             print("[WebRTCClient] remote audio track receiving (playout path armed)")
             startPlayoutWatchdog()
         }
@@ -476,9 +476,9 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
                     guard let type = stat.values["type"] as? String,
                           type == "inbound-rtp",
                           (stat.values["kind"] as? String ?? stat.values["mediaType"] as? String) == "audio" else { continue }
-                    let packets = stat.values["packetsReceived"] ?? "?"
-                    let emitted = stat.values["jitterBufferEmittedCount"] ?? "?"
-                    let concealed = stat.values["concealedSamples"] ?? "?"
+                    let packets = stat.values["packetsReceived"].map { "\($0)" } ?? "?"
+                    let emitted = stat.values["jitterBufferEmittedCount"].map { "\($0)" } ?? "?"
+                    let concealed = stat.values["concealedSamples"].map { "\($0)" } ?? "?"
                     print("[WebRTCClient] playout stats: packetsReceived=\(packets) emitted=\(emitted) concealed=\(concealed)")
                 }
             }
