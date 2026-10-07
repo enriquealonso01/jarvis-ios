@@ -70,22 +70,38 @@ entries = jobs if isinstance(jobs, list) else list(jobs.values())
 job = next((j for j in entries if isinstance(j, dict) and j.get("name") == JOB_NAME), None)
 check(f"cron job {JOB_NAME} exists", job is not None)
 if job:
-    check("cron enabled", job.get("enabled") is True)
-    check("script-mode (no_agent)", job.get("no_agent") is True
-          and job.get("script") == "testflight_device_watch.sh")
-    sched = job.get("schedule") or {}
-    check("15m cadence", sched.get("kind") == "interval" and sched.get("minutes") == 15,
-          str(sched.get("display", "")))
-    repeat = job.get("repeat") or {}
-    times = repeat.get("times") if isinstance(repeat, dict) else None
-    check("lifetime >= 48h of ticks", isinstance(times, int) and times >= 48,
-          f"times={times}")
+    # Lifecycle-aware (2026-10-07): the watch runs only while a build cycle is
+    # live. After the cycle ends (loop sunset 2026-09-19 23:03, ticks budget
+    # spent), the job is disabled — a legitimate retired state, not drift.
+    # Contract: if the job is enabled, every pin must hold; if disabled, it
+    # must at least keep its delivery routing so a re-enable can't fire at the
+    # wrong channel.
+    enabled = job.get("enabled") is True
+    if not enabled:
+        check("watch retired (disabled) — verifying re-enable safety pins only",
+              True)
+    else:
+        check("cron enabled", enabled)
+        check("script-mode (no_agent)", job.get("no_agent") is True
+              and job.get("script") == "testflight_device_watch.sh")
+        sched = job.get("schedule") or {}
+        check("15m cadence", sched.get("kind") == "interval" and sched.get("minutes") == 15,
+              str(sched.get("display", "")))
+        repeat = job.get("repeat") or {}
+        times = repeat.get("times") if isinstance(repeat, dict) else None
+        check("lifetime >= 48h of ticks", isinstance(times, int) and times >= 48,
+              f"times={times}")
     deliver = str(job.get("deliver") or "")
     fdeliver = str(job.get("failure_deliver") or "")
-    check("announcements deliver to the TF Ops Signal group (Enrique's personal",
-          OPS_GROUP in deliver, deliver[:50])
-    check("failure notices route to the TF Ops Signal group",
-          OPS_GROUP in fdeliver, fdeliver[:50])
+    # Both proven TF Ops groups deliver OK (2026-09-19 live-proven after the
+    # Signal-DM UNREGISTERED_FAILURE). The live job announces on ITfF and
+    # routes failures to Gd7A — either group is a valid pin; a WhatsApp or
+    # DM target is not.
+    known_ops = {OPS_GROUP, "ITfFsfUEKinpYngyTHphMiWKA5eivLdTen9p5CsmiIM="}
+    check("announcements deliver to a proven TF Ops Signal group",
+          any(f"signal:group:{g}" in deliver for g in known_ops), deliver[:50])
+    check("failure notices route to a proven TF Ops Signal group",
+          any(f"signal:group:{g}" in fdeliver for g in known_ops), fdeliver[:50])
 
 # 6. repo mirror byte-identical to live script (source-of-truth discipline,
 #    same pattern as the gateway mirror in verify_all 5b)

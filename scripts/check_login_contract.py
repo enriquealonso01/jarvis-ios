@@ -103,9 +103,11 @@ for needle, why in app_pins:
         fail(f"AuthStore.swift: missing {why} (needle {needle!r})")
 
 # The credential init must wire password->password (a copy-paste slip here
-# sends the USERNAME as the password and bricks every sign-in).
+# sends the USERNAME as the password and bricks every sign-in). The init
+# gained PKCE fallback params (codeChallenge/redirectURI/state, 2026-09-2x
+# cookie-less login fix) — the regex accepts both shapes.
 m = re.search(
-    r"struct PasswordLoginBody: Encodable \{.*?init\(provider: String, username: String, password: String\) \{(.*?)\}",
+    r"struct PasswordLoginBody: Encodable \{.*?init\(provider: String, username: String, password: String(?:,\s*codeChallenge: String = \"\", redirectURI: String = \"\", state: String = \"\")?\) \{(.*?)\}",
     src,
     re.S,
 )

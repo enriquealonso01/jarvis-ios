@@ -60,13 +60,22 @@ git -C "$CLONE" tag ios-v99999
   "NOT on origin" python3 "$REAL/scripts/ship_gate.py" --skip-asc )
 git -C "$CLONE" tag -d ios-v99999 >/dev/null
 
-# T3: latest local tag is one whose Actions run went RED (ios-v26 = run 28,
-# conclusion failure — real historical data, no way to fabricate a run)
+# T3: latest local tag is one whose newest push Actions run went RED. The
+# gate reads the NEWEST run for the tag, so the pin needs a tag whose latest
+# run failed: ios-v26 (run 28, failure 2026-09-19 — real historical data,
+# no way to fabricate a run). ios-v27..v31 all went green, so they're
+# deleted to make ios-v26 the latest local tag.
+git -C "$CLONE" tag -d ios-v31 >/dev/null 2>&1
+git -C "$CLONE" tag -d ios-v30 >/dev/null 2>&1
+git -C "$CLONE" tag -d ios-v29 >/dev/null 2>&1
 git -C "$CLONE" tag -d ios-v28 >/dev/null 2>&1
 git -C "$CLONE" tag -d ios-v27 >/dev/null 2>&1
 ( cd "$CLONE" && HOME="$GOODHOME" expect_fail "T3 red run for latest tag" \
   "concluded failure" python3 "$REAL/scripts/ship_gate.py" --skip-asc )
 git -C "$CLONE" tag ios-v27 >/dev/null 2>&1 || true
+git -C "$CLONE" tag ios-v28 >/dev/null 2>&1 || true
+git -C "$CLONE" tag ios-v29 >/dev/null 2>&1 || true
+git -C "$CLONE" tag ios-v30 >/dev/null 2>&1 || true
 
 # T4: unreadable credential -> loud config failure before any API call
 TMPHOME=$(mktemp -d)

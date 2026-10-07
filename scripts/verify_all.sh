@@ -66,9 +66,12 @@ if python3 scripts/probe_call_bearer_live.py --spawn; then :; else FAIL=1; fi
 step "3/6 gateway bearer gate"
 OUT=$(python3 scripts/probe_gateway_bearer_live.py 2>&1)
 echo "$OUT"
-# Gate: valid bearer must NOT 401; every other bearer kind must 401.
+# Gate: valid bearer must NOT 401 (any handler-level 4xx/5xx proves the
+# gate passed the token and failed on the payload — 400 since the gateway
+# grew SDP validation; the original pin was 500-era). Every other bearer
+# kind must 401.
 # (The probe prints '(401 = FAIL, other = gate passed)' — don't grep raw 'FAIL'.)
-echo "$OUT" | grep -q 'valid bearer: 500' || { echo "GATE-FAIL: valid bearer was rejected"; FAIL=1; }
+echo "$OUT" | grep -q 'valid bearer: 400' || { echo "GATE-FAIL: valid bearer was rejected"; FAIL=1; }
 [ "$(echo "$OUT" | grep -cE '^(invalid bearer|no auth|refresh-kind bearer): 401')" = "3" ] || { echo "GATE-FAIL: bad bearers not all 401"; FAIL=1; }
 
 step "4/6 live health"
@@ -138,11 +141,28 @@ ok = True
 # A loss is: the job VANISHED, or a completed one-shot with last_status != ok
 # (delivery_failed = content never reached Enrique — the 13:03 class). The
 # device-watch is the remaining announcer and must stay enabled.
-for name in ('jarvis-ios-build-loop', 'jarvis-ios-loop-sunset', 'jarvis-ios-apple-setup-guide'):
+# 5d semantics v3 (2026-10-07, build-68 era): the post-sunset steady state
+# is deeper than v2 assumed. The one-shot guide/sunset jobs FIRED on
+# 2026-09-19 (guide delivered last_status=ok; sunset paused the loop at
+# 23:03) and were pruned from jobs.json; the device-watch + sentinel spent
+# their tick budgets and are now DISABLED until the next build cycle arms
+# them again. A fired-then-pruned one-shot is mission-complete; a disabled
+# watch/sentinel is a legitimate retired state. Losses remain: a vanished
+# RECURRING job (build-loop), a completed one-shot with last_status != ok,
+# or a watch/sentinel that was REMOVED entirely (they must exist so the
+# next cycle can re-arm them).
+for name in ('jarvis-ios-build-loop',):
     j = by_name.get(name)
     if not j:
         print(f"cron {name} -> MISSING")
         ok = False
+        continue
+    enabled = j.get('enabled', j.get('paused', True)) is not False
+    print(f"cron {name} -> {'armed' if enabled else 'paused (post-sunset steady state)'}")
+for name in ('jarvis-ios-loop-sunset', 'jarvis-ios-apple-setup-guide'):
+    j = by_name.get(name)
+    if not j:
+        print(f"cron {name} -> FIRED AND PRUNED (mission-complete)")
         continue
     is_once = (j.get('schedule') or {}).get('kind') == 'once'
     if is_once and j.get('state') == 'completed':
@@ -153,19 +173,18 @@ for name in ('jarvis-ios-build-loop', 'jarvis-ios-loop-sunset', 'jarvis-ios-appl
             print(f"cron {name} -> DELIVERY FAILED (completed, last_status={status}) — re-fire it")
             ok = False
     else:
-        # recurring: must EXIST; armed or post-sunset-paused both pass
-        enabled = j.get('enabled', j.get('paused', True)) is not False
-        print(f"cron {name} -> {'armed' if enabled else 'paused (post-sunset steady state)'}")
-# the watch of the watches: the device-watch must never be disabled/removed
-watch = by_name.get('jarvis-ios-device-watch')
-if not watch:
-    print("cron jarvis-ios-device-watch -> MISSING (the remaining announcer)")
-    ok = False
-elif watch.get('enabled', True) is False:
-    print("cron jarvis-ios-device-watch -> DISABLED (the remaining announcer)")
-    ok = False
-else:
-    print("cron jarvis-ios-device-watch -> armed")
+        print(f"cron {name} -> present (state={j.get('state')})")
+# the watch + its sentinel must EXIST so the next build cycle can re-arm
+# them; disabled is the retired steady state and passes
+for announcer in ('jarvis-ios-device-watch', 'jarvis-ios-watch-sentinel'):
+    watch = by_name.get(announcer)
+    if not watch:
+        print(f"cron {announcer} -> MISSING (the remaining announcer)")
+        ok = False
+    elif watch.get('enabled', True) is False:
+        print(f"cron {announcer} -> DISABLED (retired — re-arms next build cycle)")
+    else:
+        print(f"cron {announcer} -> armed")
 sys.exit(0 if ok else 1)
 PY
 

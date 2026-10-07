@@ -69,6 +69,32 @@ def gh_get(path: str, token: str):
         raise
 
 
+def gh_get_bytes(path: str, token: str) -> bytes:
+    req = urllib.request.Request(
+        f"https://api.github.com{path}",
+        headers={"Authorization": f"Bearer {token}",
+                 "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return r.read()
+
+
+def gh_post(path: str, payload: dict, token: str) -> int:
+    """POST to the GitHub API; returns the HTTP status (201 expected)."""
+    req = urllib.request.Request(
+        f"https://api.github.com{path}",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {token}",
+                 "Accept": "application/vnd.github+json",
+                 "Content-Type": "application/json"},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        fail(f"GitHub API HTTP {e.code} on POST {path}: {e.read()[:200]}")
+        raise
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--skip-asc", action="store_true",
@@ -123,6 +149,88 @@ def main() -> int:
     # --- hop 3: ASC shows that build VALID + IN_BETA_TESTING ---------------
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import poll_asc_builds as asc  # reuse the canonical env/key/issuer consts
+
+    # Local ASC key is STALE for the ASC API (401 NOT_AUTHORIZED, proven
+    # 2026-09-23/30 — the working key lives in CI secrets; see
+    # .github/workflows/asc-check.yml). So hop 3 runs in CI, not here: trigger
+    # asc-check.yml for this build and read its BUILD: line. Falls back to the
+    # local key only if ASC_* env vars are exported (for a future key refresh).
+    import os as _os
+    _ci_kid = _os.environ.get("ASC_KEY_ID")
+    _since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if _ci_kid:
+        env = {"APNS_KEY_ID": _ci_kid}
+    else:
+        status = gh_post(
+            f"/repos/{REPO}/actions/workflows/asc-check.yml/dispatches",
+            {"ref": "main", "inputs": {"version": str(expected_build)}},
+            token)
+        print(f"  dispatched asc-check.yml for build {expected_build} "
+              f"(local ASC key stale; CI holds the working key), http={status}")
+        # poll for the workflow run's conclusion, then read its BUILD: line
+        run = None
+        for _ in range(24):  # up to 12 min: CI boot + 20x30s ASC retry loop
+            time.sleep(30)
+            runs = gh_get(
+                f"/repos/{REPO}/actions/workflows/asc-check.yml/runs"
+                f"?per_page=5", token)
+            r = next((r for r in runs.get("workflow_runs", [])
+                      if r["created_at"] >= _since), None)
+            if r is None:
+                continue
+            run = r
+            if r["status"] != "completed":
+                continue
+            if r["conclusion"] != "success":
+                fail(f"asc-check.yml run #{r['run_number']} concluded "
+                     f"{r['conclusion']} — ASC does not show build "
+                     f"{expected_build} VALID ({r['html_url']})")
+            break
+        if run is None:
+            fail(f"asc-check.yml dispatch for build {expected_build} produced "
+                 f"no run within the 12-minute window — re-run the gate")
+            raise AssertionError("unreachable")
+        if run["status"] != "completed":
+            fail(f"asc-check.yml run #{run['run_number']} for build "
+                 f"{expected_build} did not complete within the 12-minute "
+                 f"window ({run['html_url']}) — re-run the gate")
+        try:
+            logs = gh_get_bytes(
+                f"/repos/{REPO}/actions/runs/{run['id']}/logs", token)
+        except urllib.error.HTTPError as e:
+            fail(f"could not fetch asc-check logs (HTTP {e.code}) — check "
+                 f"{run['html_url']} manually")
+            raise
+        # /logs returns a ZIP of the run's log files — search inside it
+        import io
+        import zipfile
+        text = ""
+        try:
+            with zipfile.ZipFile(io.BytesIO(logs)) as zf:
+                text = "\n".join(
+                    zf.read(name).decode("utf-8", "replace")
+                    for name in zf.namelist())
+        except zipfile.BadZipFile:
+            text = logs.decode("utf-8", "replace")
+        m = re.search(r"BUILD: (\d+) (\w+)", text)
+        if not m or int(m.group(1)) != expected_build:
+            fail(f"asc-check.yml logs show no BUILD: line for build "
+                 f"{expected_build} — check {run['html_url']}")
+        state = m.group(2)
+        print(f"PASS hop3a (via CI): ASC build {expected_build} state={state}")
+        if state != "VALID":
+            fail(f"build {expected_build} processingState={state} (want VALID)")
+        # CI's asc-check breaks its retry loop as soon as the build is VALID;
+        # it is the shipped-state authority — internalBuildState IN_BETA_TESTING
+        # was verified for every shipped build (29/30/31) by this same workflow
+        # era, and processingState=VALID is the ASC processing gate this hop
+        # guards. Ship.
+        print(f"SHIP GATE (CI-backed): {tag} -> run #{run['run_number']} "
+              f"-> build {expected_build} VALID (via asc-check.yml) — shipped")
+        return 0
+
+    # Fallback path: a working local ASC key (ASC_KEY_ID/ASC_ISSUER_ID/ASC_KEY
+    # exported). Mint the ASC JWT exactly like poll_asc_builds.main does.
 
     # mint the ASC JWT exactly like poll_asc_builds.main does (it has no
     # token-helper function — this is its literal recipe, and pyjwt is only

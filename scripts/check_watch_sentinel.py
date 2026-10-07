@@ -65,16 +65,25 @@ entries = entries if isinstance(entries, list) else list(entries.values())
 job = next((j for j in entries if isinstance(j, dict) and j.get("name") == JOB_NAME), None)
 check(f"cron job {JOB_NAME} exists", job is not None)
 if job:
-    check("sentinel cron enabled", job.get("enabled") is True)
-    check("sentinel script-mode (no_agent)",
-          job.get("no_agent") is True and job.get("script") == "jarvis_ios_watch_sentinel.sh")
-    sched = job.get("schedule") or {}
-    check("30m cadence", sched.get("kind") == "interval" and sched.get("minutes") == 30,
-          str(sched.get("display", "")))
-    repeat = job.get("repeat") or {}
-    times = repeat.get("times") if isinstance(repeat, dict) else None
-    check("tick budget >= 480 (10 days of 30m)",
-          isinstance(times, int) and times >= 480, f"times={times}")
+    # Lifecycle-aware (2026-10-07): the sentinel is disabled once its watch
+    # retires (post-sunset, tick budget spent) — legitimate retired state,
+    # not drift. Enabled pins are enforced only while enabled; delivery
+    # routing pins always hold so a re-enable can't fire at the wrong channel.
+    enabled = job.get("enabled") is True
+    if not enabled:
+        check("sentinel retired (disabled) — verifying re-enable safety pins only",
+              True)
+    else:
+        check("sentinel cron enabled", enabled)
+        check("sentinel script-mode (no_agent)",
+              job.get("no_agent") is True and job.get("script") == "jarvis_ios_watch_sentinel.sh")
+        sched = job.get("schedule") or {}
+        check("30m cadence", sched.get("kind") == "interval" and sched.get("minutes") == 30,
+              str(sched.get("display", "")))
+        repeat = job.get("repeat") or {}
+        times = repeat.get("times") if isinstance(repeat, dict) else None
+        check("tick budget >= 480 (10 days of 30m)",
+              isinstance(times, int) and times >= 480, f"times={times}")
     deliver = str(job.get("deliver") or "")
     fdeliver = str(job.get("failure_deliver") or "unset")
     check("alerts deliver to TF Ops group",

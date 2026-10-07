@@ -174,9 +174,18 @@ for label, mirror in (("guide", guide_mirror), ("sunset", sunset_mirror)):
 check("guide mirror does not claim the live key delivers pushes",
       "bridge is live with the APNs key" not in guide_mirror)
 for label, jid in LIVE_IDS.items():
+    # Lifecycle-aware (2026-10-07): these one-shots FIRED on 2026-09-19 (guide
+    # 13:00 re-fire delivered, sunset 23:03 wrap-up) and were pruned from
+    # jobs.json afterward. A fired-and-pruned one-shot is mission-complete,
+    # not lost coverage — require the mirror to EXIST and stay valid, and if
+    # the live job still exists, its prompt must match the mirror byte-identical
+    # (the original drift pin). Full loss = mirror gone too.
+    repo_prompt = open(mirs[label]).read()
+    check(f"{label} mirror exists and is non-empty", bool(repo_prompt))
     live = live_jobs.get(jid, {}).get("prompt", "")
-    check(f"live cron {label} ({jid}) matches its repo mirror",
-          bool(live) and live == open(mirs[label]).read())
+    if live:
+        check(f"live cron {label} ({jid}) matches its repo mirror",
+              live == repo_prompt)
 
 
 # 9. Push-success counter contract (added 2026-09-19): /health carries
