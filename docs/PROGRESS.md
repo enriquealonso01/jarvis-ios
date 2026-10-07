@@ -1890,3 +1890,34 @@
   are [String: NSObject] (stringify via .map)). LIVE VERIFICATION CALL: pending — 2 rings
   18:12/18:16 UTC unanswered (push_ok 22->23, Apple accepted both); call only verifies once
   build 68 is installed on the phone.
+
+## 2026-10-07 ~06:00 UTC — verify_all lifecycle-aware, ALL GREEN restored; ship gate CI-backed
+
+Five sweep FAILs + the ship-gate 401 crash, all stale contract pins (no code
+regressions). Commit 2645e6c pushed to origin/main (094b95e..2645e6c verified):
+- 5d v3: fired-and-pruned one-shots = FIRED AND PRUNED (mission-complete);
+  watch + sentinel DISABLED = retired steady state (must still EXIST so the
+  next build cycle can re-arm); vanished recurring jobs / failed-delivery
+  one-shots still fail loudly.
+- check_watch_wiring / check_watch_sentinel: enabled-state pins enforced only
+  while enabled; delivery-routing pins (proven TF Ops groups ITfF/Gd7A)
+  always hold so a re-enable can't fire at the wrong channel.
+- check_doc_contracts 8: mirror existence always pinned; live==mirror
+  byte-identical enforced only while the live job exists.
+- check_login_contract: PasswordLoginBody init regex accepts the PKCE
+  fallback params (codeChallenge/redirectURI/state) from the cookie-less
+  login fix.
+- Gateway bearer gate: 500->400 pin (gateway grew SDP validation; 400 still
+  proves the token gate passed).
+- selftest T3 re-pinned to ios-v26 (run 28 RED): the gate reads the NEWEST
+  run per tag — v27..v31 all went green, so the old pin (delete v28/v27)
+  left the gate pointing at a green run.
+- ship_gate hop 3 CI-backed: the local apns.key is stale for the ASC API
+  (401 NOT_AUTHORIZED, proven 9/23 — CI secrets hold the working key). The
+  gate now dispatches asc-check.yml for the expected build, polls the run,
+  and reads BUILD: <n> <state> out of the log ZIP (/logs is a zip, not
+  text — first live run failed on that, fixed with in-memory unzip).
+  ASC_KEY_ID/ASC_ISSUER_ID/ASC_KEY env override for a future local key.
+Verified live: SHIP GATE: ios-v31 -> run #69 -> build 69 VALID (via
+asc-check.yml) — shipped. verify_all.sh exit 0: 252 PASS / 0 FAIL — first
+ALL GREEN since the 9/30 build-68 era.
