@@ -138,6 +138,59 @@ also accept the iOS app's dashboard Bearer token (same dual-auth ladder as
 `/secrets`), so the app calls these directly. The VoIP push payload now always
 carries `gateway_ws: "/voice-gw"` per the contract in docs/GATEWAY.md.
 
+## Voice gateway data channel (`/voice-gw`, port 9150)
+
+The gateway mirrors live call state to the client (iOS app `TranscriptView`, PWA)
+as JSON messages on the WebRTC `app` data channel. Every message carries
+`ts` (epoch seconds, transport send time). Auth for the offer POST is the
+dashboard Bearer (same HMAC token ladder as `/bridge/*`).
+
+### Transcript turns (2026-10-17: per-turn timestamps added, backward-compatible)
+
+```json
+{"type": "transcript", "role": "user",      "text": "what's on my plate today",
+ "ts": 1760701502.412, "ts_turn": 1760701502.401, "ts_iso": "2026-10-17T12:25:02.401Z"}
+{"type": "transcript", "role": "assistant", "text": "Three calls and a package pickup.",
+ "ts": 1760701504.933, "ts_turn": 1760701504.930, "ts_iso": "2026-10-17T12:25:04.930Z"}
+```
+
+- `ts_turn` (float, epoch seconds, 3 dp): when the turn was completed —
+  STT finalized it (user) or the spoken response was flushed (assistant).
+- `ts_iso` (string): the same instant as UTC ISO-8601 with millisecond
+  precision and `Z` suffix. The gateway always emits UTC; render in the
+  phone's local timezone client-side.
+- Both fields are ADDITIVE. Older clients ignore unknown keys; clients that
+  want per-turn timestamps should prefer `ts_turn`/`ts_iso` over `ts`
+  (stamped when the turn completed, not when the message was sent). Typed
+  turns (`say`) carry the extra flag `"typed": true`.
+- Interim STT results still arrive as `{"type": "interim", ...}` WITHOUT
+  `ts_turn`/`ts_iso` — they are not turns yet.
+
+### End-of-call audio summary (2026-10-17, once per session, before close)
+
+Sent as a JSON app message immediately before the pipeline closes, and
+recorded into the dashboard call record (user text `(audio summary)`, body =
+compact JSON of the same fields), giving a durable post-call evidence chain
+paired with the gateway journal line `audio summary pc=... in=N frames out=M`:
+
+```json
+{"type": "audio_summary", "pc_id": "SmallWebRTCConnection#2-508e...",
+ "surface": "ios", "thread": "vg-7f885bf2b6f5",
+ "audio_in_frames": 1520, "audio_out_frames": 10070,
+ "turns": 2, "avg_latency_ms": 1421, "duration_s": 41.2,
+ "stop_reason": "end_call", "ts": 1760701563.9}
+```
+
+`stop_reason` (additive, 2026-10-17): who ended the session —
+`end_call` (the model's tool), `reasoned-backstop` (the 40s fuse), or
+`replaced-by-new-offer` (the session-replace guard, Pitfall O).
+
+Interpretation: `audio_in_frames > 0` = the phone's mic reached the gateway;
+`audio_out_frames > 0` = bot audio was sent. `out > 0` plus "he heard
+nothing" = device playout fault; `in = 0` = device capture fault. The iOS
+app (build 68+) stamps its call log from this message; the dashboard call
+record carries the same fields as `(audio summary)`.
+
 ## Pending until Enrique does his part
 - APNs: create .p8 key in App Store Connect (Keys tab), download, then JARVIS stores it at
   /opt/jarvis-ios-bridge/apns.key (root 600) and writes /opt/jarvis-ios-bridge/apns.env with

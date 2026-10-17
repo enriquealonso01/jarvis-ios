@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -121,6 +121,18 @@ def get_tts() -> ElevenLabsTTSService:
 
 
 # ----------------------------------------------------------- UI relay -------
+def _turn_ts() -> float:
+    """Wall-clock stamp for a transcript turn (epoch seconds)."""
+    return round(time.time(), 3)
+
+
+def _turn_iso(ts: float) -> str:
+    """UTC ISO-8601 for a transcript turn. The gateway always emits UTC
+    (suffix Z); rendering in the phone's local timezone is the client's job."""
+    return (datetime.fromtimestamp(ts, tz=timezone.utc)
+            .isoformat(timespec="milliseconds").replace("+00:00", "Z"))
+
+
 class AudioCounterObserver(BaseObserver):
     """Counts raw audio frames per direction (2026-09-30 round 2, bug B):
     gateway-side proof of what actually flowed. in=N proves the phone's MIC
@@ -174,7 +186,8 @@ class UIObserver(BaseObserver):
             if text:
                 self._pending_user = (self._pending_user + " " + text).strip()
                 self._last_user = self._pending_user
-                await s.ui({"type": "transcript", "role": "user", "text": text})
+                await s.ui({"type": "transcript", "role": "user", "text": text,
+                            **s.turn_ts_fields()})
         elif isinstance(f, UserStartedSpeakingFrame):
             await s.ui({"type": "state", "state": "listening"})
         elif isinstance(f, UserStoppedSpeakingFrame):
@@ -277,7 +290,8 @@ class UIObserver(BaseObserver):
             if t_old[-k:] == t_new[-k:]:
                 return
         self._last_flushed = text
-        await self._s.ui({"type": "transcript", "role": "assistant", "text": text})
+        await self._s.ui({"type": "transcript", "role": "assistant", "text": text,
+                          **self._s.turn_ts_fields()})
         user = self._pending_user
         self._pending_user = ""
         if dashboard is not None:
@@ -309,6 +323,7 @@ class VoiceSession:
         self.brain_label = ""
         self.realtime = brain_mod.is_realtime()      # decided per call (credits probe, voice.env)
         self.closed = False
+        self.stop_reason: Optional[str] = None       # who stopped this session (forensics)
 
     # ---- messages to the client ---------------------------------------------
     async def ui(self, message: Dict[str, Any]) -> None:
@@ -326,6 +341,16 @@ class VoiceSession:
 
     def mark_user_stopped(self) -> None:
         self._user_stopped_at = time.time()
+
+    def turn_ts_fields(self) -> Dict[str, Any]:
+        """Per-turn timestamps for data-channel transcript messages (see
+        docs/API.md "Voice gateway data channel"). Backward-compatible ADDITIVE
+        fields: clients written before them ignore unknown keys. `ts` on every
+        message is the transport send time; `ts_turn`/`ts_iso` are stamped when
+        the TURN completed (final text known), so a turn that finished before
+        the transport was ready still carries its real time."""
+        ts = _turn_ts()
+        return {"ts_turn": ts, "ts_iso": _turn_iso(ts)}
 
     # ---- audio verification counters (2026-09-30 round 2) ------------------
     # "Verified end-to-end" from turn latency is NOT proof the phone played
@@ -348,6 +373,20 @@ class VoiceSession:
         log.info("audio summary pc={} surface={} in={} frames out={} frames "
                  "(out>0 + he heard nothing = device playout fault; in=0 = device capture fault)",
                  self.pc_id, self.surface, self._audio_in_frames, self._audio_out_frames)
+
+    def audio_summary(self) -> Dict[str, Any]:
+        """Post-call audio evidence (2026-10-17): the same numbers the journal
+        'audio summary' line carries, as a structured record. in>0 = the
+        phone's MIC reached us; out>0 = bot audio was SENT (out>0 + he heard
+        nothing = device playout fault; in=0 = capture fault)."""
+        return {"pc_id": self.pc_id, "surface": self.surface,
+                "thread": self.thread_id,
+                "audio_in_frames": self._audio_in_frames,
+                "audio_out_frames": self._audio_out_frames,
+                "turns": self.metrics.get("turns"),
+                "avg_latency_ms": self.metrics.get("avg_latency_ms"),
+                "duration_s": round(time.time() - self.started, 1),
+                "stop_reason": self.stop_reason}
 
     # ---- lifecycle --------------------------------------------------------
     async def start(self) -> None:
@@ -623,7 +662,8 @@ class VoiceSession:
         # A typed line is a finished turn too — start the latency clock here so
         # the orb and metrics.db get numbers for typed input as well as speech.
         self.mark_user_stopped()
-        await self.ui({"type": "transcript", "role": "user", "text": text, "typed": True})
+        await self.ui({"type": "transcript", "role": "user", "text": text,
+                       "typed": True, **self.turn_ts_fields()})
         obs = getattr(self, "_ui_observer", None)
         if obs is not None:
             obs._pending_user = (obs._pending_user + " " + text).strip()
@@ -633,11 +673,37 @@ class VoiceSession:
         if self.closed:
             return
         self.closed = True
+        if not self.stop_reason:
+            # end_call stamps the TOOLS object (brain.py) — pick it up here so
+            # the session record says who ended the call.
+            tools_reason = getattr(getattr(self, "tools", None), "stop_reason", None)
+            self.stop_reason = tools_reason or "closed"
+        self.metrics["stop_reason"] = self.stop_reason
         # Audio verification summary (bug B forensics) — exactly once, even if
         # stop() is called from several paths (guard, hangup, disconnect).
         if not self._audio_summary_done:
             self._audio_summary_done = True
             self._log_audio_summary()
+            # Durable post-call evidence chain (2026-10-17): the same summary,
+            # (1) pushed ONCE to the client over the data channel before the
+            # pipeline is cancelled — the app (build 68+) stamps its call log
+            # from this message ({type: audio_summary, audio_in_frames,
+            # audio_out_frames}); (2) recorded into the dashboard call record
+            # (same /record channel transcript turns use), so the pair
+            # [gateway journal line, call record] is retrievable after the PC
+            # is gone.
+            summary = self.audio_summary()
+            try:
+                await self.ui({"type": "audio_summary", **summary})
+            except Exception as exc:  # noqa: BLE001 - evidence must never block hangup
+                log.debug("audio summary push failed: {}", exc)
+            if dashboard is not None:
+                try:
+                    await dashboard.record(
+                        self.thread_id, "(audio summary)",
+                        _json.dumps(summary, separators=(",", ":")))
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("audio summary record failed: {}", exc)
         try:
             if self.task:
                 await self.task.cancel()
@@ -751,6 +817,7 @@ class VoiceSession:
         return {"pc_id": self.pc_id, "surface": self.surface, "thread": self.thread_id,
                 "brain": self.brain_label, "age_s": round(time.time() - self.started),
                 "closed": self.closed, "metrics": self.metrics,
+                "stop_reason": self.stop_reason,
                 "jobs": getattr(getattr(self, "tools", None), "jobs", {})}
 
 

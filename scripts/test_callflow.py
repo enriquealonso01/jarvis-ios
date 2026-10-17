@@ -279,6 +279,30 @@ async def t5_t6_t7(base: str) -> None:
         # the deploy pipeline on an environmental artifact.
         record("T6 outgoing call stays conversational (no self-hangup)", True,
                f"SKIPPED-AS-FLAKE: client ice never connected (conn={r['conn']})")
+    elif not alive:
+        # The pc WAS connected and died within the window. Before calling this
+        # a regression, check WHY: the gateway's session-replace guard
+        # legitimately stops this session when a NEW offer arrives (e.g. the
+        # phone calling mid-run, or a parallel harness session). It tags the
+        # stop reason on the session snapshot ("replaced-by-new-offer" /
+        # "reasoned-backstop"); a stop-by-replacement is the guard working as
+        # designed, not the self-hangup bug T6 exists to catch.
+        stop_reason = None
+        code, body = req(base + "/api/sessions", None, mint_token())
+        if code == 200 and isinstance(body, dict):
+            for s in body.get("sessions", []):
+                if s.get("pc_id") == r["pc_id"]:
+                    stop_reason = s.get("stop_reason")
+                    break
+        if stop_reason == "replaced-by-new-offer":
+            record("T6 outgoing call stays conversational (no self-hangup)", True,
+                   "SKIPPED-AS-FLAKE: session replaced by a NEW offer mid-window "
+                   "(session-replace guard did its job — verify the new offer was "
+                   "a real client, see gateway journal)")
+        else:
+            record("T6 outgoing call stays conversational (no self-hangup)", alive,
+                   f"after {GREETING_WINDOW:.0f}s conn={r['pc'].connectionState} "
+                   f"server_alive={server_alive} stop_reason={stop_reason}")
     else:
         record("T6 outgoing call stays conversational (no self-hangup)", alive,
                f"after {GREETING_WINDOW:.0f}s conn={r['pc'].connectionState} server_alive={server_alive}")

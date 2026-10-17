@@ -866,6 +866,7 @@ class Tools:
         self._ender = ender               # session.stop (JARVIS-initiated hang-up)
         self.jobs: Dict[str, Dict[str, Any]] = {}
         self._running: Dict[str, float] = {}   # normalized request -> started
+        self.stop_reason: str | None = None    # stamped by end_call (session reads it at stop)
 
     async def build(self) -> ToolsSchema:
         schemas: List[FunctionSchema] = []
@@ -1097,6 +1098,7 @@ class Tools:
         # Announce then disconnect: delay lets the goodbye line finish playing
         # before the pipeline is cancelled.
         logger.info("tool end_call: hanging up")
+        self.stop_reason = "end_call"
         await params.result_callback(json.dumps({"ok": True, "note": "call ended"}))
         if self._ender is not None:
             asyncio.get_running_loop().call_later(

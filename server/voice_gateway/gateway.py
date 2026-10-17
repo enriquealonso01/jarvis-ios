@@ -349,6 +349,13 @@ async def _replace_previous_session(*, surface: str = "?") -> None:
             if s is not None and _session_is_live(s):
                 log.info("session-replace: stopping connected session pc=%s surface=%s (new offer surface=%s)",
                          snap["pc_id"], snap["surface"], surface)
+                # Tag WHY it died — the callflow harness (T6) reads this off
+                # /api/sessions to tell "guard did its job" from a real
+                # self-hangup regression, and the dashboard gets honest records.
+                try:
+                    s.stop_reason = "replaced-by-new-offer"
+                except Exception:  # noqa: BLE001
+                    pass
                 try:
                     await s.stop()
                 except Exception as exc:  # noqa: BLE001
@@ -422,6 +429,7 @@ async def voice_gw_offer(request: Request):
             # A reasoned call is fire-and-forget — hang it up server-side.
             def _auto_stop(session=s):
                 if not session.closed:
+                    session.stop_reason = "reasoned-backstop"
                     asyncio.ensure_future(session.stop())
             asyncio.get_running_loop().call_later(40.0, _auto_stop)
 
