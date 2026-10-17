@@ -54,7 +54,7 @@ jobs:
       - name: swift test (Linux-runnable packages on macOS)
         run: |
           set -e
-          for pkg in JarvisKit Persistence DesignSystem FeaturesChat FeaturesVoice FeaturesRuns FeaturesCapture CallKit JarvisIntents; do
+          for pkg in JarvisKit Persistence DesignSystem FeaturesChat FeaturesVoice FeaturesRuns FeaturesCapture CallKit JarvisIntents BuildSmokeTests; do
             echo "::group::swift test — $pkg"
             (cd "Packages/$pkg" && swift test)
             echo "::endgroup::"
