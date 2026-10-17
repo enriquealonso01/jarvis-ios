@@ -144,7 +144,7 @@ public actor PersistenceStore {
         }
     }
 
-    private nonisolated func preview(_ content: String) -> String {
+    private nonisolated static func preview(_ content: String) -> String {
         String(content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(140))
     }
 
