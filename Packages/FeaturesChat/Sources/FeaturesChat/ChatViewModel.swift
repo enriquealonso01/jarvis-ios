@@ -177,7 +177,12 @@ public struct ChatStreamEngine: Sendable, Equatable {
            let data = event.payload.data(using: .utf8),
            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            let raw = obj["message_id"] as? String {
-            return fnv1a(raw)
+            // Case-normalize like `streamMessageID(forMessageUUID:)`:
+            // the wire carries lowercase UUIDs, but a payload that renders
+            // uppercase (or mixed) must still hash to the SAME stream id
+            // or terminal frames (done/stop/error) land on a phantom
+            // message and the real one never reaches its terminal state.
+            return fnv1a(raw.lowercased())
         }
         // Token-first streams (no message_start seen): key by frame id so a
         // message still materializes; ids are monotonic so one token == one
