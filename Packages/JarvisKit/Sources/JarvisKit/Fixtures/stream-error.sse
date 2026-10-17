@@ -1,0 +1,12 @@
+id: 20
+event: message_start
+data: {"message_id": "c3e1a2d9-55b2-4a77-8e01-6b7a02f8c5d3"}
+
+id: 21
+event: token
+data: Working on it…
+
+id: 22
+event: error
+data: {"message_id": "c3e1a2d9-55b2-4a77-8e01-6b7a02f8c5d3", "message": "run crashed: tool timeout"}
+

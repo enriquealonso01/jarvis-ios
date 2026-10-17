@@ -1,0 +1,40 @@
+{
+  "contract": "jarvis-v2 agent event stream",
+  "version": 1,
+  "date": "2026-10-17",
+  "notes": "Contract-first fixture (V2-PLAN Risk-3): the real endpoint is the Hermes gateway (https://jarvis.enriquecodes.com) but iOS builds + tests against THIS shape only. Both a native SSE form (event:/id:/data:) and the legacy JSON envelope (data: only) share one stream; clients MUST accept both.",
+  "endpoints": {
+    "post_message": {
+      "method": "POST",
+      "path": "/v1/conversations/{conversation_id}/messages",
+      "request": { "message_id": "<uuid>", "content": "<text>" },
+      "response": {
+        "status": 202,
+        "body_example": {
+          "message_id": "6f0a2f58-1e4b-4f6a-9a55-6f0cb2cf6a01",
+          "conversation_id": "b1f04de2-88f0-4c8e-9f0a-1f6a2b3c4d5e",
+          "accepted": true
+        },
+        "offline_behavior": "client enqueues an outbox entry (kind=send-message) and replays with backoff; the stream, not the POST reply, carries the answer"
+      }
+    },
+    "event_stream": {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation_id}/events",
+      "headers": {
+        "Accept": "text/event-stream",
+        "Last-Event-ID": "<int seq — client resume pointer; server replays everything after it>"
+      },
+      "response": { "status": 200, "content_type": "text/event-stream" }
+    }
+  },
+  "event_kinds": {
+    "message_start": "payload is JSON: {\"message_id\": \"<uuid>\"}; begins a pending assistant message",
+    "token": "payload is the raw text delta to append (may be empty); payload JSON may instead carry {\"message_id\": ...}",
+    "done": "terminal; payload JSON: {\"message_id\": \"<uuid>\"}; client commits status=sent",
+    "stop": "terminal; generation was stopped; client freezes partial text as sent",
+    "error": "terminal; payload JSON: {\"message_id\": \"<uuid>\", \"message\": \"<reason>\"}; client marks failed + offers retry",
+    "heartbeat": "comment/keepalive form only — ': hb' lines; NOT required to appear as events"
+  },
+  "event_id_rules": "ids are monotonically increasing integers (string form on the wire); resume = reconnect with Last-Event-ID = last applied id; duplicates/replays after resume MUST be idempotent client-side"
+}

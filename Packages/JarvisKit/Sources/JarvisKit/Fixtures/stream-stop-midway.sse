@@ -1,0 +1,12 @@
+id: 10
+event: message_start
+data: {"message_id": "a2d9c3e1-77b2-4a55-9e01-3f8c5d6b7a02"}
+
+id: 11
+event: token
+data: Partial answ
+
+id: 12
+event: stop
+data: {"message_id": "a2d9c3e1-77b2-4a55-9e01-3f8c5d6b7a02"}
+

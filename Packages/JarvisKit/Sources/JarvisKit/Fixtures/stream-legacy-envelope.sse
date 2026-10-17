@@ -1,0 +1,15 @@
+id: 30
+data: {"id": 30, "kind": "message_start", "payload": "{\"message_id\": \"d4e5f6a7-88b9-4c0d-9e1f-2a3b4c5d6e7f\"}"}
+
+id: 31
+data: {"id": 31, "kind": "token", "payload": "Legacy envelope stream"}
+
+id: 32
+: hb
+
+id: 33
+data: {"id": 33, "kind": "token", "payload": " — still alive after heartbeat"}
+
+id: 34
+data: {"id": 34, "kind": "done", "payload": "{\"message_id\": \"d4e5f6a7-88b9-4c0d-9e1f-2a3b4c5d6e7f\"}"}
+

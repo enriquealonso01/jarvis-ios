@@ -155,26 +155,39 @@ public actor PersistenceStore {
     /// Streaming delta: upsert the message row in place so a cold launch
     /// mid-stream restores the transcript. `replaceBody: false` appends the
     /// delta (token deltas); `true` replaces the content (snapshot commit).
+    /// `lastEventID` persists the stream resume pointer when provided.
     @discardableResult
     public func applyStreamDelta(
         messageID: UUID,
         conversationID: UUID,
         role: MessageRole = .assistant,
         delta: String,
-        replaceBody: Bool
+        replaceBody: Bool,
+        lastEventID: Int64? = nil
     ) async throws -> StoredMessage {
         try await dbWriter.write { db in
             var row: StoredMessage
             if var existing = try StoredMessage
                 .filter(Column("id") == messageID)
                 .fetchOne(db) {
+                // Never downgrade a terminal row: a debounced delta flushed
+                // after finalize (stop/error) must not resurrect `streaming`.
+                guard existing.status == .streaming || existing.status == .sending else {
+                    if let lastEventID, existing.lastEventID < lastEventID {
+                        existing.lastEventID = lastEventID
+                        try existing.save(db)
+                    }
+                    return existing
+                }
                 existing.content = replaceBody ? delta : existing.content + delta
                 existing.status = .streaming
+                if let lastEventID { existing.lastEventID = lastEventID }
                 row = existing
             } else {
                 row = StoredMessage(
                     id: messageID, conversationID: conversationID,
-                    role: role, content: delta, status: .streaming
+                    role: role, content: delta, status: .streaming,
+                    lastEventID: lastEventID ?? 0
                 )
             }
             try row.save(db)
@@ -184,6 +197,79 @@ public actor PersistenceStore {
             )
             return row
         }
+    }
+
+    // MARK: - Item 2: stream finalization + cold-launch restore (feature #1)
+
+    /// Final commit of a streamed assistant message: terminal status
+    /// (`sent` — includes `stopped`, since stop freezes partial content;
+    /// `failed` for errors), conversation preview + ordering timestamp.
+    /// The 500ms-debounced deltas only ever write `streaming` rows; this is
+    /// the one transition the store treats as authoritative.
+    @discardableResult
+    public func finalizeStreamedMessage(
+        id: UUID,
+        conversationID: UUID,
+        text: String,
+        failed: Bool,
+        lastEventID: Int64? = nil
+    ) async throws -> StoredMessage {
+        try await dbWriter.write { db in
+            var row = try StoredMessage.filter(Column("id") == id).fetchOne(db)
+                ?? StoredMessage(
+                    id: id, conversationID: conversationID,
+                    role: .assistant, content: text, status: failed ? .failed : .sent
+                )
+            row.content = text
+            row.status = failed ? .failed : .sent
+            if let lastEventID { row.lastEventID = lastEventID }
+            try row.save(db)
+            // Feature #4: conversation preview + ordering stamp move with the
+            // latest message (assistant reply is the newest transcript entry).
+            try db.execute(
+                sql: """
+                    UPDATE conversations
+                    SET updated_at = ?, last_message_preview = ?
+                    WHERE id = ?
+                    """,
+                arguments: [Date().timeIntervalSince1970, Self.preview(text), conversationID]
+            )
+            return row
+        }
+    }
+
+    /// Cold-launch restore (task spec #3): last persisted snapshot for a
+    /// conversation + the resume point (highest `last_event_id`) so the live
+    /// tail continues from exactly where the store left off.
+    public func streamRestoreState(
+        conversationID: UUID
+    ) async throws -> (snapshot: StoredMessage?, resumeEventID: Int64) {
+        try await dbWriter.read { db in
+            let snapshot = try StoredMessage
+                .filter(Column("conversation_id") == conversationID)
+                .filter(Column("status") == MessageStatus.streaming.rawValue)
+                .order(Column("created_at").desc, Column("id").desc)
+                .fetchOne(db)
+            let resume = try Int64.fetchOne(
+                db,
+                sql: "SELECT COALESCE(MAX(last_event_id), 0) FROM messages WHERE conversation_id = ?",
+                arguments: [conversationID]
+            ) ?? 0
+            return (snapshot, resume)
+        }
+    }
+
+    /// IDs of the conversation's still-mid-stream (`streaming`) messages —
+    /// the cold-launch restore candidates, oldest first.
+    public func streamingMessageIDs(conversationID: UUID) async -> [UUID] {
+        (try? await dbWriter.read { db in
+            try StoredMessage
+                .filter(Column("conversation_id") == conversationID)
+                .filter(Column("status") == MessageStatus.streaming.rawValue)
+                .order(Column("created_at").asc)
+                .fetchAll(db)
+                .map(\.id)
+        }) ?? []
     }
 
     // MARK: - Full-text search (FTS5)

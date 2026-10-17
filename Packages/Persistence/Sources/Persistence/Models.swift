@@ -86,6 +86,10 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
     public var serverID: String?
     /// Outbox contract: true until the server ACKs the send.
     public var pendingSync: Bool
+    /// Stream resume pointer (Item 2): highest SSE event id applied to this
+    /// message; 0 = none. Feeds the `Last-Event-ID` header on reconnect and
+    /// the cold-launch dedupe watermark.
+    public var lastEventID: Int64
     public var createdAt: Date
 
     public init(
@@ -99,6 +103,7 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
         branchIndex: Int = 0,
         serverID: String? = nil,
         pendingSync: Bool = true,
+        lastEventID: Int64 = 0,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -111,6 +116,7 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
         self.branchIndex = branchIndex
         self.serverID = serverID
         self.pendingSync = pendingSync
+        self.lastEventID = lastEventID
         self.createdAt = createdAt
     }
 
@@ -122,6 +128,7 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
         case branchIndex = "branch_index"
         case serverID = "server_id"
         case pendingSync = "pending_sync"
+        case lastEventID = "last_event_id"
         case createdAt = "created_at"
     }
 }
@@ -623,6 +630,8 @@ public enum Schema {
         public static let v2MessageSyncColumns = Migration(identifier: "v2.messages-sync-columns", order: 5)
         /// v2FTS: FTS5 index over transcript segment text (unified search).
         public static let v2FTSTranscripts = Migration(identifier: "v2.fts5-transcripts", order: 6)
+        /// Item 2 (#1): per-message stream resume pointer (`last_event_id`).
+        public static let v2LastEventID = Migration(identifier: "v2.last-event-id", order: 7)
     }
 
     /// Ordered migration list — strictly ascending `order`, unique ids.
@@ -633,6 +642,7 @@ public enum Schema {
         Migrations.v2ProjectsRuns,
         Migrations.v2MessageSyncColumns,
         Migrations.v2FTSTranscripts,
+        Migrations.v2LastEventID,
     ]
 
     /// Pure validation of the migration chain — unit-testable anywhere.

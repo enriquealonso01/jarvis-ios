@@ -170,6 +170,15 @@ enum AppSchema {
             }
         }
 
+        // Item 2 (#1): per-message stream resume pointer. The SSE
+        // Last-Event-ID resume reads this; 0 = no events applied yet.
+        // (Index already exists from v1 — columns only.)
+        migrator.registerMigration(Schema.Migrations.v2LastEventID.identifier) { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "last_event_id", .integer).notNull().defaults(to: 0)
+            }
+        }
+
         return migrator
     }
 }

@@ -1,0 +1,21 @@
+id: 1
+event: message_start
+data: {"message_id": "6f0a2f58-1e4b-4f6a-9a55-6f0cb2cf6a01"}
+
+id: 2
+event: token
+data: Hello
+
+id: 3
+event: token
+data: ,
+
+id: 4
+event: token
+data:  world
+data: !
+
+id: 5
+event: done
+data: {"message_id": "6f0a2f58-1e4b-4f6a-9a55-6f0cb2cf6a01"}
+
