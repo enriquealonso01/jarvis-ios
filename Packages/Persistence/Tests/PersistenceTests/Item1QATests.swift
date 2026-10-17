@@ -22,9 +22,7 @@ final class Item1QATests: XCTestCase {
 
     private func tempDBPath(_ label: String) -> String {
         let dir = NSTemporaryDirectory() + "item1-qa-\(label)-\(UUID().uuidString)"
-        try? FileManager.default.createDirectory(
-            ofType: .directory, atPath: dir, withIntermediateDirectories: true
-        )
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         return dir + "/store.sqlite"
     }
 
@@ -114,7 +112,8 @@ final class Item1QATests: XCTestCase {
         // Create.
         let conv = StoredConversation(title: "crud", lastMessagePreview: nil)
         await store.upsert(conv)
-        XCTAssertEqual(await store.count(), 1)
+        let convCount = await store.count()
+        XCTAssertEqual(convCount, 1)
 
         // Message create + read.
         let m = StoredMessage(conversationID: conv.id, role: .user, content: "hello qa")
@@ -142,7 +141,8 @@ final class Item1QATests: XCTestCase {
         XCTAssertEqual(afterDelete.count, 0)
         let removed = await store.deleteConversation(id: conv.id)
         XCTAssertTrue(removed)
-        XCTAssertEqual(await store.count(), 0)
+        let finalCount = await store.count()
+        XCTAssertEqual(finalCount, 0)
         let orphaned = await store.getMessage(id: m.id)
         XCTAssertNil(orphaned)
     }
@@ -277,10 +277,8 @@ final class Item1QATests: XCTestCase {
         XCTAssertEqual(recovered?.attempts, 2, "attempt count must survive")
         XCTAssertEqual(recovered?.payload.body, "must survive the crash")
         XCTAssertEqual(recovered?.payload.kind, "send-message")
-        XCTAssertEqual(
-            recovered?.nextRetryAt.timeIntervalSince1970, 5_000,
-            accuracy: 0.001
-        )
+        let recoveredRetry = recovered?.nextRetryAt.timeIntervalSince1970 ?? -1
+        XCTAssertEqual(recoveredRetry, 5_000, accuracy: 0.001)
 
         // The recovered queue still drains: ack one, fail-and-backoff the other.
         enum TransportError: Error { case down }
