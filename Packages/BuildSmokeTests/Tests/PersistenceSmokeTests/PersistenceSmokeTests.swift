@@ -77,13 +77,16 @@ final class PersistenceSmokeTests: XCTestCase {
         await store.upsert(conv)
         let fetched = await store.get(id: conv.id)
         XCTAssertEqual(fetched, conv)
-        XCTAssertEqual(await store.count(), 1)
+        let countGRDB = await store.count()
+        XCTAssertEqual(countGRDB, 1)
 
         var updated = conv
         updated.title = "grdb smoke v2"
         await store.upsert(updated)
-        XCTAssertEqual(await store.count(), 1, "upsert must not duplicate rows")
-        XCTAssertEqual(await store.get(id: conv.id)?.title, "grdb smoke v2")
+        let countAfterUpdate = await store.count()
+        XCTAssertEqual(countAfterUpdate, 1, "upsert must not duplicate rows")
+        let refetched = await store.get(id: conv.id)
+        XCTAssertEqual(refetched?.title, "grdb smoke v2")
     }
 
     func testMessagePageSizeContract() {
