@@ -40,7 +40,11 @@ public struct SidebarPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Tokens.Spacing.m) {
                     PinnedSection(entries: model.pinnedEntries) { entry in
-                        select(entry)
+                        switch entry.kind {
+                        case .chat(let id): selection = .chat(id: id)
+                        case .project(let id): selection = .projectHome(id: id)
+                        }
+                        dismiss()
                     }
                     ProjectsSection(
                         groups: model.projectGroups,
@@ -146,4 +150,8 @@ public struct SidebarPanel: View {
 private extension Tokens {
     // Local extra spacing not worth a token.
     static let xl: CGFloat = 24
+    static let xs: CGFloat = 4
+    static let s: CGFloat = 8
+    static let m: CGFloat = 12
+    static let l: CGFloat = 16
 }
