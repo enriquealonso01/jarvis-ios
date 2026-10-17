@@ -1932,3 +1932,19 @@ Features build for the next release (rides after build 68 / ios-v31):
 - 5ad6188 CI run 71 fix: audioQualityLabel is now nonisolated (pure fn called from a nonisolated XCTest context)
 NOT regressed: build-68 audio gate untouched (CallManager answer-path + isAudioSessionConfigured flow intact); server/voice_gateway untouched.
 CI: runs 70/71 failed on Swift errors fixed same-hour on main; dispatch budget (1 re-run) spent — the ship agent's 14:00+ Release run on 5ad6188 is the verify. Build numbers = run numbers.
+
+## 2026-10-17 14:30 UTC (ship day) — TestFlight build 72 shipped (ios-v32), ASC VALID
+Shipped build 72 (CI run 72, id 39039851718, lane beta @ 8a9c136) — SUCCESS:
+- swift_sanity OK; callflow harness 11/11 locally AND in CI (T7 reasoned-backstop
+  stop_reason observed at 40s — the fuse, not a flake).
+- Fix commit this ship: 8a9c136 harness: keep blocking HTTP off the event loop
+  (to_thread for /api/offer + T7 sessions_alive poll) — unblocked aiortc consent
+  refresh; killed the T6/T7 "Consent to send expired" flake seen at 14:02.
+- fastlane: "build number verified in .ipa: CFBundleVersion=72"; "Successfully
+  uploaded the new binary to App Store Connect"; fastlane.tools finished 🎉.
+- ASC gate (asc-check.yml run 11, id 39040690904): BUILD: 72 VALID.
+- Features riding this build: Face ID app lock + privacy shield, Projects tab,
+  Settings tab, call-history audio-quality lines, transcript timestamps,
+  gateway audio-summary push + dashboard call record, stop_reason forensics.
+- Commit range: ea79d85..8a9c136 (1 fix commit); tag ios-v32 @ 8a9c136.
+Ready for Enrique to install from TestFlight (well ahead of the 16:00 UTC wall).
