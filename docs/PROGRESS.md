@@ -1921,3 +1921,14 @@ regressions). Commit 2645e6c pushed to origin/main (094b95e..2645e6c verified):
 Verified live: SHIP GATE: ios-v31 -> run #69 -> build 69 VALID (via
 asc-check.yml) — shipped. verify_all.sh exit 0: 252 PASS / 0 FAIL — first
 ALL GREEN since the 9/30 build-68 era.
+
+## 2026-10-17 13:10 UTC (features day) — Face ID lock, Projects tab, call-history audio line, Settings; CI runs 70/71 red on 2 fixed Swift errors
+Features build for the next release (rides after build 68 / ios-v31):
+- fb6c61b Face ID app lock (AppLockPolicy pure matrix + Keychain prefs + privacy shield) + dark-default theme (AppTheme)
+- f58615b Projects manager tab — GET /api/control/projects via CCClient, read-only + local quick notes, polished empty/error states
+- 673f974 Call history: gateway audio_summary → audioIn/outFrames (never fabricated when absent); per-turn transcript timestamps
+- 6f16ac0 Settings tab surface (app-lock + launch-only, haptics gate, theme, version) + AppLockPolicyTests/CallLogAudioSummaryTests
+- e110882 CI run 70 fix: NoteSheet struct was referenced but never written (sanity checks structure, not symbols)
+- 5ad6188 CI run 71 fix: audioQualityLabel is now nonisolated (pure fn called from a nonisolated XCTest context)
+NOT regressed: build-68 audio gate untouched (CallManager answer-path + isAudioSessionConfigured flow intact); server/voice_gateway untouched.
+CI: runs 70/71 failed on Swift errors fixed same-hour on main; dispatch budget (1 re-run) spent — the ship agent's 14:00+ Release run on 5ad6188 is the verify. Build numbers = run numbers.
