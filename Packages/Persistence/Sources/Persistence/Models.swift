@@ -1,18 +1,17 @@
 import Foundation
+import GRDB
 
-// MARK: - Stored rows (Sendable struct snapshots crossing the actor boundary)
+// MARK: - Item 1 row types (feature #4 — local source of truth, offline-first)
 //
-// Item 1 (feature #4) row types. GRDB persistence conformance lives in
-// PersistenceStore.swift (FetchableRecord/MutablePersistableRecord); these
-// declarations are the single source of truth for the shapes. Item 0's
-// scaffold-shape API (id/title/updatedAt) is preserved as a superset.
+// Single source of truth: these Sendable structs ARE the GRDB records.
+// Column names follow the task-spec schema (snake_case) via CodingKeys.
 
 public enum MessageRole: String, Sendable, Codable, CaseIterable {
     case user, assistant, system, tool
 }
 
-/// Message lifecycle: every outbound message starts `sending`; the stream
-/// engine (Item 2) flips assistant rows to `streaming` then `sent`/`failed`.
+/// Message lifecycle: outbound starts `sending`; assistant rows flip to
+/// `streaming` while deltas land, then `sent`/`failed`.
 public enum MessageStatus: String, Sendable, Codable, CaseIterable {
     case sending, sent, failed, streaming
 }
@@ -21,7 +20,10 @@ public enum RunCardStatus: String, Sendable, Codable, CaseIterable {
     case queued, running, done, failed, cancelled
 }
 
-public struct StoredConversation: Sendable, Codable, Equatable, Identifiable {
+public struct StoredConversation: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "conversations"
+
     public var id: UUID
     public var projectID: UUID?
     public var title: String
@@ -31,11 +33,14 @@ public struct StoredConversation: Sendable, Codable, Equatable, Identifiable {
     public var archived: Bool
     public var lastMessagePreview: String?
 
+    /// Twin-equality contract (pinned by BuildSmokeTests): `createdAt`
+    /// defaults to `updatedAt` so `StoredConversation(id:title:updatedAt:)`
+    /// compares equal to the originally constructed value.
     public init(
         id: UUID = UUID(),
         projectID: UUID? = nil,
         title: String,
-        createdAt: Date = Date(),
+        createdAt: Date? = nil,
         updatedAt: Date = Date(),
         pinned: Bool = false,
         archived: Bool = false,
@@ -44,44 +49,52 @@ public struct StoredConversation: Sendable, Codable, Equatable, Identifiable {
         self.id = id
         self.projectID = projectID
         self.title = title
-        self.createdAt = createdAt
+        self.createdAt = createdAt ?? updatedAt
         self.updatedAt = updatedAt
         self.pinned = pinned
         self.archived = archived
         self.lastMessagePreview = lastMessagePreview
     }
+
+    // GRDB column mapping (task-spec snake_case schema).
+    enum CodingKeys: String, CodingKey {
+        case id, projectID = "project_id", title
+        case createdAt = "created_at", updatedAt = "updated_at"
+        case pinned, archived
+        case lastMessagePreview = "last_message_preview"
+    }
 }
 
-public struct StoredMessage: Sendable, Codable, Equatable, Identifiable {
+public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "messages"
+
     public var id: UUID
     public var conversationID: UUID
-    public var serverID: String?
-    public var pendingSync: Bool
     public var role: MessageRole
     public var content: String
     public var status: MessageStatus
+    /// Attachment descriptors, persisted inline as JSON.
     public var attachments: [StoredAttachment]
-    public var branchID: Int64?
+    /// Branch identity for edit→branch (feature #6); nil = trunk.
+    public var branchID: String?
+    /// Ordinal within the branch for the "‹ 2/3 ›" switcher.
     public var branchIndex: Int
     public var createdAt: Date
 
     public init(
         id: UUID = UUID(),
         conversationID: UUID,
-        serverID: String? = nil,
-        pendingSync: Bool = false,
         role: MessageRole,
         content: String,
         status: MessageStatus = .sending,
         attachments: [StoredAttachment] = [],
-        branchID: Int64? = nil,
+        branchID: String? = nil,
         branchIndex: Int = 0,
         createdAt: Date = Date()
     ) {
         self.id = id
         self.conversationID = conversationID
-        self.serverID = serverID
-        self.pendingSync = pendingSync
         self.role = role
         self.content = content
         self.status = status
@@ -89,6 +102,15 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable {
         self.branchID = branchID
         self.branchIndex = branchIndex
         self.createdAt = createdAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case conversationID = "conversation_id"
+        case role, content, status, attachments
+        case branchID = "branch_id"
+        case branchIndex = "branch_index"
+        case createdAt = "created_at"
     }
 }
 
@@ -107,7 +129,11 @@ public struct StoredAttachment: Sendable, Codable, Equatable {
     }
 }
 
-public struct StoredBranch: Sendable, Codable, Equatable, Identifiable {
+public struct StoredBranch: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "branches"
+
+    /// Auto-increment row id; nil until inserted.
     public var id: Int64?
     public var conversationID: UUID
     public var parentMessageID: UUID?
@@ -127,20 +153,38 @@ public struct StoredBranch: Sendable, Codable, Equatable, Identifiable {
         self.branchIndex = branchIndex
         self.active = active
     }
+
+    public mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case conversationID = "conversation_id"
+        case parentMessageID = "parent_message_id"
+        case branchIndex = "branch_index"
+        case active
+    }
 }
 
-public struct OutboxEntry: Sendable, Codable, Equatable, Identifiable {
-    public var id: Int64?
+public struct OutboxEntry: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "outbox"
+
+    public var id: UUID
+    /// Free-form JSON payload (kind + ids + body) so Items 2/3 add send
+    /// kinds without a schema bump.
     public var payload: OutboxPayload
     public var attempts: Int
+    /// When this entry may next be attempted (exponential backoff).
     public var nextRetryAt: Date
     public var createdAt: Date
 
     public init(
-        id: Int64? = nil,
+        id: UUID = UUID(),
         payload: OutboxPayload,
         attempts: Int = 0,
-        nextRetryAt: Date = Date(),
+        nextRetryAt: Date = .init(timeIntervalSince1970: 0),
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -149,10 +193,15 @@ public struct OutboxEntry: Sendable, Codable, Equatable, Identifiable {
         self.nextRetryAt = nextRetryAt
         self.createdAt = createdAt
     }
+
+    enum CodingKeys: String, CodingKey {
+        case id, payload, attempts
+        case nextRetryAt = "next_retry_at"
+        case createdAt = "created_at"
+    }
 }
 
-/// What the outbox carries. Extensible via new `kind` values so Items 2/3 can
-/// add send kinds without a schema bump.
+/// What the outbox carries; Codable → the row's payload JSON.
 public struct OutboxPayload: Sendable, Codable, Equatable {
     public var kind: String // e.g. "send-message"
     public var conversationID: UUID?
@@ -167,11 +216,15 @@ public struct OutboxPayload: Sendable, Codable, Equatable {
     }
 }
 
-public struct RunCard: Sendable, Codable, Equatable, Identifiable {
+public struct RunCard: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "run_cards"
+
     public var id: UUID
     public var conversationID: UUID
     public var runID: String
     public var status: RunCardStatus
+    /// Steps persisted inline as JSON.
     public var steps: [RunStep]
 
     public init(
@@ -187,6 +240,13 @@ public struct RunCard: Sendable, Codable, Equatable, Identifiable {
         self.status = status
         self.steps = steps
     }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case conversationID = "conversation_id"
+        case runID = "run_id"
+        case status, steps
+    }
 }
 
 public struct RunStep: Sendable, Codable, Equatable {
@@ -201,9 +261,12 @@ public struct RunStep: Sendable, Codable, Equatable {
     }
 }
 
-/// One key/value row of the App-Group snapshot table (feature #40). The
-/// widgets extension decodes these; the app is the only writer.
-public struct WidgetSnapshotEntry: Sendable, Codable, Equatable {
+/// One row of the App-Group snapshot table (feature #40 prep). The widgets
+/// extension later reads ONLY this table; the app is the only writer.
+public struct WidgetSnapshotEntry: Sendable, Codable, Equatable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "widget_snapshot"
+
     public var key: String
     public var valueJSON: String
     public var updatedAt: Date
@@ -212,5 +275,53 @@ public struct WidgetSnapshotEntry: Sendable, Codable, Equatable {
         self.key = key
         self.valueJSON = valueJSON
         self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case valueJSON = "value_json"
+        case updatedAt = "updated_at"
+    }
+}
+
+// MARK: - Migration contract (pinned by BuildSmokeTests — extend, don't break)
+
+/// One entry in the shipped migration chain. The contract: `Schema.migrations`
+/// must stay strictly ascending in `order` with unique identifiers, and
+/// `Schema.isWellOrdered` must keep rejecting bad chains.
+public struct Migration: Sendable, Equatable {
+    public let identifier: String
+    public let order: Int
+
+    public init(identifier: String, order: Int) {
+        self.identifier = identifier
+        self.order = order
+    }
+}
+
+public enum Schema {
+    /// Migration identifiers. Sequential + well-ordered; future schema
+    /// changes APPEND a new entry — never rewrite shipped ones.
+    public enum Migrations {
+        /// v1 core tables (conversations, messages, branches, outbox, run_cards).
+        public static let v1 = Migration(identifier: "v1.core-tables", order: 1)
+        /// FTS5 full-text index over message content (synchronized by triggers).
+        public static let v1FTS = Migration(identifier: "v1.fts5-index", order: 2)
+        /// App-Group widget snapshot table (feature #40 prep, schema only).
+        public static let v1WidgetSnapshot = Migration(identifier: "v1.widget-snapshot", order: 3)
+    }
+
+    /// Ordered migration list — strictly ascending `order`, unique ids.
+    public static let migrations: [Migration] = [
+        Migrations.v1,
+        Migrations.v1FTS,
+        Migrations.v1WidgetSnapshot,
+    ]
+
+    /// Pure validation of the migration chain — unit-testable anywhere.
+    public static func isWellOrdered(_ migrations: [Migration]) -> Bool {
+        guard migrations.map(\.order) == migrations.map(\.order).sorted() else { return false }
+        let ids = migrations.map(\.identifier)
+        return ids.count == Set(ids).count
     }
 }

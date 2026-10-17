@@ -15,16 +15,18 @@ public actor PersistenceStore {
     private let dbWriter: any DatabaseWriter
 
     /// In-memory database (tests / previews) — the pinned smoke entry point.
+    /// Force-unwrap is safe: an in-memory queue cannot fail to open, and the
+    /// Item 0 contract requires a non-failable public initializer.
     public init() {
-        // Force-unwrap is safe: an in-memory queue cannot fail to open, and
-        // the Item 0 contract requires a non-failable public initializer.
-        try! self.init(dbWriter: try! DatabaseQueue())
+        let queue = try! DatabaseQueue()
+        try! self.init(dbWriter: queue)
     }
 
     /// File-backed store. Put `path` in the App Group container so app +
     /// widget extension see the same database (feature #40).
     public init(path: String) throws {
-        self.init(dbWriter: try DatabaseQueue(path: path))
+        let queue = try DatabaseQueue(path: path)
+        try self.init(dbWriter: queue)
     }
 
     init(dbWriter: any DatabaseWriter) throws {
@@ -43,11 +45,11 @@ public actor PersistenceStore {
     }
 
     public func get(id: UUID) async -> StoredConversation? {
-        try? dbWriter.read { db in
+        (try? dbWriter.read { db in
             try StoredConversation
                 .filter(Column("id") == id)
                 .fetchOne(db)
-        } ?? nil
+        }) ?? nil
     }
 
     public func count() async -> Int {
@@ -75,18 +77,18 @@ public actor PersistenceStore {
     // MARK: - Messages (paginated)
 
     /// One page of a conversation, oldest first, `messagePageSize` per page.
-    /// Page 0 = oldest 50; pages advance forward. For newest-first paging
-    /// (chat UI "load older" scrolling upward), see `recentMessages`.
+    /// Page 0 = oldest 50; pages advance forward. For chat-style "newest
+    /// page, oldest-first within the page", see `recentMessages`.
     public func fetchMessages(conversationID: UUID, page: Int) async throws -> [StoredMessage] {
-        try await messages(conversationID: conversationID, limit: Self.messagePageSize,
-                           offset: page * Self.messagePageSize)
+        try await pagedMessages(conversationID: conversationID, limit: Self.messagePageSize,
+                                offset: page * Self.messagePageSize)
     }
 
     public func messages(conversationID: UUID) async throws -> [StoredMessage] {
-        try await messages(conversationID: conversationID, limit: nil, offset: 0)
+        try await pagedMessages(conversationID: conversationID, limit: nil, offset: 0)
     }
 
-    private func messages(conversationID: UUID, limit: Int?, offset: Int) async throws -> [StoredMessage] {
+    private func pagedMessages(conversationID: UUID, limit: Int?, offset: Int) async throws -> [StoredMessage] {
         try dbWriter.read { db in
             var request = StoredMessage
                 .filter(Column("conversation_id") == conversationID)
@@ -98,7 +100,7 @@ public actor PersistenceStore {
     }
 
     /// Newest page of a conversation, returned oldest-first within the page
-    /// (what a chat transcript renders). Chat "load older" = decreasing page.
+    /// (what a chat transcript renders). "Load older" = increasing page.
     public func recentMessages(conversationID: UUID, page: Int = 0) async throws -> [StoredMessage] {
         let newest = try dbWriter.read { db in
             try StoredMessage
@@ -111,9 +113,9 @@ public actor PersistenceStore {
     }
 
     public func getMessage(id: UUID) async -> StoredMessage? {
-        try? dbWriter.read { db in
+        (try? dbWriter.read { db in
             try StoredMessage.filter(Column("id") == id).fetchOne(db)
-        } ?? nil
+        }) ?? nil
     }
 
     public func messageCount(conversationID: UUID) async -> Int {
@@ -138,8 +140,7 @@ public actor PersistenceStore {
     }
 
     private func preview(_ content: String) -> String {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        return String(trimmed.prefix(140))
+        String(content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(140))
     }
 
     /// Streaming delta: upsert the message row in place so a cold launch
@@ -196,6 +197,7 @@ public actor PersistenceStore {
 
     // MARK: - Branches
 
+    @discardableResult
     public func upsert(_ branch: StoredBranch) async throws -> StoredBranch {
         try dbWriter.write { db in
             var b = branch
@@ -242,9 +244,9 @@ public actor PersistenceStore {
     }
 
     public func outboxEntry(id: UUID) async -> OutboxEntry? {
-        try? dbWriter.read { db in
+        (try? dbWriter.read { db in
             try OutboxEntry.filter(Column("id") == id).fetchOne(db)
-        } ?? nil
+        }) ?? nil
     }
 
     public func outboxCount() async -> Int {
@@ -287,6 +289,29 @@ public actor PersistenceStore {
         }
     }
 
+    // MARK: - Run cards
+
+    public func upsert(_ card: RunCard) async {
+        _ = try? dbWriter.write { db in
+            try card.save(db)
+        }
+    }
+
+    public func runCard(id: UUID) async -> RunCard? {
+        (try? dbWriter.read { db in
+            try RunCard.filter(Column("id") == id).fetchOne(db)
+        }) ?? nil
+    }
+
+    public func runCards(conversationID: UUID) async -> [RunCard] {
+        (try? dbWriter.read { db in
+            try RunCard
+                .filter(Column("conversation_id") == conversationID)
+                .order(Column("created_at").desc)
+                .fetchAll(db)
+        }) ?? []
+    }
+
     // MARK: - Widget snapshot (App-Group; feature #40 prep)
 
     /// App-only writer for the snapshot table the widget will read.
@@ -297,19 +322,8 @@ public actor PersistenceStore {
     }
 
     public func widgetSnapshotEntry(key: String) async -> WidgetSnapshotEntry? {
-        try? dbWriter.read { db in
+        (try? dbWriter.read { db in
             try WidgetSnapshotEntry.filter(Column("key") == key).fetchOne(db)
-        } ?? nil
-    }
-}
-
-// MARK: - Test hooks (internal extensions — no public API growth for tests)
-
-extension PersistenceStore {
-    /// Test-only hard delete bypassing the actor convenience wrappers.
-    func deleteMessageForTest(id: UUID) throws {
-        try dbWriter.write { db in
-            _ = try StoredMessage.filter(Column("id") == id).deleteAll(db)
-        }
+        }) ?? nil
     }
 }
