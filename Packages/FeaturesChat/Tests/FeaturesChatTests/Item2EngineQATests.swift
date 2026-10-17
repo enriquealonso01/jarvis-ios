@@ -24,7 +24,9 @@ final class Item2EngineQATests: XCTestCase {
     private var startID: Int64 { ChatStreamEngine.streamMessageID(forMessageUUID: messageUUID) }
 
     private func startPayload(_ uuid: UUID) -> String {
-        "{\"message_id\": \"\(uuid.uuidString)\"}"
+        // Fixture contract: wire message_id is lowercase (see Fixtures/*.sse);
+        // uuidString renders uppercase — normalize to the wire form.
+        "{\"message_id\": \"\(uuid.uuidString.lowercased())\"}"
     }
 
     private func commitText(_ commits: [StreamCommit], id: Int64) -> String {
