@@ -72,7 +72,7 @@ public actor APIClient {
 
     /// POST a JSON body, returning the decoded response. Pass
     /// `Optional<D>.self` for endpoints that answer 204/empty.
-    public func post<Body: Encodable, D: Decodable>(_ path: String,
+    public func post<Body: Encodable, D: Decodable>(path: String,
                                                     body: Body,
                                                     as type: Optional<D>.Type) async throws -> D? {
         let data = try await postData(path: path, body: body)
@@ -81,7 +81,7 @@ public actor APIClient {
     }
 
     /// POST a JSON body, returning the decoded response.
-    public func post<Body: Encodable, T: Decodable>(_ path: String,
+    public func post<Body: Encodable, T: Decodable>(path: String,
                                                     body: Body,
                                                     as type: T.Type) async throws -> T {
         let data = try await postData(path: path, body: body)
@@ -89,7 +89,7 @@ public actor APIClient {
     }
 
     /// POST a JSON body, discarding the (possibly empty) response.
-    public func post<Body: Encodable>(_ path: String, body: Body) async throws {
+    public func post<Body: Encodable>(path: String, body: Body) async throws {
         _ = try await postData(path: path, body: body)
     }
 
