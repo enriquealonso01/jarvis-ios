@@ -1,4 +1,5 @@
 import Foundation
+import Persistence
 
 /// API client actor (plan §5.1). All network I/O lives here; Sendable struct
 /// snapshots cross isolation boundaries. Grows in Items 1–2: message send
@@ -20,20 +21,21 @@ public actor APIClient {
     // MARK: - Item 2: message send + event stream (fixture contract)
 
     /// POST a message. When `online` is false (or the request fails with a
-    /// transport error) the returned payload is what the caller enqueues as
-    /// an `OutboxEntry` — offline-first (feature #4): the send is never lost,
-    /// it replays with backoff when connectivity returns.
-    /// - Returns: the outbox payload for this send, plus the server reply
-    ///   when the POST actually went through.
+    /// transport error) the returned payload is what the caller converts to
+    /// an `OutboxEntry` (Persistence) — offline-first (feature #4): the send
+    /// is never lost, it replays with backoff when connectivity returns.
+    /// - Returns: the replayable send payload (JarvisKit-owned mirror of the
+    ///   outbox wire format — this package must not depend on Persistence),
+    ///   plus the server reply when the POST actually went through.
     @discardableResult
     public func postMessage(conversationID: UUID,
                             messageID: UUID,
                             body: String,
-                            online: Bool = true) async throws -> (payload: OutboxPayload, reply: MessageSendReply?) {
-        let payload = OutboxPayload(kind: OutboxPayload.sendKind,
-                                    conversationID: conversationID,
-                                    messageID: messageID,
-                                    body: body)
+                            online: Bool = true) async throws -> (payload: OutboxSendPayload, reply: MessageSendReply?) {
+        let payload = OutboxSendPayload(kind: OutboxSendPayload.sendKind,
+                                        conversationID: conversationID,
+                                        messageID: messageID,
+                                        body: body)
         guard online else { return (payload, nil) }
         do {
             let reply: MessageSendReply? = try await post(
@@ -48,10 +50,20 @@ public actor APIClient {
         }
     }
 
+    /// POST /v1/conversations/{id}/messages (fixture contract).
+    public nonisolated static func messageEndpoint(_ conversationID: UUID) -> String {
+        "/v1/conversations/\(conversationID.uuidString)/messages"
+    }
+
     /// GET the conversation's SSE event stream (fixture contract:
     /// JarvisKit/Fixtures/contract.json). Events flow through `SSEClient`.
     public nonisolated func streamPath(conversationID: UUID) -> String {
         SSEClient.streamEndpoint(conversationID)
+    }
+
+    /// POST message endpoint (fixture contract: JarvisKit/Fixtures/contract.json).
+    public nonisolated static func messageEndpoint(_ conversationID: UUID) -> String {
+        "/v1/conversations/\(conversationID.uuidString)/messages"
     }
 
     // MARK: - Core HTTP
@@ -59,7 +71,8 @@ public actor APIClient {
     /// GET an endpoint, returning decoded JSON. Never force-unwraps URLs.
     public func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         let request = try makeRequest(path: path, method: "GET")
-        return try await run(request, as: type)
+        let data = try await send(request)
+        return try JSONDecoder().decode(T.self, from: data)
     }
 
     /// POST a JSON body, returning the decoded response. Pass
@@ -127,6 +140,28 @@ public enum APIError: Error, Equatable, Sendable {
     /// Unreachable transport (offline / DNS / TLS) — safe to replay via the
     /// outbox with backoff.
     case transportError
+}
+
+/// JarvisKit-owned mirror of the outbox send payload (wire format of
+/// `OutboxEntry.payload`). Lives here because JarvisKit must not depend on
+/// Persistence; keys match Persistence.OutboxPayload exactly (the outbox is
+/// the single source of truth for offline sends, feature #4).
+public struct OutboxSendPayload: Sendable, Equatable, Codable {
+    /// Same tag as `Persistence.OutboxPayload.sendKind` — one replay path.
+    public static let sendKind = "send-message"
+
+    public var kind: String
+    public var conversationID: UUID?
+    public var messageID: UUID?
+    public var body: String
+
+    public init(kind: String, conversationID: UUID? = nil,
+                messageID: UUID? = nil, body: String = "") {
+        self.kind = kind
+        self.conversationID = conversationID
+        self.messageID = messageID
+        self.body = body
+    }
 }
 
 /// POST /v1/conversations/{id}/messages reply (fixture contract). All fields
