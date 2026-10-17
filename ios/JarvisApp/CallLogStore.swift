@@ -125,7 +125,9 @@ final class CallLogStore: ObservableObject {
     /// semantics come from the gateway's own summary note — in>0 = mic capture
     /// proven, out>0 = bot audio sent. Returns nil when no summary arrived
     /// (the row simply shows no quality line — never a guess).
-    static func audioQualityLabel(inFrames: Int?, outFrames: Int?) -> String? {
+    /// nonisolated: pure function of its arguments, so tests can call it
+    /// from a synchronous nonisolated context (Swift 6 actor isolation).
+    nonisolated static func audioQualityLabel(inFrames: Int?, outFrames: Int?) -> String? {
         guard let inF = inFrames, let outF = outFrames else { return nil }
         switch (inF > 0, outF > 0) {
         case (true, true): return "audio in/out confirmed"
