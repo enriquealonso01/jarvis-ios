@@ -50,10 +50,12 @@ public actor OutboxActor {
                 sent += 1
             } catch {
                 let jitter = Double.random(in: 0...1)
-                // Delay = 2^(attempts-after-this-failure + 1): the 1st
-                // failure (attempts 0→1) waits 4s, the 2nd (→2) waits 8s —
-                // matches the Item1QATests backoff-growth contract.
-                let delay = Self.backoffSeconds(afterAttempt: entry.attempts + 1, jitter: jitter)
+                // Delay = 2^(attempts-after-failure + 1) ±25%: the 1st
+                // failure (attempts 0→1) waits 2^1=2s, the 2nd (→2) waits
+                // 2^2=4s — the window grows each retry, per the QA growth
+                // contract. `entry.attempts` is the pre-increment count, so
+                // afterAttempt = attempts maps failure n to base 2^n+1.
+                let delay = Self.backoffSeconds(afterAttempt: entry.attempts, jitter: jitter)
                 try await store.recordOutboxFailure(
                     id: entry.id, nextAttemptAt: Date(timeIntervalSince1970: currentNow + delay)
                 )
