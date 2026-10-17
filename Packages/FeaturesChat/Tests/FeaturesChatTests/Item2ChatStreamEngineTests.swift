@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 
 @testable import FeaturesChat
+import JarvisKit
 import Persistence
 
 /// Item 2 BUILDER QA — the engine contract: per-message state machine

@@ -74,14 +74,18 @@ public struct StreamMessageSnapshot: Sendable, Equatable {
     public var text: String
     public var lastEventID: Int64
     public var stopReason: StreamStopReason?
+    /// UI affordance flag: offer "retry" after failure/error.
+    public var retryAvailable: Bool
 
     public init(id: Int64, state: ChatMessageStreamPhase, text: String,
-                lastEventID: Int64, stopReason: StreamStopReason? = nil) {
+                lastEventID: Int64, stopReason: StreamStopReason? = nil,
+                retryAvailable: Bool = false) {
         self.id = id
         self.state = state
         self.text = text
         self.lastEventID = lastEventID
         self.stopReason = stopReason
+        self.retryAvailable = retryAvailable
     }
 }
 
@@ -241,7 +245,8 @@ public struct ChatStreamEngine: Sendable, Equatable {
 
         public var snapshot: StreamMessageSnapshot {
             StreamMessageSnapshot(id: id, state: state, text: text,
-                                  lastEventID: lastEventID, stopReason: stopReason)
+                                  lastEventID: lastEventID, stopReason: stopReason,
+                                  retryAvailable: retryAvailable)
         }
     }
 
