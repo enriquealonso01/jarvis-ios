@@ -1,0 +1,243 @@
+import XCTest
+import Foundation
+import Persistence
+@testable import FeaturesSidebar
+
+/// Item 3 (#2) QA — Sidebar UI logic per UI Law §1. Pure-logic only
+/// (no SwiftUI view instantiation, no UIKit): the sidebar contracts are
+/// data shaping + store mechanics, both Linux-runnable in principle.
+@MainActor
+final class Item3SidebarQATests: XCTestCase {
+
+    // MARK: - Pinned mixes chats + projects, newest first
+
+    func pinnedInterleavesChatsAndProjectsByRecency() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        let projectID = UUID()
+        var project = StoredProject(name: "Krendora", updatedAt: Date(timeIntervalSince1970: 100))
+        project.pinned = true
+        await store.upsert(project)
+
+        let pinnedChat = StoredConversation(
+            title: "Order processing",
+            updatedAt: Date(timeIntervalSince1970: 300),
+            pinned: true
+        )
+        await store.upsert(pinnedChat)
+        // Unpinned chat + unpinned project must NOT appear in Pinned.
+        await store.upsert(StoredConversation(title: "Loose chat", updatedAt: Date(timeIntervalSince1970: 400)))
+        await store.upsert(StoredProject(name: "Loose project", updatedAt: Date(timeIntervalSince1970: 350)))
+
+        await model.load()
+
+        XCTAssertEqual(model.pinnedEntries.count, 2)
+        XCTAssertEqual(model.pinnedEntries[0].kind, .chat(id: pinnedChat.id))
+        XCTAssertEqual(model.pinnedEntries[0].updatedAt, Date(timeIntervalSince1970: 300))
+        XCTAssertEqual(model.pinnedEntries[1].kind, .project(id: projectID))
+        XCTAssertEqual(model.pinnedEntries[1].title, "Krendora")
+    }
+
+    func archivedChatsNeverAppearAnywhere() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        await store.upsert(StoredConversation(
+            title: "Archived",
+            updatedAt: Date(timeIntervalSince1970: 500),
+            pinned: true,
+            archived: true
+        ))
+        await store.upsert(StoredConversation(title: "Visible", updatedAt: Date(timeIntervalSince1970: 200)))
+
+        await model.load()
+
+        XCTAssertTrue(model.pinnedEntries.isEmpty)
+        XCTAssertEqual(model.recentChats.map(\.title), ["Visible"])
+    }
+
+    // MARK: - Projects section: pinned first, chats attached
+
+    func projectGroupsOrderPinnedFirstThenNewest() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        var pinnedOld = StoredProject(name: "Pinned old", updatedAt: Date(timeIntervalSince1970: 10))
+        pinnedOld.pinned = true
+        await store.upsert(pinnedOld)
+        await store.upsert(StoredProject(name: "Newest", updatedAt: Date(timeIntervalSince1970: 900)))
+        await store.upsert(StoredProject(name: "Middle", updatedAt: Date(timeIntervalSince1970: 500)))
+
+        await model.load()
+
+        XCTAssertEqual(model.projectGroups.map(\.project.name), ["Pinned old", "Newest", "Middle"])
+    }
+
+    func projectGroupCarriesItsChatsNewestFirst() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        let project = StoredProject(name: "Home")
+        await store.upsert(project)
+        await store.upsert(StoredConversation(
+            projectID: project.id, title: "Older", updatedAt: Date(timeIntervalSince1970: 10)
+        ))
+        await store.upsert(StoredConversation(
+            projectID: project.id, title: "Newer", updatedAt: Date(timeIntervalSince1970: 20)
+        ))
+        // Unrelated chat must not leak into the group.
+        await store.upsert(StoredConversation(title: "Loose", updatedAt: Date(timeIntervalSince1970: 30)))
+
+        await model.load()
+
+        let group = model.projectGroups.first
+        XCTAssertNotNil(group)
+        XCTAssertEqual(group?.conversations.map(\.title), ["Newer", "Older"])
+    }
+
+    // MARK: - Recents grouped by project (pure function)
+
+    func recentsGroupingBucketsAndOrdersByProject() {
+        let projectA = UUID()
+        let projectB = UUID()
+        let projects = [
+            StoredProject(id: projectA, name: "A"),
+            StoredProject(id: projectB, name: "B"),
+        ]
+        // Deliberately interleaved: recents are combined chronological.
+        let chats = [
+            StoredConversation(projectID: nil, title: "loose-1", updatedAt: Date(timeIntervalSince1970: 10)),
+            StoredConversation(projectID: projectA, title: "a-1", updatedAt: Date(timeIntervalSince1970: 20)),
+            StoredConversation(projectID: projectB, title: "b-1", updatedAt: Date(timeIntervalSince1970: 30)),
+            StoredConversation(projectID: projectA, title: "a-2", updatedAt: Date(timeIntervalSince1970: 40)),
+            StoredConversation(projectID: nil, title: "loose-2", updatedAt: Date(timeIntervalSince1970: 50)),
+        ]
+
+        let groups = SidebarViewModel.groupedByProject(chats: chats, projects: projects)
+
+        // Group order = first appearance in the recents stream.
+        XCTAssertEqual(groups.map(\.projectID), [nil, projectA, projectB])
+        XCTAssertEqual(groups[0].conversations.map(\.title), ["loose-2", "loose-1"])
+        XCTAssertNil(groups[0].projectName)
+        XCTAssertEqual(groups[1].conversations.map(\.title), ["a-2", "a-1"])
+        XCTAssertEqual(groups[1].projectName, "A")
+        XCTAssertEqual(groups[2].projectName, "B")
+    }
+
+    func recentsGroupingEmptyInputGivesNoGroups() {
+        let groups = SidebarViewModel.groupedByProject(chats: [], projects: [])
+        XCTAssertTrue(groups.isEmpty)
+    }
+
+    // MARK: - List mechanics (UI Law §8)
+
+    func pinUnpinConversationRoundTrip() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        let chat = StoredConversation(title: "Chat")
+        await store.upsert(chat)
+        await model.load()
+        XCTAssertTrue(model.pinnedEntries.isEmpty)
+
+        await model.setPinned(true, conversationID: chat.id)
+        XCTAssertEqual(model.pinnedEntries.map(\.title), ["Chat"])
+
+        await model.setPinned(false, conversationID: chat.id)
+        XCTAssertTrue(model.pinnedEntries.isEmpty)
+    }
+
+    func pinProjectRoundTrip() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        let project = StoredProject(name: "Project")
+        await store.upsert(project)
+        await model.load()
+        XCTAssertTrue(model.pinnedEntries.isEmpty)
+
+        await model.setPinned(true, projectID: project.id)
+        XCTAssertEqual(model.pinnedEntries.map(\.title), ["Project"])
+        XCTAssertEqual(await store.pinnedProjects().map(\.id), [project.id])
+    }
+
+    func renameTrimsAndRejectsEmpty() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        let chat = StoredConversation(title: "Before")
+        await store.upsert(chat)
+
+        await model.rename(conversationID: chat.id, to: "   ")
+        XCTAssertEqual(await store.get(id: chat.id)?.title, "Before")
+
+        await model.rename(conversationID: chat.id, to: "  After  ")
+        XCTAssertEqual(await store.get(id: chat.id)?.title, "After")
+    }
+
+    func archiveRemovesFromRecentsButRowStaysSearchable() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        let chat = StoredConversation(title: "To archive")
+        await store.upsert(chat)
+
+        await model.archive(conversationID: chat.id)
+
+        XCTAssertTrue(model.recentChats.isEmpty)
+        // Archive never deletes: the row persists (stays searchable, UI Law §8).
+        XCTAssertTrue(await store.get(id: chat.id)?.archived ?? false)
+    }
+
+    func deleteRemovesRow() async {
+        let store = PersistenceStore()
+        let model = SidebarViewModel(store: store)
+
+        let chat = StoredConversation(title: "Doomed")
+        await store.upsert(chat)
+
+        let deleted = await model.delete(conversationID: chat.id)
+        XCTAssertTrue(deleted)
+        XCTAssertNil(await store.get(id: chat.id))
+        XCTAssertTrue(model.recentChats.isEmpty)
+    }
+
+    // MARK: - Add-ons bar contents (UI Law §1 slot)
+
+    func addOnsBarHasTheFourStandardSlotsInOrder() {
+        XCTAssertEqual(SidebarAddOn.standard.map(\.id), ["runs", "recordings", "memory", "schedules"])
+        XCTAssertEqual(SidebarAddOn.standard.map(\.title),
+            ["Agent Runs", "Recordings", "Memory", "Schedules"])
+        // Every slot renders with an icon.
+        XCTAssertTrue(SidebarAddOn.standard.allSatisfy { !$0.systemImage.isEmpty })
+    }
+
+    func addOnIDsRoundTrip() {
+        for addOn in SidebarAddOn.standard {
+            XCTAssertNotNil(SidebarAddOnID(rawValue: addOn.id))
+        }
+        XCTAssertEqual(SidebarAddOnID.allCases.count, 4)
+    }
+
+    // MARK: - Slide-over geometry contract (UI Law §1)
+
+    func sidebarWidthTokenIsApprox85Percent() {
+        // Binding law: ~85% width slide-over on iPhone.
+        XCTAssertTrue(Tokens.Sidebar.widthFraction >= 0.80)
+        XCTAssertTrue(Tokens.Sidebar.widthFraction <= 0.90)
+    }
+
+    // MARK: - Project pin persistence (Item 3 migration)
+
+    func projectPinnedFlagRoundTrips() async {
+        let store = PersistenceStore()
+        var project = StoredProject(name: "Pin me")
+        await store.upsert(project)
+        XCTAssertTrue(await store.pinnedProjects().isEmpty)
+
+        project.pinned = true
+        await store.upsert(project)
+        XCTAssertEqual(await store.pinnedProjects().map(\.id), [project.id])
+    }
+}

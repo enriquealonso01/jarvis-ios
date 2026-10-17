@@ -179,6 +179,14 @@ enum AppSchema {
             }
         }
 
+        // Item 3 (#2): project pin flag — sidebar Pinned mixes pinned chats
+        // and pinned projects. Existing projects default to unpinned.
+        migrator.registerMigration(Schema.Migrations.v2ProjectPinned.identifier) { db in
+            try db.alter(table: "projects") { t in
+                t.add(column: "pinned", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         return migrator
     }
 }

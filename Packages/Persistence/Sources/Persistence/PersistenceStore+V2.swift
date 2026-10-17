@@ -30,6 +30,18 @@ extension PersistenceStore {
         }) ?? []
     }
 
+    /// Item 3 (#2): pinned projects, most recently updated first (sidebar
+    /// Pinned mixes these with pinned conversations).
+    public func pinnedProjects(limit: Int = 50) async -> [StoredProject] {
+        (try? await dbWriter.read { db in
+            try StoredProject
+                .filter(Column("pinned") == true)
+                .order(Column("updated_at").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }) ?? []
+    }
+
     // MARK: - Runs + steps
 
     @discardableResult

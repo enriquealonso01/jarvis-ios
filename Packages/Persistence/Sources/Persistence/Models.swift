@@ -323,6 +323,8 @@ public struct StoredProject: Sendable, Codable, Equatable, Identifiable,
     public var id: UUID
     public var name: String
     public var instructions: String
+    /// Sidebar Pinned section mixes pinned chats + pinned projects (UI Law §1).
+    public var pinned: Bool
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -331,17 +333,19 @@ public struct StoredProject: Sendable, Codable, Equatable, Identifiable,
         name: String,
         instructions: String = "",
         createdAt: Date? = nil,
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        pinned: Bool = false
     ) {
         self.id = id
         self.name = name
         self.instructions = instructions
+        self.pinned = pinned
         self.createdAt = createdAt ?? updatedAt
         self.updatedAt = updatedAt
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, instructions
+        case id, name, instructions, pinned
         case createdAt = "created_at", updatedAt = "updated_at"
     }
 }
@@ -632,6 +636,8 @@ public enum Schema {
         public static let v2FTSTranscripts = Migration(identifier: "v2.fts5-transcripts", order: 6)
         /// Item 2 (#1): per-message stream resume pointer (`last_event_id`).
         public static let v2LastEventID = Migration(identifier: "v2.last-event-id", order: 7)
+        /// Item 3 (#2): project pin flag for the sidebar Pinned section.
+        public static let v2ProjectPinned = Migration(identifier: "v2.projects-pinned", order: 8)
     }
 
     /// Ordered migration list — strictly ascending `order`, unique ids.
@@ -643,6 +649,7 @@ public enum Schema {
         Migrations.v2MessageSyncColumns,
         Migrations.v2FTSTranscripts,
         Migrations.v2LastEventID,
+        Migrations.v2ProjectPinned,
     ]
 
     /// Pure validation of the migration chain — unit-testable anywhere.

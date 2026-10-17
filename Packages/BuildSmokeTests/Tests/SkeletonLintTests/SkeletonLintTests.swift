@@ -6,10 +6,11 @@ import XCTest
 /// of macOS time.
 final class SkeletonLintTests: XCTestCase {
     /// Packages/ dirs required by V2-PLAN §5.1 + BuildSmokeTests itself.
+    /// FeaturesSidebar (Item 3, #2) joins the required set.
     static let requiredPackages = [
-        "JarvisKit", "Persistence", "FeaturesChat", "FeaturesProjects",
-        "FeaturesVoice", "FeaturesRuns", "FeaturesCapture", "CallKit",
-        "DesignSystem", "JarvisIntents", "BuildSmokeTests",
+        "JarvisKit", "Persistence", "FeaturesChat", "FeaturesSidebar",
+        "FeaturesProjects", "FeaturesVoice", "FeaturesRuns", "FeaturesCapture",
+        "CallKit", "DesignSystem", "JarvisIntents", "BuildSmokeTests",
     ]
 
     /// Plan §5.1 module map — FeaturesProjects is listed in the plan but is a

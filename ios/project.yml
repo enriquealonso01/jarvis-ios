@@ -54,6 +54,8 @@ targets:
       - package: Persistence
       - package: DesignSystem
       - package: FeaturesChat
+      # Item 3 (#2): sidebar slide-over (UI Law §1).
+      - package: FeaturesSidebar
       - package: FeaturesVoice
       - package: FeaturesRuns
       - package: FeaturesCapture
