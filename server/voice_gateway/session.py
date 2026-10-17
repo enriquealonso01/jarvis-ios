@@ -480,6 +480,12 @@ class VoiceSession:
             @transport.event_handler("on_client_disconnected")
             async def _disconnected(_tp, _conn):
                 log.info("client disconnected pc={}", self.pc_id)
+                # Tag the cause BEFORE stop(): the harness (T6) reads
+                # stop_reason to distinguish "client/ICE went away" from a
+                # genuine unexplained server-side hangup. Consent-expiry /
+                # ICE death lands here.
+                if not self.stop_reason:
+                    self.stop_reason = "client-disconnect"
                 await self.stop()
 
             @transport.event_handler("on_app_message")

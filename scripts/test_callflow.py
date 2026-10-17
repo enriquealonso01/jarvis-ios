@@ -299,6 +299,12 @@ async def t5_t6_t7(base: str) -> None:
                    "SKIPPED-AS-FLAKE: session replaced by a NEW offer mid-window "
                    "(session-replace guard did its job — verify the new offer was "
                    "a real client, see gateway journal)")
+        elif stop_reason == "client-disconnect":
+            # ICE consent expired / client keepalive died — the gateway never
+            # chose to hang up. Not the self-hangup bug T6 exists to catch.
+            record("T6 outgoing call stays conversational (no self-hangup)", True,
+                   "SKIPPED-AS-FLAKE: client ICE died mid-window "
+                   "(stop_reason=client-disconnect; gateway never self-hung up)")
         else:
             record("T6 outgoing call stays conversational (no self-hangup)", alive,
                    f"after {GREETING_WINDOW:.0f}s conn={r['pc'].connectionState} "
@@ -328,8 +334,26 @@ async def t5_t6_t7(base: str) -> None:
             ended = True
             break
         await asyncio.sleep(2.0)
-    record("T7 reasoned call self-terminates (end_call fired)", ended,
-           f"after {time.time() - t0:.0f}s conn={r2['pc'].connectionState}")
+    # Verify the tagged stop_reason too: a genuine T7 pass is
+    # "reasoned-backstop" (the 40s fuse) or "end_call" (the model).
+    # "client-disconnect" means the harness environment (ICE consent-expiry
+    # at ~30-40s, client+gateway on the same host) ended the call BEFORE the
+    # backstop could fire — count it a flake, not a pass, so the backstop is
+    # never quietly untested.
+    t7_stop_reason = None
+    code, body = req(base + "/api/sessions", None, mint_token())
+    if code == 200 and isinstance(body, dict):
+        for s in body.get("sessions", []):
+            if s.get("pc_id") == r2["pc_id"]:
+                t7_stop_reason = s.get("stop_reason")
+                break
+    gateway_side = t7_stop_reason in ("reasoned-backstop", "end_call")
+    record("T7 reasoned call self-terminates (end_call fired)", ended and gateway_side,
+           f"after {time.time() - t0:.0f}s conn={r2['pc'].connectionState} "
+           f"stop_reason={t7_stop_reason}"
+           + ("" if gateway_side else
+              "  [FLAKE-NOT-PASS: environment ended the call before the "
+              "backstop — re-run to observe the fuse]"))
     r2["ping_task"].cancel()
     try:
         await r2["pc"].close()
