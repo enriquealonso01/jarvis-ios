@@ -10,6 +10,9 @@ let package = Package(
         .package(path: "../JarvisKit"),
         // Stream writes land in the GRDB store (Item 2 persistence integration).
         .package(path: "../Persistence"),
+        // Item 3: Tokens.Sidebar constants (row metrics + KV keys) — design
+        // system is the only source of layout constants (UI Law §2 spirit).
+        .package(path: "../DesignSystem"),
     ],
     targets: [
         .target(
@@ -17,6 +20,7 @@ let package = Package(
             dependencies: [
                 .product(name: "JarvisKit", package: "JarvisKit"),
                 .product(name: "Persistence", package: "Persistence"),
+                .product(name: "DesignSystem", package: "DesignSystem"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
@@ -25,6 +29,7 @@ let package = Package(
             dependencies: [
                 .product(name: "JarvisKit", package: "JarvisKit"),
                 .product(name: "Persistence", package: "Persistence"),
+                .product(name: "DesignSystem", package: "DesignSystem"),
                 "FeaturesChat",
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]

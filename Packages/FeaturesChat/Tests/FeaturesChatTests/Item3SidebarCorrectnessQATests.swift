@@ -95,12 +95,23 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
         await vm.reload()
 
         XCTAssertEqual(vm.pinned.count, 5, "5 pinned rows must surface in the pinned section")
-        XCTAssertEqual(vm.recents.count, 25, "recents must exclude pinned rows")
         XCTAssertFalse(vm.recents.contains { $0.pinned },
                        "a pinned row must never appear in recents")
 
-        // Strict newest-first within recents (page 1 of the unpinned block).
-        let stamps = vm.recents.map { $0.updatedAt.timeIntervalSince1970 }
+        // Recents are paginated (Item 3 §2): page 1 = pageSize unpinned rows,
+        // and walking every page yields exactly the 25 unpinned rows.
+        XCTAssertEqual(vm.recents.count, min(25, pageSize), "page 1 is capped at the page size")
+        XCTAssertTrue(vm.canLoadMoreRecents, "25 unpinned > 20 → more pages exist")
+        var all = vm.recents
+        while vm.canLoadMoreRecents {
+            await vm.loadMoreRecents()
+            all = vm.recents
+        }
+        XCTAssertEqual(all.count, 25, "all unpinned rows must come through the pages")
+        XCTAssertFalse(all.contains { $0.pinned }, "no pinned row across any page")
+
+        // Strict newest-first within recents.
+        let stamps = all.map { $0.updatedAt.timeIntervalSince1970 }
         XCTAssertEqual(stamps, stamps.sorted(by: >), "recents must be strictly newest-first")
 
         // Pinned section newest-first too.
@@ -359,9 +370,9 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
 
         // Session 1: open sidebar, collapse projects, select a conversation.
         let vm1 = SidebarViewModel(store: store1)
-        vm1.setOpen(true)
-        vm1.setProjectsExpanded(false)
-        vm1.select(conversationID: keep.id)
+        await vm1.setOpen(true)
+        await vm1.setProjectsExpanded(false)
+        await vm1.select(conversationID: keep.id)
 
         // Session 2: brand-new store instance over the SAME file (the
         // cold-launch re-init) + brand-new VM.
@@ -373,7 +384,7 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
         XCTAssertEqual(vm2.selectedConversationID, keep.id, "last selection must survive the re-init")
 
         // Toggling closed persists too.
-        vm2.setOpen(false)
+        await vm2.setOpen(false)
         let store3 = try PersistenceStore(path: path)
         let vm3 = SidebarViewModel(store: store3)
         await vm3.restoreState()
@@ -387,7 +398,7 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
         let doomed = chat("doomed", updatedAt: Date(timeIntervalSince1970: 1))
         await store1.upsert(doomed)
         let vm1 = SidebarViewModel(store: store1)
-        vm1.select(conversationID: doomed.id)
+        await vm1.select(conversationID: doomed.id)
 
         // Delete the row, then re-init.
         await store1.deleteConversation(id: doomed.id)

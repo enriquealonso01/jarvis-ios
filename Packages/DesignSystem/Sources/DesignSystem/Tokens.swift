@@ -25,6 +25,20 @@ public enum Tokens {
         public static let widthFraction: CGFloat = 0.85
         /// Monotonic bottom buffer — added once, never removed (UI Law §5).
         public static let scrollBottomBuffer: CGFloat = 50
+        /// Recents page size (Item 3 §2: lists with pagination).
+        public static let recentsPageSize = 20
+        /// Standard row height — within iOS list norms (≤48pt, tester QA).
+        public static let rowHeight: CGFloat = 44
+        /// Panel corner radius on the trailing edge.
+        public static let panelCornerRadius: CGFloat = 16
+        /// Add-on chip height in the horizontal bar (UI Law §1).
+        public static let addOnChipHeight: CGFloat = 32
+        /// KV keys — sidebar state restoration writes through the store.
+        public enum Keys {
+            public static let isOpen = "sidebar.is_open"
+            public static let projectsExpanded = "sidebar.projects_expanded"
+            public static let lastSelection = "sidebar.last_selection"
+        }
     }
 
     public enum Spacing {
@@ -32,6 +46,7 @@ public enum Tokens {
         public static let s: CGFloat = 8
         public static let m: CGFloat = 12
         public static let l: CGFloat = 16
+        public static let xl: CGFloat = 24
     }
 
     /// Pure function: should a paste be converted to an attachment chip?

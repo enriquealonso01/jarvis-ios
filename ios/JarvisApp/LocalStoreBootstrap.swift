@@ -7,6 +7,10 @@ enum V2Flags {
     /// GRDB local store open at launch (feature #4). v1 flows are untouched —
     /// they keep their server-backed paths; this only warms the store.
     static let localStore = true
+    /// Item 3 (#2): mount the v2 slide-over sidebar shell as the app's chat
+    /// surface. Launch-only flag — a crash here can be disabled by flipping
+    /// to false and rebuilding (v1 tabs stay one line away).
+    static let sidebarShell = true
 }
 
 /// Launch-time holder for the shared PersistenceStore. Not a singleton by

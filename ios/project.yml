@@ -146,6 +146,10 @@ targets:
       - JarvisAppTests
     dependencies:
       - target: JarvisApp
+      # Item 3: the sidebar smoke suite imports the sidebar stack directly.
+      - package: FeaturesChat
+      - package: Persistence
+      - package: DesignSystem
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.enriquecodes.jarvis.tests

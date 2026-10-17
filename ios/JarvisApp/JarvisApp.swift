@@ -23,7 +23,13 @@ struct JarvisApp: App {
             Group {
                 if server.configured {
                     if auth.isAuthed {
-                        RootTabView()
+                        if V2Flags.sidebarShell {
+                            // v2 Item 3: ChatGPT-grammar sidebar shell hosts
+                            // the chat surface (v1 transcript rebuild is Item 4).
+                            V2SidebarShell(store: LocalStoreBootstrap.shared.store)
+                        } else {
+                            RootTabView()
+                        }
                     } else {
                         LoginView()
                     }
