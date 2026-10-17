@@ -157,8 +157,11 @@ public struct ChatStreamEngine: Sendable, Equatable {
     public init() {}
 
     /// Deterministic stream-message-id for a persisted UUID (restore path).
+    /// Normalizes case: the wire carries lowercase UUIDs (all fixtures do),
+    /// `UUID.uuidString` renders uppercase — the same message must hash to
+    /// the same stream id or restore continuity breaks (QA Item 2 finding).
     public static func streamMessageID(forMessageUUID uuid: UUID) -> Int64 {
-        fnv1a(uuid.uuidString)
+        fnv1a(uuid.uuidString.lowercased())
     }
 
     /// Shared frame → message-id mapping (engine + pipeline both call this;
