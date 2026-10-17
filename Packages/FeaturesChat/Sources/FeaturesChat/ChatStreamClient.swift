@@ -77,7 +77,12 @@ public actor ChatStreamClient {
         client = sse
         phase = .streaming
         consumeTask = Task { [weak self] in
-            let resume = resumeAfter ?? (await self?.resumeEventID ?? 0)
+            // Hoisted: `await` is not allowed inside the `??` autoclosure.
+            var hoistedResume = resumeAfter
+            if hoistedResume == nil, let self {
+                hoistedResume = await self.resumeEventID
+            }
+            let resume = hoistedResume ?? 0
             guard let self else { return }
             let stream = await sse.events(
                 conversationID: self.conversationID,
@@ -109,7 +114,13 @@ public actor ChatStreamClient {
     /// Current UI snapshots (committed prefixes + pending buffers). Async
     /// getter: the pipeline is a separate actor.
     public var snapshots: [StreamMessageSnapshot] {
-        get async { pipeline?.snapshots ?? [] }
+        get async {
+            // Hoisted: actor-isolated async access cannot sit in the `??`
+            // autoclosure.
+            guard let pipeline else { return [] }
+            let snaps = await pipeline.snapshots
+            return snaps
+        }
     }
 
     // MARK: Internals
