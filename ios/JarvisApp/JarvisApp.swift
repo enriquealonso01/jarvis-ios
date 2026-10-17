@@ -8,6 +8,16 @@ struct JarvisApp: App {
     @StateObject private var server = ServerConfig.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        // v2 (Item 1): open the GRDB local store at launch so the offline-first
+        // source of truth is warm before any view asks for it. Feature-flagged
+        // (V2_LOCAL_STORE): v1 flows (SessionsView etc.) don't read it yet, so
+        // a failure must never block v1 — log and continue with nil.
+        if V2Flags.localStore {
+            LocalStoreBootstrap.shared.warmUp()
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {

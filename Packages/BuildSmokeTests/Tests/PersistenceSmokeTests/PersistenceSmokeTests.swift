@@ -55,4 +55,39 @@ final class PersistenceSmokeTests: XCTestCase {
         XCTAssertEqual(twin, conv)
         XCTAssertNotEqual(StoredConversation(id: conv.id, title: "other", updatedAt: conv.updatedAt), conv)
     }
+
+    // MARK: - Item 1 extensions (GRDB is real now; contract only grows)
+
+    func testV1MigrationIsRegisteredAndWellOrdered() {
+        // v1 ships exactly one migration, first in the chain.
+        XCTAssertEqual(Schema.migrations.first, Schema.Migrations.v1)
+        XCTAssertEqual(Schema.Migrations.v1.identifier, "v1.core-tables")
+        XCTAssertEqual(Schema.Migrations.v1.order, 1)
+        XCTAssertTrue(Schema.isWellOrdered(Schema.migrations))
+    }
+
+    func testFreshStoreOnRealGRDB() async {
+        // The Item 0 in-memory contract, now against real GRDB tables:
+        // empty start, upsert round-trip, upsert-not-append.
+        let store = PersistenceStore()
+        let count0 = await store.count()
+        XCTAssertEqual(count0, 0, "fresh store must start empty")
+
+        let conv = StoredConversation(title: "grdb smoke")
+        await store.upsert(conv)
+        let fetched = await store.get(id: conv.id)
+        XCTAssertEqual(fetched, conv)
+        XCTAssertEqual(await store.count(), 1)
+
+        var updated = conv
+        updated.title = "grdb smoke v2"
+        await store.upsert(updated)
+        XCTAssertEqual(await store.count(), 1, "upsert must not duplicate rows")
+        XCTAssertEqual(await store.get(id: conv.id)?.title, "grdb smoke v2")
+    }
+
+    func testMessagePageSizeContract() {
+        // The UI pagination contract: 50 messages per page.
+        XCTAssertEqual(PersistenceStore.messagePageSize, 50)
+    }
 }
