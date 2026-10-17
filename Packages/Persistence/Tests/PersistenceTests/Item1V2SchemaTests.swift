@@ -58,7 +58,8 @@ final class Item1V2SchemaTests: XCTestCase {
 
         // transcript_segments (recording ref, speaker, text)
         let segment = StoredTranscriptSegment(
-            recordingID: recording.id, speaker: "agent", text: "Refund issued")
+            recordingID: recording.id, speaker: "agent", text: "Refund issued",
+            updatedAt: stamp)
         _ = await store.addTranscriptSegment(segment)
         let segments = await store.transcriptSegments(recordingID: recording.id)
         XCTAssertEqual(segments, [segment], "transcript_segments must exist and round-trip")
