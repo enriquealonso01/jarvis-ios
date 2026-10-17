@@ -124,6 +124,13 @@ struct SettingsView: View {
     @State private var testResult: String?
     @State private var testing = false
     @AppStorage("jarvis.settings.faceid") private var faceIDLock = false
+    // App lock prefs live in the Keychain (AppLockStore); the @State mirror
+    // drives the toggles and writes through on change.
+    @State private var appLockEnabled = AppLockStore.shared.lockEnabled
+    @State private var appLockLaunchOnly = AppLockStore.shared.requireOnLaunchOnly
+    // Haptics gate: UserDefaults (cosmetic knob), read by Haptics itself.
+    @AppStorage(Haptics.enabledKey) private var hapticsEnabled = true
+    @State private var theme = AppTheme.current
 
     var body: some View {
         Form {
@@ -201,6 +208,36 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Lock app with Face ID", isOn: $appLockEnabled)
+                if appLockEnabled {
+                    Toggle("Only on launch", isOn: $appLockLaunchOnly)
+                }
+            } header: {
+                Text("App lock")
+            } footer: {
+                Text(appLockEnabled
+                     ? (appLockLaunchOnly
+                        ? "JARVIS asks for Face ID (or passcode) when the app cold-launches. Mid-session returns stay unlocked."
+                        : "JARVIS asks for Face ID (or passcode) on launch and every time you come back to the app.")
+                     : "JARVIS opens without a lock. The preference is stored in the Keychain.")
+            }
+
+            Section {
+                Toggle("Haptics", isOn: $hapticsEnabled)
+                Picker("Theme", selection: $theme) {
+                    ForEach(AppTheme.allCases) { t in
+                        Text(t.rawValue.capitalized).tag(t)
+                    }
+                }
+                LabeledContent("Version",
+                               value: "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))")
+            } header: {
+                Text("Appearance & feedback")
+            } footer: {
+                Text("Theme takes effect immediately; dark matches the JARVIS identity.")
+            }
+
+            Section {
                 Toggle("Lock Secrets with Face ID", isOn: $faceIDLock)
             } header: {
                 Text("Privacy")
@@ -216,6 +253,22 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .onChange(of: appLockEnabled) { _, on in
+            AppLockStore.shared.lockEnabled = on
+            if on {
+                // Enabling the lock re-locks immediately so the user confirms
+                // biometrics work BEFORE relying on it (no lockout surprise
+                // at next launch).
+                AppLockController.shared.isLocked = true
+                AppLockController.shared.authenticate()
+            }
+        }
+        .onChange(of: appLockLaunchOnly) { _, on in
+            AppLockStore.shared.requireOnLaunchOnly = on
+        }
+        .onChange(of: theme) { _, newTheme in
+            AppTheme.set(newTheme)
+        }
     }
 
     @MainActor
