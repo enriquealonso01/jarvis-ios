@@ -15,29 +15,21 @@ public actor PersistenceStore {
 
     private let dbWriter: any DatabaseWriter
 
-    /// Dates are stored as REAL unix seconds (full double precision) so a
-    /// row round-trips bit-exact — the smoke contract `fetched == conv`
-    /// compares Dates exactly. GRDB's default ISO-8601 string storage
-    /// truncates to whole seconds and breaks that equality.
-    private static var defaultConfiguration: Configuration {
-        var config = Configuration()
-        config.dateEncodingStrategy = .timeIntervalSince1970
-        config.dateDecodingStrategy = .timeIntervalSince1970
-        return config
-    }
-
     /// In-memory database (tests / previews) — the pinned smoke entry point.
     /// Force-unwrap is safe: an in-memory queue cannot fail to open, and the
     /// Item 0 contract requires a non-failable public initializer.
+    /// NOTE: GRDB 7 has NO dateEncoding/DecodingStrategy on Configuration —
+    /// Date transcoding is fixed (ms-precision TEXT). Whole-second Date
+    /// pinning lives in StoredConversation.init (Models.swift).
     public init() {
-        let queue = try! DatabaseQueue(configuration: Self.defaultConfiguration)
+        let queue = try! DatabaseQueue()
         try! self.init(dbWriter: queue)
     }
 
     /// File-backed store. Put `path` in the App Group container so app +
     /// widget extension see the same database (feature #40).
     public init(path: String) throws {
-        let queue = try DatabaseQueue(path: path, configuration: Self.defaultConfiguration)
+        let queue = try DatabaseQueue(path: path)
         try self.init(dbWriter: queue)
     }
 
