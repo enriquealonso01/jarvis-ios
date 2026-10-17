@@ -36,14 +36,6 @@ public struct StoredConversation: Sendable, Codable, Equatable, Identifiable,
     /// Twin-equality contract (pinned by BuildSmokeTests): `createdAt`
     /// defaults to `updatedAt` so `StoredConversation(id:title:updatedAt:)`
     /// compares equal to the originally constructed value.
-    /// GRDB stores `Date` as TEXT "yyyy-MM-dd HH:mm:ss.SSS" (millisecond
-    /// precision) and has no configurable date strategy, so sub-millisecond
-    /// `Date()` values do not survive a round-trip bit-exact — which breaks
-    /// the pinned `fetched == conv` twin-equality contract. The store pins
-    /// conversation dates to whole seconds, which survive exactly.
-    static func wholeSeconds(_ date: Date) -> Date {
-        Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
-    }
 
     public init(
         id: UUID = UUID(),
@@ -55,12 +47,11 @@ public struct StoredConversation: Sendable, Codable, Equatable, Identifiable,
         archived: Bool = false,
         lastMessagePreview: String? = nil
     ) {
-        let stamp = Self.wholeSeconds(updatedAt)
         self.id = id
         self.projectID = projectID
         self.title = title
-        self.createdAt = createdAt.map(Self.wholeSeconds) ?? stamp
-        self.updatedAt = stamp
+        self.createdAt = createdAt ?? updatedAt
+        self.updatedAt = updatedAt
         self.pinned = pinned
         self.archived = archived
         self.lastMessagePreview = lastMessagePreview
@@ -291,6 +282,70 @@ public struct WidgetSnapshotEntry: Sendable, Codable, Equatable,
         case key
         case valueJSON = "value_json"
         case updatedAt = "updated_at"
+    }
+}
+
+// MARK: - Uniform date storage (REAL unix seconds, full precision)
+//
+// GRDB's default `deferredToDate` strategy stores Date as ms-truncated TEXT,
+// which loses sub-millisecond precision and breaks the pinned
+// `fetched == conv` round-trip contracts. Every persisted row opts into REAL
+// unix seconds via GRDB 7's record-level strategy hooks (verified against
+// GRDB 7.11: EncodableRecord.databaseDateEncodingStrategy(for:),
+// FetchableRecord.databaseDateDecodingStrategy(for:)). Declared per type so
+// each is unambiguously the protocol witness.
+
+extension StoredConversation {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension StoredMessage {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension StoredBranch {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension OutboxEntry {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension RunCard {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension WidgetSnapshotEntry {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
     }
 }
 

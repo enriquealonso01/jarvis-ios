@@ -142,7 +142,7 @@ public actor PersistenceStore {
                     SET updated_at = ?, last_message_preview = ?
                     WHERE id = ?
                     """,
-                arguments: [message.createdAt, Self.preview(message.content), message.conversationID]
+                arguments: [message.createdAt.timeIntervalSince1970, Self.preview(message.content), message.conversationID]
             )
         }
     }
@@ -179,7 +179,7 @@ public actor PersistenceStore {
             try row.save(db)
             try db.execute(
                 sql: "UPDATE conversations SET updated_at = ? WHERE id = ?",
-                arguments: [Date(), conversationID]
+                arguments: [Date().timeIntervalSince1970, conversationID]
             )
             return row
         }
@@ -268,7 +268,7 @@ public actor PersistenceStore {
     func dueOutboxEntries(now: Double) async throws -> [OutboxEntry] {
         try await dbWriter.read { db in
             try OutboxEntry
-                .filter(Column("next_retry_at") <= Date(timeIntervalSince1970: now))
+                .filter(Column("next_retry_at") <= now)
                 .order(Column("created_at").asc)
                 .fetchAll(db)
         }
@@ -286,7 +286,7 @@ public actor PersistenceStore {
         _ = try await dbWriter.write { db in
             try db.execute(
                 sql: "UPDATE outbox SET attempts = attempts + 1, next_retry_at = ? WHERE id = ?",
-                arguments: [nextAttemptAt, id]
+                arguments: [nextAttemptAt.timeIntervalSince1970, id]
             )
         }
     }
@@ -294,7 +294,8 @@ public actor PersistenceStore {
     /// Reconnect: clear all backoff timers so everything drains immediately.
     func resetOutboxBackoff(now: Date) async throws {
         _ = try await dbWriter.write { db in
-            try db.execute(sql: "UPDATE outbox SET next_retry_at = ?", arguments: [now])
+            try db.execute(sql: "UPDATE outbox SET next_retry_at = ?",
+                           arguments: [now.timeIntervalSince1970])
         }
     }
 
