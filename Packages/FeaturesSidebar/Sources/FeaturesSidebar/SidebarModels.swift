@@ -1,4 +1,5 @@
 import Foundation
+import Persistence
 
 /// Everything the Item 3 sidebar needs, straight from the Item 1 store.
 /// Sendable struct snapshots crossing actor isolation — the sidebar never
