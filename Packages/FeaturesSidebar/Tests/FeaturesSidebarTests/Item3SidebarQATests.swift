@@ -11,7 +11,7 @@ final class Item3SidebarQATests: XCTestCase {
 
     // MARK: - Pinned mixes chats + projects, newest first
 
-    func pinnedInterleavesChatsAndProjectsByRecency() async {
+    func testpinnedInterleavesChatsAndProjectsByRecency() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -39,7 +39,7 @@ final class Item3SidebarQATests: XCTestCase {
         XCTAssertEqual(model.pinnedEntries[1].title, "Krendora")
     }
 
-    func archivedChatsNeverAppearAnywhere() async {
+    func testarchivedChatsNeverAppearAnywhere() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -59,7 +59,7 @@ final class Item3SidebarQATests: XCTestCase {
 
     // MARK: - Projects section: pinned first, chats attached
 
-    func projectGroupsOrderPinnedFirstThenNewest() async {
+    func testprojectGroupsOrderPinnedFirstThenNewest() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -74,7 +74,7 @@ final class Item3SidebarQATests: XCTestCase {
         XCTAssertEqual(model.projectGroups.map(\.project.name), ["Pinned old", "Newest", "Middle"])
     }
 
-    func projectGroupCarriesItsChatsNewestFirst() async {
+    func testprojectGroupCarriesItsChatsNewestFirst() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -98,7 +98,7 @@ final class Item3SidebarQATests: XCTestCase {
 
     // MARK: - Recents grouped by project (pure function)
 
-    func recentsGroupingBucketsAndOrdersByProject() {
+    func testrecentsGroupingBucketsAndOrdersByProject() {
         let projectA = UUID()
         let projectB = UUID()
         let projects = [
@@ -125,14 +125,14 @@ final class Item3SidebarQATests: XCTestCase {
         XCTAssertEqual(groups[2].projectName, "B")
     }
 
-    func recentsGroupingEmptyInputGivesNoGroups() {
+    func testrecentsGroupingEmptyInputGivesNoGroups() {
         let groups = SidebarViewModel.groupedByProject(chats: [], projects: [])
         XCTAssertTrue(groups.isEmpty)
     }
 
     // MARK: - List mechanics (UI Law §8)
 
-    func pinUnpinConversationRoundTrip() async {
+    func testpinUnpinConversationRoundTrip() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -148,7 +148,7 @@ final class Item3SidebarQATests: XCTestCase {
         XCTAssertTrue(model.pinnedEntries.isEmpty)
     }
 
-    func pinProjectRoundTrip() async {
+    func testpinProjectRoundTrip() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -162,7 +162,7 @@ final class Item3SidebarQATests: XCTestCase {
         XCTAssertEqual(await store.pinnedProjects().map(\.id), [project.id])
     }
 
-    func renameTrimsAndRejectsEmpty() async {
+    func testrenameTrimsAndRejectsEmpty() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -176,7 +176,7 @@ final class Item3SidebarQATests: XCTestCase {
         XCTAssertEqual(await store.get(id: chat.id)?.title, "After")
     }
 
-    func archiveRemovesFromRecentsButRowStaysSearchable() async {
+    func testarchiveRemovesFromRecentsButRowStaysSearchable() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -190,7 +190,7 @@ final class Item3SidebarQATests: XCTestCase {
         XCTAssertTrue(await store.get(id: chat.id)?.archived ?? false)
     }
 
-    func deleteRemovesRow() async {
+    func testdeleteRemovesRow() async {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
 
@@ -205,7 +205,7 @@ final class Item3SidebarQATests: XCTestCase {
 
     // MARK: - Add-ons bar contents (UI Law §1 slot)
 
-    func addOnsBarHasTheFourStandardSlotsInOrder() {
+    func testaddOnsBarHasTheFourStandardSlotsInOrder() {
         XCTAssertEqual(SidebarAddOn.standard.map(\.id), ["runs", "recordings", "memory", "schedules"])
         XCTAssertEqual(SidebarAddOn.standard.map(\.title),
             ["Agent Runs", "Recordings", "Memory", "Schedules"])
@@ -213,7 +213,7 @@ final class Item3SidebarQATests: XCTestCase {
         XCTAssertTrue(SidebarAddOn.standard.allSatisfy { !$0.systemImage.isEmpty })
     }
 
-    func addOnIDsRoundTrip() {
+    func testaddOnIDsRoundTrip() {
         for addOn in SidebarAddOn.standard {
             XCTAssertNotNil(SidebarAddOnID(rawValue: addOn.id))
         }
@@ -222,7 +222,7 @@ final class Item3SidebarQATests: XCTestCase {
 
     // MARK: - Slide-over geometry contract (UI Law §1)
 
-    func sidebarWidthTokenIsApprox85Percent() {
+    func testsidebarWidthTokenIsApprox85Percent() {
         // Binding law: ~85% width slide-over on iPhone.
         XCTAssertTrue(Tokens.Sidebar.widthFraction >= 0.80)
         XCTAssertTrue(Tokens.Sidebar.widthFraction <= 0.90)
@@ -230,7 +230,7 @@ final class Item3SidebarQATests: XCTestCase {
 
     // MARK: - Project pin persistence (Item 3 migration)
 
-    func projectPinnedFlagRoundTrips() async {
+    func testprojectPinnedFlagRoundTrips() async {
         let store = PersistenceStore()
         var project = StoredProject(name: "Pin me")
         await store.upsert(project)
