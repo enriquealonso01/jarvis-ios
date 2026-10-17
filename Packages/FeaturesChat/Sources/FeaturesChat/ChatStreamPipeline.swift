@@ -184,7 +184,8 @@ public actor ChatStreamPipeline {
            let uuid = UUID(uuidString: raw) {
             messageIDs[streamID] = uuid
         } else if let previous = lastFrameStreamID,
-                  let carried = messageIDs[previous] {
+                  let carried = messageIDs[previous],
+                  previous != streamID {
             // message_start re-keyed a token-first message: keep its row.
             messageIDs[streamID] = carried
         } else {

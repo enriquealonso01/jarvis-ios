@@ -45,7 +45,12 @@ public actor MessageSendCoordinator {
                                                    online: online)
             if result.reply == nil {
                 // Offline / unreachable: enqueue for replay (backoff on drain).
-                await store.enqueue(OutboxEntry(payload: result.payload))
+                await store.enqueue(OutboxEntry(payload: OutboxPayload(
+                    kind: result.payload.kind,
+                    conversationID: result.payload.conversationID,
+                    messageID: result.payload.messageID,
+                    body: result.payload.body
+                )))
             }
         } catch {
             // ANY delivery failure (HTTP status, decoding, transport) still
