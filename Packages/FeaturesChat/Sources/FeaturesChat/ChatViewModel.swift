@@ -279,11 +279,11 @@ public struct ChatStreamEngine: Sendable, Equatable {
             bufferedCount += 1
             return .buffered
         case Kind.done:
-            return finish(kind: .done, event: event, phase: .done, retry: false)
+            return finish(kind: Kind.done, event: event, phase: .done, retry: false)
         case Kind.stop:
-            return finish(kind: .stop, event: event, phase: .stopped, retry: false)
+            return finish(kind: Kind.stop, event: event, phase: .stopped, retry: false)
         case Kind.error:
-            return finish(kind: .error, event: event, phase: .failed, retry: true)
+            return finish(kind: Kind.error, event: event, phase: .failed, retry: true)
         default:
             return .buffered // unknown kinds are buffered, never crash
         }

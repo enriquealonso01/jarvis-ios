@@ -102,7 +102,7 @@ public struct StreamPersistenceWriter {
             message: StoredMessage(
                 id: messageID, conversationID: conversationID,
                 role: .assistant, content: snapshot.text,
-                status: status(for: snapshot.state),
+                status: Self.status(for: snapshot.state),
                 createdAt: Date(timeIntervalSince1970: now)
             ),
             lastEventID: snapshot.lastEventID,
