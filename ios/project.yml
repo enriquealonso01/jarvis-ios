@@ -8,6 +8,27 @@ packages:
   WebRTC:
     url: https://github.com/stasel/WebRTC.git
     from: 130.0.0
+  # v2 local packages (V2-PLAN §5.1). Referenced by JarvisApp so xcodegen
+  # resolves them; extensions will reference only JarvisKit/Persistence/
+  # DesignSystem/JarvisIntents (plan §5.1 rules) once they exist in v2.
+  JarvisKit:
+    path: ../Packages/JarvisKit
+  Persistence:
+    path: ../Packages/Persistence
+  DesignSystem:
+    path: ../Packages/DesignSystem
+  FeaturesChat:
+    path: ../Packages/FeaturesChat
+  FeaturesVoice:
+    path: ../Packages/FeaturesVoice
+  FeaturesRuns:
+    path: ../Packages/FeaturesRuns
+  FeaturesCapture:
+    path: ../Packages/FeaturesCapture
+  CallKitPackage:
+    path: ../Packages/CallKit
+  JarvisIntents:
+    path: ../Packages/JarvisIntents
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -27,6 +48,17 @@ targets:
       - JarvisApp
     dependencies:
       - package: WebRTC
+      # v2 local packages (Item 0 skeleton) — compiled + linked into the app
+      # so CI catches breakage early. Feature wiring happens in M1+ items.
+      - package: JarvisKit
+      - package: Persistence
+      - package: DesignSystem
+      - package: FeaturesChat
+      - package: FeaturesVoice
+      - package: FeaturesRuns
+      - package: FeaturesCapture
+      - package: CallKitPackage
+      - package: JarvisIntents
       # Embed the widget extension into the app bundle (PlugIns/). Without
       # this dependency the extension target never rides the archive.
       - target: JarvisWidgets
