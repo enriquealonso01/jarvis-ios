@@ -176,6 +176,55 @@ struct ProjectsManagerView: View {
     }
 }
 
+// MARK: - Quick-note sheet
+
+/// Minimal note editor for the Projects tab: prefills the existing note,
+/// disables save when nothing changed, returns the (possibly emptied) text.
+private struct NoteSheet: View {
+    let project: ProjectsManagerView.Project
+    let note: ProjectsManagerView.Note?
+    let onSave: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: String
+
+    init(project: ProjectsManagerView.Project, note: ProjectsManagerView.Note?, onSave: @escaping (String) -> Void) {
+        self.project = project
+        self.note = note
+        self.onSave = onSave
+        _draft = State(initialValue: note?.text ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Quick note — what's next on this project?", text: $draft, axis: .vertical)
+                        .lineLimit(4...10)
+                } header: {
+                    Text(project.name)
+                } footer: {
+                    Text("Notes never leave the device.")
+                }
+            }
+            .navigationTitle("Quick note")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(draft)
+                        dismiss()
+                    }
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        == (note?.text ?? ""))
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Row + detail
 
 private struct ProjectRow: View {
