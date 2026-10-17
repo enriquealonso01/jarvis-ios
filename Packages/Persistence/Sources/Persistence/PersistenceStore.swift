@@ -13,7 +13,7 @@ public actor PersistenceStore {
     /// UI pagination contract (pinned by BuildSmokeTests): 50 per page.
     public static let messagePageSize = 50
 
-    private let dbQueue: Void?
+    private let dbQueue: Void? = nil
     let dbWriter: any DatabaseWriter
 
     /// In-memory database (tests / previews) — the pinned smoke entry point.
