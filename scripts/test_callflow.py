@@ -217,7 +217,10 @@ async def media_test(base: str, surface: str, reason: str | None, label: str):
     await pc.setLocalDescription(offer)
     body = {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type,
             "request_data": rd}
-    status, answer = req(base + "/api/offer", body, tok)
+    # Run the offer exchange OFF the event loop: a blocking urllib POST here
+    # starves aiortc's consent-refresh timers during early ICE (observed
+    # 2026-10-17: "Consent to send expired" ~30-40s -> T6/T7 flakes).
+    status, answer = await asyncio.to_thread(req, base + "/api/offer", body, tok)
     if status != 200 or not isinstance(answer, dict):
         await pc.close()
         return {"error": f"offer HTTP {status}"}
@@ -330,7 +333,10 @@ async def t5_t6_t7(base: str) -> None:
     t0 = time.time()
     ended = False
     while time.time() - t0 < REASON_END_WINDOW:
-        if r2["pc"].connectionState != "connected" or not sessions_alive(base, r2["pc_id"]):
+        # to_thread: a blocking urllib call on the loop starves aiortc's
+        # consent refresh -> ICE "Consent to send expired" before the 40s
+        # backstop can fire (the exact flake this poll exists to observe).
+        if r2["pc"].connectionState != "connected" or not await asyncio.to_thread(sessions_alive, base, r2["pc_id"]):
             ended = True
             break
         await asyncio.sleep(2.0)
