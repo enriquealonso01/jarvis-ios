@@ -36,6 +36,15 @@ public struct StoredConversation: Sendable, Codable, Equatable, Identifiable,
     /// Twin-equality contract (pinned by BuildSmokeTests): `createdAt`
     /// defaults to `updatedAt` so `StoredConversation(id:title:updatedAt:)`
     /// compares equal to the originally constructed value.
+    /// GRDB stores `Date` as TEXT "yyyy-MM-dd HH:mm:ss.SSS" (millisecond
+    /// precision) and has no configurable date strategy, so sub-millisecond
+    /// `Date()` values do not survive a round-trip bit-exact — which breaks
+    /// the pinned `fetched == conv` twin-equality contract. The store pins
+    /// conversation dates to whole seconds, which survive exactly.
+    static func wholeSeconds(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
+    }
+
     public init(
         id: UUID = UUID(),
         projectID: UUID? = nil,
@@ -46,11 +55,12 @@ public struct StoredConversation: Sendable, Codable, Equatable, Identifiable,
         archived: Bool = false,
         lastMessagePreview: String? = nil
     ) {
+        let stamp = Self.wholeSeconds(updatedAt)
         self.id = id
         self.projectID = projectID
         self.title = title
-        self.createdAt = createdAt ?? updatedAt
-        self.updatedAt = updatedAt
+        self.createdAt = createdAt.map(Self.wholeSeconds) ?? stamp
+        self.updatedAt = stamp
         self.pinned = pinned
         self.archived = archived
         self.lastMessagePreview = lastMessagePreview
