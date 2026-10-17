@@ -73,7 +73,7 @@ public actor OutboxActor {
             if remaining.isEmpty { break }
             // Wait until the EARLIEST next attempt (bounded by the cap).
             let wait = min(
-                remaining.map(\\.nextRetryAt.timeIntervalSince1970).min() ?? 0,
+                remaining.map(\.nextRetryAt.timeIntervalSince1970).min() ?? 0,
                 now() + Self.maxBackoffSeconds
             ) - now()
             if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
