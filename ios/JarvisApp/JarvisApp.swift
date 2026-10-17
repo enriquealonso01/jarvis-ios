@@ -6,6 +6,7 @@ struct JarvisApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var auth = AuthStore.shared
     @StateObject private var server = ServerConfig.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -20,9 +21,46 @@ struct JarvisApp: App {
                     SetupView()
                 }
             }
-            .preferredColorScheme(.dark)
+            .modifier(AppLockGate())
+            .preferredColorScheme(AppTheme.preferredColorScheme)
             .tint(.jarvisAccent)
         }
+    }
+}
+
+/// Face ID app lock as a ViewModifier: an `App` struct can't observe
+/// ObservableObjects, so the isLocked-driven fullScreenCover MUST live in a
+/// real View (this modifier) that observes AppLockController — otherwise the
+/// cover never presents when isLocked flips.
+private struct AppLockGate: ViewModifier {
+    @ObservedObject private var lock = AppLockController.shared
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            // Lock on cold launch / foreground return; raise the privacy
+            // shield on background BEFORE iOS snapshots the app switcher.
+            // Auth is left on purpose — the lock screen also covers the
+            // login view (tokens are gone post-logout, but a lock never hurts).
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .background:
+                    lock.appBackgrounded()
+                case .active:
+                    lock.appActivated()
+                default:
+                    break
+                }
+            }
+            .fullScreenCover(isPresented: $lock.isLocked) {
+                LockScreenView()
+            }
+            .overlay {
+                if lock.privacyShielded {
+                    PrivacyShieldView().transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.15), value: lock.privacyShielded)
     }
 }
 
@@ -37,20 +75,24 @@ struct RootTabView: View {
             SessionsView()
                 .tabItem { Label("Sessions", systemImage: "bubble.left.and.bubble.right.fill") }
                 .tag(0)
+            ProjectsManagerView()
+                .tabItem { Label("Projects", systemImage: "folder.fill") }
+                .tag(1)
             CallsView()
                 .tabItem { Label("Calls", systemImage: "phone.fill") }
-                .tag(1)
+                .tag(2)
             MoreView()
                 .tabItem { Label("More", systemImage: "ellipsis.circle.fill") }
-                .tag(2)
+                .tag(3)
         }
         // Home-screen widget taps land on the matching tab (widgets.swift
         // emits jarvis://sessions, jarvis://calls, jarvis://more, jarvis://status).
         .onOpenURL { url in
             switch url.host {
             case "sessions": tab = 0
-            case "calls": tab = 1
-            case "more", "status": tab = 2
+            case "projects": tab = 1
+            case "calls": tab = 2
+            case "more", "status": tab = 3
             default: break
             }
         }
