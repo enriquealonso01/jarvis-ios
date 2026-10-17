@@ -20,17 +20,21 @@ final class Item1V2SchemaTests: XCTestCase {
 
     func testV2MigrationsFromEmptyExposeNewTables() async throws {
         let store = try PersistenceStore(path: tempDBPath("from-empty"))
+        // Whole-second convention (pinned repo-wide): unix-second REAL storage
+        // is bit-exact only for whole-second dates (same as Item 0/1 pins).
+        let stamp = Date(timeIntervalSince1970: 1_760_000_000)
 
         // projects
-        let project = StoredProject(name: "Krendora", instructions: "tone: dry")
+        let project = StoredProject(
+            name: "Krendora", instructions: "tone: dry", updatedAt: stamp)
         await store.upsert(project)
         let fetchedProject = await store.getProject(id: project.id)
         XCTAssertEqual(fetchedProject, project, "projects must exist and round-trip")
 
         // runs (conversation ref)
-        let conv = StoredConversation(title: "v2 schema")
+        let conv = StoredConversation(title: "v2 schema", updatedAt: stamp)
         await store.upsert(conv)
-        let run = StoredRun(conversationID: conv.id, status: .running)
+        let run = StoredRun(conversationID: conv.id, status: .running, updatedAt: stamp)
         await store.upsert(run)
         let fetchedRun = await store.getRun(id: run.id)
         XCTAssertEqual(fetchedRun, run, "runs must exist and round-trip")
@@ -46,7 +50,8 @@ final class Item1V2SchemaTests: XCTestCase {
         XCTAssertNotNil(steps.first?.id, "auto-increment id must be assigned")
 
         // recordings (file ref, duration)
-        let recording = StoredRecording(filePath: "recordings/a.m4a", duration: 12.5)
+        let recording = StoredRecording(
+            filePath: "recordings/a.m4a", duration: 12.5, updatedAt: stamp)
         _ = await store.upsert(recording)
         let fetchedRecording = await store.getRecording(id: recording.id)
         XCTAssertEqual(fetchedRecording, recording, "recordings must exist and round-trip")
@@ -132,7 +137,7 @@ final class Item1V2SchemaTests: XCTestCase {
         XCTAssertEqual(hits.first?.text, "The refund was issued this morning")
         XCTAssertEqual(hits.first?.speaker, "agent")
 
-        let labels = try await store.searchTranscriptSegments(matching: "label")
+        let labels = try await store.searchTranscriptSegments(matching: "shipping")
         XCTAssertEqual(labels.count, 1)
         XCTAssertEqual(labels.first?.speaker, "user")
 
