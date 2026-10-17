@@ -19,6 +19,8 @@ packages:
     path: ../Packages/DesignSystem
   FeaturesChat:
     path: ../Packages/FeaturesChat
+  FeaturesSidebar:
+    path: ../Packages/FeaturesSidebar
   FeaturesVoice:
     path: ../Packages/FeaturesVoice
   FeaturesRuns:
