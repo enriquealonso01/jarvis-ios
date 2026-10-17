@@ -206,9 +206,12 @@ final class PersistenceTests: XCTestCase {
         var edited = target
         edited.content = "Nothing about budgets here"
         await store.upsert(edited)
-        let afterEdit = try await store.searchMessages(matching: "budget")
+        // Prefix query: FTS5's default unicode61 tokenizer has no stemming,
+        // so "budgets" is matched via budget* (the row MUST still be found —
+        // the edit must have re-synced the index, not dropped it).
+        let afterEdit = try await store.searchMessages(matching: "budget*")
         XCTAssertTrue(afterEdit.contains { $0.id == target.id },
-                      "edited content still mentions 'budgets' — index must reflect it")
+                      "edited content mentions 'budgets' — index must reflect the update")
 
         // Delete removes it from the index (cascade keeps FTS clean).
         _ = await store.deleteConversation(id: conv.id)
@@ -288,7 +291,7 @@ final class PersistenceTests: XCTestCase {
 
         let t0 = 1_000.0
         var clock = t0
-        let outbox = OutboxActor(store: store, send: { entry in try transport.call(entry) })
+        let outbox = OutboxActor(store: store, send: { entry in try await transport.call(entry) })
 
         let a = OutboxEntry(payload: OutboxPayload(kind: "send-message", conversationID: conv.id, body: "fail-twice"),
                             createdAt: Date(timeIntervalSince1970: t0))
