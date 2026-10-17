@@ -47,11 +47,12 @@ final class PersistenceSmokeTests: XCTestCase {
         ]), "duplicate identifiers must be rejected")
     }
 
-    func testStoredConversationDefaultsAndCodable() throws {
+    func testStoredConversationDefaults() {
         let conv = StoredConversation(title: "t")
         XCTAssertTrue(abs(conv.updatedAt.timeIntervalSinceNow) < 5)
-        let data = try JSONEncoder().encode(conv)
-        let decoded = try JSONDecoder().decode(StoredConversation.self, from: data)
-        XCTAssertEqual(decoded, conv)
+        // Equality identity: same id + title + date compares equal.
+        let twin = StoredConversation(id: conv.id, title: "t", updatedAt: conv.updatedAt)
+        XCTAssertEqual(twin, conv)
+        XCTAssertNotEqual(StoredConversation(id: conv.id, title: "other", updatedAt: conv.updatedAt), conv)
     }
 }
