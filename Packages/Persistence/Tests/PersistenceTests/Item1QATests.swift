@@ -321,13 +321,13 @@ final class Item1QATests: XCTestCase {
         try await store.setActiveBranch(id: b1.id!, conversationID: conv.id)
         let branches = try await store.branches(conversationID: conv.id)
         XCTAssertEqual(branches.count, 2)
-        XCTAssertEqual(branches.filter(\\.active).map(\\.id), [b1.id],
+        XCTAssertEqual(branches.filter(\.active).map(\.id), [b1.id],
                        "exactly the switched-to branch stays active")
 
         // Prior turns are retrievable regardless of which branch is active.
         let turns = try await store.messages(conversationID: conv.id)
         XCTAssertEqual(turns.count, 4, "switching branches must not touch prior turns")
-        XCTAssertEqual(turns.map(\\.content), prior.map(\\.content))
+        XCTAssertEqual(turns.map(\.content), prior.map(\.content))
         XCTAssertEqual(
             turns.map { $0.createdAt.timeIntervalSince1970 },
             prior.map { $0.createdAt.timeIntervalSince1970 },

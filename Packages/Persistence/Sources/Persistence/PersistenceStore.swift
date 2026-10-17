@@ -3,11 +3,12 @@ import GRDB
 
 /// GRDB-backed local source of truth (plan §5.2, feature #4 — offline-first).
 ///
-/// Actor-isolated; all reads/writes run on a single writer `DatabaseQueue`.
-/// Sendable `Stored*` snapshots cross the boundary. The smoke contract from
-/// Item 0 is preserved: `PersistenceStore()` starts an empty in-memory store
-/// and `upsert`/`get`/`count` are non-throwing `async` (errors are swallowed
-/// into nil/false — storage failures degrade, never crash, the UI).
+/// Actor-isolated; all reads/writes run on a single writer `DatabaseQueue`
+/// via GRDB's async access API. Sendable `Stored*` snapshots cross the
+/// boundary. The smoke contract from Item 0 is preserved: `PersistenceStore()`
+/// starts an empty in-memory store and `upsert`/`get`/`count` are
+/// non-throwing `async` (storage failures degrade to nil/empty/false —
+/// never crash the UI).
 public actor PersistenceStore {
     /// UI pagination contract (pinned by BuildSmokeTests): 50 per page.
     public static let messagePageSize = 50
@@ -39,13 +40,14 @@ public actor PersistenceStore {
     // MARK: - Conversations
 
     public func upsert(_ conversation: StoredConversation) async {
-        _ = try? dbWriter.write { db in
-            try conversation.save(db)
+        _ = try? await dbWriter.write { db in
+            var row = conversation
+            try row.save(db)
         }
     }
 
     public func get(id: UUID) async -> StoredConversation? {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try StoredConversation
                 .filter(Column("id") == id)
                 .fetchOne(db)
@@ -53,14 +55,14 @@ public actor PersistenceStore {
     }
 
     public func count() async -> Int {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try StoredConversation.fetchCount(db)
         }) ?? 0
     }
 
     /// Recents, pinned first, newest first.
     public func conversations(limit: Int = 200) async -> [StoredConversation] {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try StoredConversation
                 .order(Column("pinned").desc, Column("updated_at").desc)
                 .limit(limit)
@@ -69,9 +71,10 @@ public actor PersistenceStore {
     }
 
     public func deleteConversation(id: UUID) async -> Bool {
-        (try? dbWriter.write { db in
+        guard let deleted = try? await dbWriter.write({ db in
             try StoredConversation.filter(Column("id") == id).deleteAll(db)
-        }) ?? false
+        }) else { return false }
+        return deleted > 0
     }
 
     // MARK: - Messages (paginated)
@@ -89,12 +92,13 @@ public actor PersistenceStore {
     }
 
     private func pagedMessages(conversationID: UUID, limit: Int?, offset: Int) async throws -> [StoredMessage] {
-        try dbWriter.read { db in
+        try await dbWriter.read { db in
             var request = StoredMessage
                 .filter(Column("conversation_id") == conversationID)
                 .order(Column("created_at").asc, Column("id").asc)
-            if let limit { request = request.limit(limit, offset: offset) }
-            else if offset > 0 { request = request.offset(offset) }
+            if let limit {
+                request = request.limit(limit, offset: offset)
+            }
             return try request.fetchAll(db)
         }
     }
@@ -102,7 +106,7 @@ public actor PersistenceStore {
     /// Newest page of a conversation, returned oldest-first within the page
     /// (what a chat transcript renders). "Load older" = increasing page.
     public func recentMessages(conversationID: UUID, page: Int = 0) async throws -> [StoredMessage] {
-        let newest = try dbWriter.read { db in
+        let newest = try await dbWriter.read { db in
             try StoredMessage
                 .filter(Column("conversation_id") == conversationID)
                 .order(Column("created_at").desc, Column("id").desc)
@@ -113,21 +117,22 @@ public actor PersistenceStore {
     }
 
     public func getMessage(id: UUID) async -> StoredMessage? {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try StoredMessage.filter(Column("id") == id).fetchOne(db)
         }) ?? nil
     }
 
     public func messageCount(conversationID: UUID) async -> Int {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try StoredMessage.filter(Column("conversation_id") == conversationID).fetchCount(db)
         }) ?? 0
     }
 
     /// Upsert + touch the conversation (recents ordering + preview).
     public func upsert(_ message: StoredMessage) async {
-        _ = try? dbWriter.write { db in
-            try message.save(db)
+        _ = try? await dbWriter.write { db in
+            var row = message
+            try row.save(db)
             try db.execute(
                 sql: """
                     UPDATE conversations
@@ -154,7 +159,7 @@ public actor PersistenceStore {
         delta: String,
         replaceBody: Bool
     ) async throws -> StoredMessage {
-        try dbWriter.write { db in
+        try await dbWriter.write { db in
             var row: StoredMessage
             if var existing = try StoredMessage
                 .filter(Column("id") == messageID)
@@ -182,7 +187,7 @@ public actor PersistenceStore {
     /// Search message content via the FTS5 index (rank-ordered).
     public func searchMessages(matching query: String, limit: Int = 50) async throws -> [StoredMessage] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return try dbWriter.read { db in
+        return try await dbWriter.read { db in
             let sql = """
                 SELECT messages.* FROM messages
                 JOIN messages_fts ON messages_fts.rowid = messages.rowid
@@ -199,7 +204,7 @@ public actor PersistenceStore {
 
     @discardableResult
     public func upsert(_ branch: StoredBranch) async throws -> StoredBranch {
-        try dbWriter.write { db in
+        try await dbWriter.write { db in
             var b = branch
             try b.save(db)
             return b
@@ -207,7 +212,7 @@ public actor PersistenceStore {
     }
 
     public func branches(conversationID: UUID) async throws -> [StoredBranch] {
-        try dbWriter.read { db in
+        try await dbWriter.read { db in
             try StoredBranch
                 .filter(Column("conversation_id") == conversationID)
                 .order(Column("branch_index").asc)
@@ -217,7 +222,7 @@ public actor PersistenceStore {
 
     /// Deactivate all other branches of a conversation (switch active branch).
     public func setActiveBranch(id: Int64, conversationID: UUID) async throws {
-        _ = try dbWriter.write { db in
+        _ = try await dbWriter.write { db in
             try db.execute(
                 sql: "UPDATE branches SET active = false WHERE conversation_id = ?",
                 arguments: [conversationID]
@@ -230,7 +235,7 @@ public actor PersistenceStore {
     }
 
     public func deleteBranch(id: Int64) async throws {
-        _ = try dbWriter.write { db in
+        _ = try await dbWriter.write { db in
             try StoredBranch.filter(Column("id") == id).deleteAll(db)
         }
     }
@@ -238,26 +243,27 @@ public actor PersistenceStore {
     // MARK: - Outbox (enqueue / ack / retry-with-backoff)
 
     public func enqueue(_ entry: OutboxEntry) async {
-        _ = try? dbWriter.write { db in
-            try entry.insert(db)
+        _ = try? await dbWriter.write { db in
+            var row = entry
+            try row.insert(db)
         }
     }
 
     public func outboxEntry(id: UUID) async -> OutboxEntry? {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try OutboxEntry.filter(Column("id") == id).fetchOne(db)
         }) ?? nil
     }
 
     public func outboxCount() async -> Int {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try OutboxEntry.fetchCount(db)
         }) ?? 0
     }
 
     /// Due entries, FIFO by enqueue time. Internal: OutboxActor drains.
     func dueOutboxEntries(now: Double) async throws -> [OutboxEntry] {
-        try dbWriter.read { db in
+        try await dbWriter.read { db in
             try OutboxEntry
                 .filter(Column("next_retry_at") <= Date(timeIntervalSince1970: now))
                 .order(Column("created_at").asc)
@@ -267,14 +273,14 @@ public actor PersistenceStore {
 
     /// Ack: the entry was delivered — it leaves the queue.
     func removeOutboxEntry(id: UUID) async throws {
-        _ = try dbWriter.write { db in
+        _ = try await dbWriter.write { db in
             try OutboxEntry.filter(Column("id") == id).deleteAll(db)
         }
     }
 
     /// Retry-with-backoff: attempts++ and push next_retry_at out.
     func recordOutboxFailure(id: UUID, nextAttemptAt: Date) async throws {
-        _ = try dbWriter.write { db in
+        _ = try await dbWriter.write { db in
             try db.execute(
                 sql: "UPDATE outbox SET attempts = attempts + 1, next_retry_at = ? WHERE id = ?",
                 arguments: [nextAttemptAt, id]
@@ -284,7 +290,7 @@ public actor PersistenceStore {
 
     /// Reconnect: clear all backoff timers so everything drains immediately.
     func resetOutboxBackoff(now: Date) async throws {
-        _ = try dbWriter.write { db in
+        _ = try await dbWriter.write { db in
             try db.execute(sql: "UPDATE outbox SET next_retry_at = ?", arguments: [now])
         }
     }
@@ -292,19 +298,20 @@ public actor PersistenceStore {
     // MARK: - Run cards
 
     public func upsert(_ card: RunCard) async {
-        _ = try? dbWriter.write { db in
-            try card.save(db)
+        _ = try? await dbWriter.write { db in
+            var row = card
+            try row.save(db)
         }
     }
 
     public func runCard(id: UUID) async -> RunCard? {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try RunCard.filter(Column("id") == id).fetchOne(db)
         }) ?? nil
     }
 
     public func runCards(conversationID: UUID) async -> [RunCard] {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try RunCard
                 .filter(Column("conversation_id") == conversationID)
                 .order(Column("created_at").desc)
@@ -316,14 +323,26 @@ public actor PersistenceStore {
 
     /// App-only writer for the snapshot table the widget will read.
     public func updateWidgetSnapshot(_ entry: WidgetSnapshotEntry) async {
-        _ = try? dbWriter.write { db in
-            try entry.save(db)
+        _ = try? await dbWriter.write { db in
+            var row = entry
+            try row.save(db)
         }
     }
 
     public func widgetSnapshotEntry(key: String) async -> WidgetSnapshotEntry? {
-        (try? dbWriter.read { db in
+        (try? await dbWriter.read { db in
             try WidgetSnapshotEntry.filter(Column("key") == key).fetchOne(db)
         }) ?? nil
+    }
+}
+
+// MARK: - Test hooks (internal extension — no public API growth for tests)
+
+extension PersistenceStore {
+    /// Test-only hard delete of a single message row.
+    func deleteMessageForTest(id: UUID) async throws {
+        _ = try await dbWriter.write { db in
+            try StoredMessage.filter(Column("id") == id).deleteAll(db)
+        }
     }
 }
