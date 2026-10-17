@@ -37,7 +37,15 @@ final class PersistenceTests: XCTestCase {
         let count0 = await store.count()
         XCTAssertEqual(count0, 0, "fresh store must start empty")
 
-        let conv = StoredConversation(title: "Krendora orders")
+        // Whole-second dates: GRDB stores timestamps as SQLite REAL seconds,
+        // so sub-microsecond precision is lost on round-trip. Whole seconds
+        // survive the round-trip exactly and keep Equatable meaningful.
+        let wholeSecond = Date(timeIntervalSince1970: 1_700_000_000)
+        let conv = StoredConversation(
+            title: "Krendora orders",
+            createdAt: wholeSecond,
+            updatedAt: wholeSecond
+        )
         await store.upsert(conv)
         let fetched = await store.get(id: conv.id)
         XCTAssertEqual(fetched, conv)
