@@ -283,7 +283,8 @@ final class Item2SSEParserQATests: XCTestCase {
 
     func testStreamEndpointShape() {
         let id = UUID(uuidString: "b1f04de2-88f0-4c8e-9f0a-1f6a2b3c4d5e")!
-        XCTAssertEqual(SSEClient.streamEndpoint(id),
-                       "/v1/conversations/b1f04de2-88f0-4c8e-9f0a-1f6a2b3c4d5e/events")
+        // Casing follows UUID.uuidString (matches APIClient.messageEndpoint + Item2SSEFixtureTests).
+        XCTAssertEqual(SSEClient.streamEndpoint(id).lowercased(),
+                       "/v1/conversations/\(id.uuidString.lowercased())/events")
     }
 }
