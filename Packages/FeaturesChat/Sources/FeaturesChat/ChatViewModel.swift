@@ -1,4 +1,5 @@
 import Foundation
+import JarvisKit
 
 // MARK: - StreamState (legacy surface, pinned by FeaturesChatTests)
 

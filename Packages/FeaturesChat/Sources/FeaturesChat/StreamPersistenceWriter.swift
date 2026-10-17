@@ -1,4 +1,5 @@
 import Foundation
+import JarvisKit
 import Persistence
 
 /// Bridges the ChatStreamEngine to the GRDB store (feature #4 + #1).
