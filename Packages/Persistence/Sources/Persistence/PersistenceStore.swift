@@ -139,7 +139,7 @@ public actor PersistenceStore {
                     SET updated_at = ?, last_message_preview = ?
                     WHERE id = ?
                     """,
-                arguments: [message.createdAt, preview(message.content), message.conversationID]
+                arguments: [message.createdAt, Self.preview(message.content), message.conversationID]
             )
         }
     }
