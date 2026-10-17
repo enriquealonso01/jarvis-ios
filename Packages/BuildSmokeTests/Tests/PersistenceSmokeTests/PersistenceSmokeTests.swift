@@ -15,7 +15,14 @@ final class PersistenceSmokeTests: XCTestCase {
         let count0 = await store.count()
         XCTAssertEqual(count0, 0, "fresh store must start empty")
 
-        let conv = StoredConversation(title: "migration smoke")
+        // Whole-second dates: GRDB .datetime storage is not bit-exact for
+        // sub-millisecond Date precision, so round-trip equality needs
+        // storage-precision dates (builder's convention, CI run 39063444498).
+        let conv = StoredConversation(
+            title: "migration smoke",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
         await store.upsert(conv)
         let fetched = await store.get(id: conv.id)
         XCTAssertEqual(fetched, conv)
@@ -73,7 +80,12 @@ final class PersistenceSmokeTests: XCTestCase {
         let count0 = await store.count()
         XCTAssertEqual(count0, 0, "fresh store must start empty")
 
-        let conv = StoredConversation(title: "grdb smoke")
+        // Same whole-second-date convention for the GRDB round-trip equality.
+        let conv = StoredConversation(
+            title: "grdb smoke",
+            createdAt: Date(timeIntervalSince1970: 1_700_001_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_001_000)
+        )
         await store.upsert(conv)
         let fetched = await store.get(id: conv.id)
         XCTAssertEqual(fetched, conv)
