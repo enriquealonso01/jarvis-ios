@@ -35,7 +35,7 @@ final class Item2StoreRoundTripQATests: XCTestCase {
 
     private var startID: Int64 { ChatStreamEngine.streamMessageID(forMessageUUID: messageUUID) }
 
-    private func startPayload() -> String { "{\"message_id\": \"\(messageUUID.uuidString)\"}" }
+    private func startPayload() -> String { "{\"message_id\": \"\(messageUUID.uuidString.lowercased())\"}" }
 
     private func makeTokens(_ count: Int) -> [String] {
         let pieces = ["Hel", "lo", " ", "wor", "ld", "!", " ", "—", " ", "ünïcode", " ", "tok", "3n", "\n"]

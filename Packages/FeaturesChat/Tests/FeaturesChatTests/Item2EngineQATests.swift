@@ -293,7 +293,7 @@ final class Item2EngineQATests: XCTestCase {
                                       payload: startPayload(messageUUID)))
         _ = engine.consume(AgentEvent(id: 2, kind: ChatStreamEngine.Kind.token, payload: "Working on it…"))
         _ = engine.consume(AgentEvent(id: 3, kind: ChatStreamEngine.Kind.error,
-                                      payload: "{\"message_id\": \"\(messageUUID.uuidString)\", \"message\": \"run crashed: tool timeout\"}"))
+                                      payload: "{\"message_id\": \"\(messageUUID.uuidString.lowercased())\", \"message\": \"run crashed: tool timeout\"}"))
         _ = engine.commitIfDue(now: clock.now + 1)
         let snap = engine.snapshot(id: startID)
         XCTAssertEqual(snap?.state, .failed)
