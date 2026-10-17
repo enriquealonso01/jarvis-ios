@@ -81,6 +81,11 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
     public var branchID: String?
     /// Ordinal within the branch for the "‹ 2/3 ›" switcher.
     public var branchIndex: Int
+    /// Server-assigned identity once the message is ACKed by the backend
+    /// (plan §5.2: local UUID + server ID). nil = not yet synced.
+    public var serverID: String?
+    /// Outbox contract: true until the server ACKs the send.
+    public var pendingSync: Bool
     public var createdAt: Date
 
     public init(
@@ -92,6 +97,8 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
         attachments: [StoredAttachment] = [],
         branchID: String? = nil,
         branchIndex: Int = 0,
+        serverID: String? = nil,
+        pendingSync: Bool = true,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -102,6 +109,8 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
         self.attachments = attachments
         self.branchID = branchID
         self.branchIndex = branchIndex
+        self.serverID = serverID
+        self.pendingSync = pendingSync
         self.createdAt = createdAt
     }
 
@@ -111,6 +120,8 @@ public struct StoredMessage: Sendable, Codable, Equatable, Identifiable,
         case role, content, status, attachments
         case branchID = "branch_id"
         case branchIndex = "branch_index"
+        case serverID = "server_id"
+        case pendingSync = "pending_sync"
         case createdAt = "created_at"
     }
 }
@@ -204,6 +215,9 @@ public struct OutboxEntry: Sendable, Codable, Equatable, Identifiable,
 
 /// What the outbox carries; Codable → the row's payload JSON.
 public struct OutboxPayload: Sendable, Codable, Equatable {
+    /// Kind tag for a POST-message replay (Item 2).
+    public static let sendKind = "send-message"
+
     public var kind: String // e.g. "send-message"
     public var conversationID: UUID?
     public var messageID: UUID?
@@ -285,6 +299,189 @@ public struct WidgetSnapshotEntry: Sendable, Codable, Equatable,
     }
 }
 
+// MARK: - v2 row types (§5.2 completeness — projects / runs / transcripts)
+
+public enum RunStatus: String, Sendable, Codable, CaseIterable {
+    case queued, running, done, failed, cancelled
+}
+
+public enum RunStepState: String, Sendable, Codable, CaseIterable {
+    case pending, running, done, failed
+}
+
+public struct StoredProject: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "projects"
+
+    public var id: UUID
+    public var name: String
+    public var instructions: String
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        instructions: String = "",
+        createdAt: Date? = nil,
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.instructions = instructions
+        self.createdAt = createdAt ?? updatedAt
+        self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, instructions
+        case createdAt = "created_at", updatedAt = "updated_at"
+    }
+}
+
+public struct StoredRun: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "runs"
+
+    public var id: UUID
+    public var conversationID: UUID?
+    public var projectID: UUID?
+    public var status: RunStatus
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        conversationID: UUID? = nil,
+        projectID: UUID? = nil,
+        status: RunStatus = .queued,
+        createdAt: Date? = nil,
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.conversationID = conversationID
+        self.projectID = projectID
+        self.status = status
+        self.createdAt = createdAt ?? updatedAt
+        self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case conversationID = "conversation_id"
+        case projectID = "project_id"
+        case status
+        case createdAt = "created_at", updatedAt = "updated_at"
+    }
+}
+
+public struct StoredRunStep: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "run_steps"
+
+    /// Auto-increment row id; nil until inserted.
+    public var id: Int64?
+    public var runID: UUID
+    public var title: String
+    public var state: RunStepState
+    /// Ordinal within the run's step list.
+    public var stepOrder: Int
+
+    public init(
+        id: Int64? = nil,
+        runID: UUID,
+        title: String,
+        state: RunStepState = .pending,
+        stepOrder: Int = 0
+    ) {
+        self.id = id
+        self.runID = runID
+        self.title = title
+        self.state = state
+        self.stepOrder = stepOrder
+    }
+
+    public mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case runID = "run_id"
+        case title, state
+        case stepOrder = "step_order"
+    }
+}
+
+public struct StoredRecording: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "recordings"
+
+    public var id: UUID
+    /// File reference (App Group container path) for the audio asset.
+    public var filePath: String
+    /// Duration in seconds.
+    public var duration: Double
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        filePath: String,
+        duration: Double = 0,
+        createdAt: Date? = nil,
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.filePath = filePath
+        self.duration = duration
+        self.createdAt = createdAt ?? updatedAt
+        self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case filePath = "file_path"
+        case duration
+        case createdAt = "created_at", updatedAt = "updated_at"
+    }
+}
+
+public struct StoredTranscriptSegment: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "transcript_segments"
+
+    public var id: UUID
+    public var recordingID: UUID
+    public var speaker: String
+    public var text: String
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        recordingID: UUID,
+        speaker: String = "",
+        text: String,
+        createdAt: Date? = nil,
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.recordingID = recordingID
+        self.speaker = speaker
+        self.text = text
+        self.createdAt = createdAt ?? updatedAt
+        self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case recordingID = "recording_id"
+        case speaker, text
+        case createdAt = "created_at", updatedAt = "updated_at"
+    }
+}
+
 // MARK: - Uniform date storage (REAL unix seconds, full precision)
 //
 // GRDB's default `deferredToDate` strategy stores Date as ms-truncated TEXT,
@@ -349,6 +546,51 @@ extension WidgetSnapshotEntry {
     }
 }
 
+extension StoredProject {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension StoredRun {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension StoredRunStep {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension StoredRecording {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
+extension StoredTranscriptSegment {
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy {
+        .timeIntervalSince1970
+    }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
+        .timeIntervalSince1970
+    }
+}
+
 // MARK: - Migration contract (pinned by BuildSmokeTests — extend, don't break)
 
 /// One entry in the shipped migration chain. The contract: `Schema.migrations`
@@ -374,6 +616,13 @@ public enum Schema {
         public static let v1FTS = Migration(identifier: "v1.fts5-index", order: 2)
         /// App-Group widget snapshot table (feature #40 prep, schema only).
         public static let v1WidgetSnapshot = Migration(identifier: "v1.widget-snapshot", order: 3)
+        /// v2 §5.2 completeness: projects, runs, run_steps, recordings,
+        /// transcript_segments (additive — v1 history is never rewritten).
+        public static let v2ProjectsRuns = Migration(identifier: "v2.projects-runs-recordings", order: 4)
+        /// v2 message sync columns: persisted server_id (unique) + pending_sync.
+        public static let v2MessageSyncColumns = Migration(identifier: "v2.messages-sync-columns", order: 5)
+        /// v2FTS: FTS5 index over transcript segment text (unified search).
+        public static let v2FTSTranscripts = Migration(identifier: "v2.fts5-transcripts", order: 6)
     }
 
     /// Ordered migration list — strictly ascending `order`, unique ids.
@@ -381,6 +630,9 @@ public enum Schema {
         Migrations.v1,
         Migrations.v1FTS,
         Migrations.v1WidgetSnapshot,
+        Migrations.v2ProjectsRuns,
+        Migrations.v2MessageSyncColumns,
+        Migrations.v2FTSTranscripts,
     ]
 
     /// Pure validation of the migration chain — unit-testable anywhere.

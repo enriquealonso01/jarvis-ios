@@ -91,6 +91,85 @@ enum AppSchema {
             }
         }
 
+        // v2: §5.2 completeness — projects / runs / run_steps / recordings /
+        // transcript_segments (additive; v1 history is never rewritten).
+        migrator.registerMigration(Schema.Migrations.v2ProjectsRuns.identifier) { db in
+            try db.create(table: "projects") { t in
+                t.column("id", .blob).primaryKey()
+                t.column("name", .text).notNull()
+                t.column("instructions", .text).notNull().defaults(to: "")
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+            try db.create(index: "projects.byUpdated", on: "projects", columns: ["updated_at"])
+
+            try db.create(table: "runs") { t in
+                t.column("id", .blob).primaryKey()
+                t.column("conversation_id", .blob)
+                    .references("conversations", onDelete: .cascade)
+                t.column("project_id", .blob)
+                    .references("projects", onDelete: .setNull)
+                t.column("status", .text).notNull()
+                    .defaults(to: RunStatus.queued.rawValue)
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+            try db.create(index: "runs.byConversation",
+                          on: "runs", columns: ["conversation_id", "created_at"])
+            try db.create(index: "runs.byProject", on: "runs", columns: ["project_id"])
+
+            try db.create(table: "run_steps") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("run_id", .blob).notNull()
+                    .references("runs", onDelete: .cascade)
+                t.column("title", .text).notNull()
+                t.column("state", .text).notNull()
+                    .defaults(to: RunStepState.pending.rawValue)
+                t.column("step_order", .integer).notNull().defaults(to: 0)
+            }
+            try db.create(index: "run_steps.byRun",
+                          on: "run_steps", columns: ["run_id", "step_order"])
+
+            try db.create(table: "recordings") { t in
+                t.column("id", .blob).primaryKey()
+                t.column("file_path", .text).notNull()
+                t.column("duration", .double).notNull().defaults(to: 0)
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+
+            try db.create(table: "transcript_segments") { t in
+                t.column("id", .blob).primaryKey()
+                t.column("recording_id", .blob).notNull()
+                    .references("recordings", onDelete: .cascade)
+                t.column("speaker", .text).notNull().defaults(to: "")
+                t.column("text", .text).notNull()
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+            try db.create(index: "transcript_segments.byRecording",
+                          on: "transcript_segments", columns: ["recording_id", "created_at"])
+        }
+
+        // v2: messages sync columns — persisted `server_id` (nullable, unique)
+        // + `pendingSync` (default true). Existing rows keep pendingSync=true.
+        migrator.registerMigration(Schema.Migrations.v2MessageSyncColumns.identifier) { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "server_id", .text)
+                t.add(column: "pending_sync", .boolean).notNull().defaults(to: true)
+            }
+            try db.create(index: "messages.byServerID",
+                          on: "messages", columns: ["server_id"], unique: true)
+        }
+
+        // v2FTS: FTS5 index over transcript segments (§5.2 unified search).
+        migrator.registerMigration(Schema.Migrations.v2FTSTranscripts.identifier) { db in
+            try db.create(virtualTable: "transcript_segments_fts", using: FTS5()) { t in
+                t.synchronize(withTable: "transcript_segments")
+                t.column("text")
+            }
+        }
+
         return migrator
     }
 }
