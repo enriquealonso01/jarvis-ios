@@ -234,7 +234,8 @@ final class Item2SSEParserQATests: XCTestCase {
         events.append(contentsOf: parser.flush())
 
         XCTAssertEqual(events.count, 2)
-        XCTAssertEqual(events.map(\.id), ["40", "41"], "wire ids are strings")
+        let wireIDs: [String?] = events.map { $0.id }
+        XCTAssertEqual(wireIDs, ["40", "41"], "wire ids are strings")
         XCTAssertEqual(parser.retryMilliseconds, 1500, "server retry: must be captured")
         let events40 = agentEvents(events)
         XCTAssertEqual(events40.first?.kind, "message_start")
