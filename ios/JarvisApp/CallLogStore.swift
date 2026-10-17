@@ -19,6 +19,12 @@ final class CallLogStore: ObservableObject {
         /// "ended", "missed", "failed: …", or nil while still ringing/active.
         var outcome: String?
         var durationSeconds: Int?
+        /// Audio verification line, set only from a REAL gateway summary
+        /// received over the data channel at session stop (in/out frame
+        /// counts). nil = never received (older builds, crashed sessions) —
+        /// the UI must NOT invent a quality line when this is nil.
+        var audioInFrames: Int?
+        var audioOutFrames: Int?
     }
 
     @Published private(set) var entries: [Entry] = []
@@ -34,13 +40,18 @@ final class CallLogStore: ObservableObject {
     /// can mis-stamp a LATER call's outcome onto it.
     private static let openTTL: TimeInterval = 6 * 3600
 
-    private init() {
-        if let data = UserDefaults.standard.data(forKey: Self.key),
+    /// Injectable storage so unit tests run against an ephemeral suite
+    /// instead of the shared singleton's persisted log.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if let data = defaults.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode([Entry].self, from: data) {
             entries = saved
             Self.reapStale(&entries)
         }
     }
+
+    private let defaults: UserDefaults
 
     /// Close-out entries that have been open too long, in place.
     private static func reapStale(_ list: inout [Entry]) {
@@ -55,7 +66,9 @@ final class CallLogStore: ObservableObject {
 
     func add(reason: String, outgoing: Bool, at: Date = Date()) -> String {
         let id = UUID().uuidString
-        let entry = Entry(id: id, reason: reason, at: at, outgoing: outgoing, outcome: nil, durationSeconds: nil)
+        let entry = Entry(id: id, reason: reason, at: at, outgoing: outgoing,
+                          outcome: nil, durationSeconds: nil,
+                          audioInFrames: nil, audioOutFrames: nil)
         entries.append(entry)
         if entries.count > Self.cap {
             entries.removeFirst(entries.count - Self.cap)
@@ -68,6 +81,23 @@ final class CallLogStore: ObservableObject {
     /// or latest matching open entry when the id isn't known — e.g. a push
     /// wake that never surfaced the CallKit end action to us).
     func finish(id: String? = nil, outcome: String, durationSeconds: Int? = nil) {
+        stamp(id: id, outcome: outcome, durationSeconds: durationSeconds,
+              audio: nil)
+    }
+
+    /// Audio-quality stamp from the gateway's session-stop summary relayed
+    /// over the data channel: {type:"audio_summary", audio_in_frames, audio_out_frames}.
+    /// Called SEPARATELY from finish() because the gateway sends the summary
+    /// just BEFORE the peerLeft signalling — the entry may still be open when
+    /// the numbers arrive. Nothing is stamped on a missing entry (id:nil
+    /// fallback only touches fresh open entries, same contract as finish()).
+    func stampAudioSummary(id: String? = nil, inFrames: Int, outFrames: Int) {
+        stamp(id: id, outcome: nil, durationSeconds: nil,
+              audio: (inFrames, outFrames))
+    }
+
+    private func stamp(id: String?, outcome: String?, durationSeconds: Int?,
+                       audio: (Int, Int)?) {
         // Stale zombies never receive a real outcome (queued push, kill during
         // a call); don't let an id:nil fallback stamp one of THOSE.
         let target: Int?
@@ -78,14 +108,36 @@ final class CallLogStore: ObservableObject {
             target = entries.lastIndex { $0.outcome == nil && $0.at > freshEnough }
         }
         guard let idx = target else { return }
-        entries[idx].outcome = outcome
-        entries[idx].durationSeconds = durationSeconds
+        if let outcome {
+            entries[idx].outcome = outcome
+        }
+        if let durationSeconds {
+            entries[idx].durationSeconds = durationSeconds
+        }
+        if let audio {
+            entries[idx].audioInFrames = audio.0
+            entries[idx].audioOutFrames = audio.1
+        }
         persist()
+    }
+
+    /// Pure formatter for the log row's quality line (unit-tested): the
+    /// semantics come from the gateway's own summary note — in>0 = mic capture
+    /// proven, out>0 = bot audio sent. Returns nil when no summary arrived
+    /// (the row simply shows no quality line — never a guess).
+    static func audioQualityLabel(inFrames: Int?, outFrames: Int?) -> String? {
+        guard let inF = inFrames, let outF = outFrames else { return nil }
+        switch (inF > 0, outF > 0) {
+        case (true, true): return "audio in/out confirmed"
+        case (true, false): return "audio in only — no bot audio sent"
+        case (false, true): return "audio out only — mic never captured"
+        case (false, false): return "no audio either way"
+        }
     }
 
     private func persist() {
         if let data = try? JSONEncoder().encode(entries) {
-            UserDefaults.standard.set(data, forKey: Self.key)
+            defaults.set(data, forKey: Self.key)
         }
     }
 }

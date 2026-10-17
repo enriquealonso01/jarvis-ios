@@ -149,6 +149,19 @@ struct CallsView: View {
                                     }
                                 }
                                 .font(.caption2).foregroundStyle(.secondary)
+                                // Audio-quality line: shown ONLY when the
+                                // gateway summary actually arrived on the
+                                // data channel (nil = no claim).
+                                if let q = CallLogStore.audioQualityLabel(inFrames: c.audioInFrames,
+                                                                          outFrames: c.audioOutFrames) {
+                                    let ok = (c.audioInFrames ?? 0) > 0 && (c.audioOutFrames ?? 0) > 0
+                                    HStack(spacing: 4) {
+                                        Image(systemName: ok ? "waveform.badge.checkmark" : "waveform.slash")
+                                        Text(q)
+                                    }
+                                    .font(.caption2)
+                                    .foregroundStyle(ok ? Color.green : Color.orange)
+                                }
                             }
                         }
                     }

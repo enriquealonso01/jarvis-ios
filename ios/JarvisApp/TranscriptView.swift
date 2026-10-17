@@ -91,6 +91,7 @@ struct TranscriptView: View {
         let id: String
         let role: String          // "user" | "assistant" | "tool"
         var text: String?
+        var timestamp: Double?
         var toolCount: Int = 0
         var toolNames: [String] = []
         var details: [ToolDetail] = []
@@ -178,10 +179,20 @@ struct TranscriptView: View {
         case "user":
             HStack {
                 Spacer(minLength: 40)
-                Text(turn.text ?? "")
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 16).fill(Color.jarvisCard))
-                    .foregroundStyle(.white)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(turn.text ?? "")
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 16).fill(Color.jarvisCard))
+                        .foregroundStyle(.white)
+                    // Per-turn timestamp: message.timestamp (epoch seconds)
+                    // when the dashboard provides it; renders nothing when
+                    // absent (never a fabricated time).
+                    if let ts = turn.timestamp, ts > 0 {
+                        Text(Date(timeIntervalSince1970: ts).formatted(date: .omitted, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
             }
         case "assistant":
             VStack(alignment: .leading, spacing: 6) {
@@ -191,6 +202,11 @@ struct TranscriptView: View {
                         .font(.body)
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
+                }
+                if let ts = turn.timestamp, ts > 0 {
+                    Text(Date(timeIntervalSince1970: ts).formatted(date: .omitted, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
                 if turn.toolCount > 0 {
                     ToolActivityCard(turn: turn)
@@ -232,7 +248,8 @@ struct TranscriptView: View {
             case "user":
                 let text = m.content ?? ""
                 guard !text.isEmpty else { continue }
-                out.append(Turn(id: "u\(m.id)", role: "user", text: text))
+                out.append(Turn(id: "u\(m.id)", role: "user", text: text,
+                                timestamp: m.timestamp))
             case "assistant":
                 var names: [String] = []
                 if let tc = m.toolCalls, let data = tc.data(using: .utf8),
@@ -245,7 +262,8 @@ struct TranscriptView: View {
                     }
                 }
                 out.append(Turn(id: "a\(m.id)", role: "assistant",
-                                text: m.content, toolCount: names.count,
+                                text: m.content, timestamp: m.timestamp,
+                                toolCount: names.count,
                                 toolNames: names))
             case "tool":
                 // Attach to the most recent assistant turn, creating it if the
@@ -282,6 +300,21 @@ struct TranscriptView: View {
         let firstLine = trimmed.split(separator: "\n", maxSplits: 1)[0]
         let line = String(firstLine)
         return line.count > 80 ? String(line.prefix(77)) + "…" : line
+    }
+}
+
+/// Per-turn timestamp under each bubble (message.timestamp is a unix epoch
+/// Double, seconds). Renders nothing when the dashboard didn't send one —
+/// a fabricated "—:—" line is worse than none.
+struct TurnTimestamp: View {
+    let timestamp: Double?
+
+    var body: some View {
+        if let ts = timestamp, ts > 0 {
+            Text(Date(timeIntervalSince1970: ts).formatted(date: .omitted, time: .shortened))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
     }
 }
 

@@ -373,6 +373,21 @@ final class CallManager: NSObject, ObservableObject {
             if msg["role"] as? String == "assistant", let text = msg["text"] as? String {
                 lastTranscript = text
             }
+        case "audio_summary":
+            // Gateway session-stop audio verification (build 68 forensics)
+            // relayed at the END of the call, just before peerLeft. Stamp the
+            // still-open log entry so the call history can show a REAL
+            // "audio in/out confirmed" line — never fabricated when absent.
+            // Numbers arrive as NSNumber; intValue tolerates both Int and
+            // Double JSON encodings.
+            let inF = (msg["audio_in_frames"] as? NSNumber)?.intValue
+                ?? Int(msg["audio_in_frames"] as? Double ?? -1)
+            let outF = (msg["audio_out_frames"] as? NSNumber)?.intValue
+                ?? Int(msg["audio_out_frames"] as? Double ?? -1)
+            if inF >= 0, outF >= 0 {
+                CallLogStore.shared.stampAudioSummary(id: logEntryID,
+                                                      inFrames: inF, outFrames: outF)
+            }
         default:
             break
         }
