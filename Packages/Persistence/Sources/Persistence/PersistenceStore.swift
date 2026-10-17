@@ -1,655 +1,315 @@
 import Foundation
 import GRDB
 
-// MARK: - Migration contract (pinned by BuildSmokeTests — extend, don't break)
-
-/// One entry in the shipped migration chain. The ordering/linting contract
-/// from Item 0 is preserved: `Schema.migrations` must stay strictly ascending
-/// in `order` with unique identifiers, and `Schema.isWellOrdered` must keep
-/// rejecting bad chains.
-public struct Migration: Sendable, Equatable {
-    public let identifier: String
-    public let order: Int
-
-    public init(identifier: String, order: Int) {
-        self.identifier = identifier
-        self.order = order
-    }
-}
-
-public enum Schema {
-    /// GRDB migration identifiers, v1 (feature #4). Sequential and
-    /// well-ordered; each future schema change appends a new entry.
-    public enum Migrations {
-        public static let v1 = Migration(identifier: "v1.core-tables", order: 1)
-    }
-
-    /// Ordered migration list — strictly ascending `order`, unique ids.
-    public static let migrations: [Migration] = [
-        Migrations.v1,
-    ]
-
-    /// Pure validation of the migration chain — unit-testable on Linux.
-    public static func isWellOrdered(_ migrations: [Migration]) -> Bool {
-        guard migrations.map(\.order) == migrations.map(\.order).sorted() else { return false }
-        let ids = migrations.map(\.identifier)
-        return ids.count == Set(ids).count
-    }
-
-    /// Run the shipped chain on a database writer.
-    public static func migrate(_ dbQueue: DatabaseQueue) throws {
-        var migrator = DatabaseMigrator()
-        for migration in migrations {
-            migrator.registerMigration(migration.identifier, order: migration.order) { db in
-                try Self.v1(db)
-            }
-        }
-        try migrator.migrate(dbQueue)
-    }
-
-    /// Schema v1 — conversations, messages, branches, outbox, run_cards and
-    /// the widget-read App-Group snapshot table + FTS5 index over messages.
-    static func v1(_ db: Database) throws {
-        // Conversations — the sidebar's source of truth.
-        try db.create(table: "conversations") { t in
-            t.primaryKey("id", .text)
-            t.column("projectID", .text).indexed()
-            t.column("title", .text).notNull().defaults(to: "")
-            t.column("createdAt", .datetime).notNull()
-            t.column("updatedAt", .datetime).notNull().indexed()
-            t.column("pinned", .boolean).notNull().defaults(to: false)
-            t.column("archived", .boolean).notNull().defaults(to: false).indexed()
-            t.column("lastMessagePreview", .text)
-        }
-
-        // Messages — local UUID primary key, server id kept for delta-sync.
-        try db.create(table: "messages") { t in
-            t.primaryKey("id", .text)
-            t.column("conversationID", .text)
-                .notNull()
-                .indexed()
-                .references("conversations", onDelete: .cascade)
-            t.column("serverID", .text).indexed()
-            t.column("pendingSync", .boolean).notNull().defaults(to: false)
-            t.column("role", .text).notNull() // user | assistant | system | tool
-            t.column("content", .text).notNull().defaults(to: "")
-            // sending | sent | failed | streaming (MessageStatus)
-            t.column("status", .text).notNull().defaults(to: MessageStatus.sending.rawValue)
-            t.column("attachmentsJSON", .text)
-            t.column("branchID", .text).indexed()
-            t.column("branchIndex", .integer).notNull().defaults(to: 0)
-            t.column("createdAt", .datetime).notNull().indexed()
-        }
-
-        // Branches — ChatGPT-style alternate reply trees (feature #6 prep).
-        try db.create(table: "branches") { t in
-            t.autoIncrementedPrimaryKey("id")
-            t.column("conversationID", .text)
-                .notNull()
-                .indexed()
-                .references("conversations", onDelete: .cascade)
-            t.column("parentMessageID", .text).indexed()
-            t.column("branchIndex", .integer).notNull().defaults(to: 0)
-            t.column("active", .boolean).notNull().defaults(to: true).indexed()
-        }
-
-        // Outbox — offline-first send queue with retry/backoff.
-        try db.create(table: "outbox") { t in
-            t.autoIncrementedPrimaryKey("id")
-            t.column("payloadJSON", .text).notNull()
-            t.column("attempts", .integer).notNull().defaults(to: 0)
-            t.column("nextRetryAt", .datetime).indexed()
-            t.column("createdAt", .datetime).notNull()
-        }
-
-        // Run cards — agent run status for the Runs surface.
-        try db.create(table: "run_cards") { t in
-            t.primaryKey("id", .text)
-            t.column("conversationID", .text)
-                .notNull()
-                .indexed()
-                .references("conversations", onDelete: .cascade)
-            t.column("runID", .text).notNull().indexed()
-            t.column("status", .text).notNull() // queued | running | done | failed | cancelled
-            t.column("stepsJSON", .text).notNull().defaults(to: "[]")
-        }
-
-        // App-Group snapshot — denormalized, read-only-from-the-widget table
-        // the widgets extension reads for "Online · 3 tasks · last reply 2m
-        // ago" (feature #40). The widget touches ONLY this table.
-        try db.create(table: "widget_snapshot") { t in
-            t.primaryKey("key", .text)
-            t.column("valueJSON", .text).notNull()
-            t.column("updatedAt", .datetime).notNull()
-        }
-
-        // FTS5 full-text search over message bodies (unified search, feature
-        // #7 prep). External-content table + triggers keep the index in sync
-        // with messages automatically.
-        try db.execute(sql: """
-            CREATE VIRTUAL TABLE messages_fts USING fts5(
-                content,
-                content='messages',
-                content_rowid='rowid',
-                tokenize='porter unicode61'
-            )
-            """)
-        try db.execute(sql: """
-            CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-                INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
-            END
-            """)
-        try db.execute(sql: """
-            CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, content)
-                VALUES ('delete', old.rowid, old.content);
-            END
-            """)
-        try db.execute(sql: """
-            CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, content)
-                VALUES ('delete', old.rowid, old.content);
-                INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
-            END
-            """)
-    }
-}
-
-// MARK: - PersistenceStore
-
-/// The local source of truth (plan §5.2). All I/O on this actor; callers get
-/// Sendable struct snapshots. Offline-first: sends go through the outbox and
-/// replay with exponential backoff until acked.
+/// GRDB-backed local source of truth (plan §5.2, feature #4 — offline-first).
+///
+/// Actor-isolated; all reads/writes run on a single writer `DatabaseQueue`.
+/// Sendable `Stored*` snapshots cross the boundary. The smoke contract from
+/// Item 0 is preserved: `PersistenceStore()` starts an empty in-memory store
+/// and `upsert`/`get`/`count` are non-throwing `async` (errors are swallowed
+/// into nil/false — storage failures degrade, never crash, the UI).
 public actor PersistenceStore {
-    /// Messages per page for `fetchMessages`.
+    /// UI pagination contract (pinned by BuildSmokeTests): 50 per page.
     public static let messagePageSize = 50
 
-    /// Backoff base for outbox retries: 2^attempts seconds, capped at 60s.
-    public static let retryBackoffCap: TimeInterval = 60
+    private let dbWriter: any DatabaseWriter
 
-    private let dbQueue: DatabaseQueue
-
-    /// In-memory store (tests, previews). Never touches disk.
-    public convenience init(inMemory: Bool = false) throws {
-        try self.init(dbQueue: DatabaseQueue())
+    /// In-memory database (tests / previews) — the pinned smoke entry point.
+    public init() {
+        // Force-unwrap is safe: an in-memory queue cannot fail to open, and
+        // the Item 0 contract requires a non-failable public initializer.
+        try! self.init(dbWriter: try! DatabaseQueue())
     }
 
-    /// Non-throwing in-memory init for the pinned scaffold contract (tests,
-    /// previews). Migration failure on a fresh in-memory DB is a programmer
-    /// error — CI catches it via PersistenceTests, so trap loudly.
-    public convenience init() {
-        do {
-            try self.init(inMemory: true)
-        } catch {
-            fatalError("PersistenceStore in-memory init failed: \(error)")
-        }
+    /// File-backed store. Put `path` in the App Group container so app +
+    /// widget extension see the same database (feature #40).
+    public init(path: String) throws {
+        self.init(dbWriter: try DatabaseQueue(path: path))
     }
 
-    /// On-disk store. `path` points inside the App Group container when the
-    /// entitlement is present (feature #40), else the app's own support dir.
-    public convenience init(path: String) throws {
-        let dir = (path as NSString).deletingLastPathComponent
-        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        try self.init(dbQueue: DatabaseQueue(path: path))
+    init(dbWriter: any DatabaseWriter) throws {
+        self.dbWriter = dbWriter
+        try AppSchema.migrator().migrate(dbWriter)
     }
 
-    init(dbQueue: DatabaseQueue, runMigrations: Bool = true) throws {
-        self.dbQueue = dbQueue
-        if runMigrations {
-            try Schema.migrate(dbQueue)
-        }
-    }
+    public var migrator: DatabaseMigrator { AppSchema.migrator() }
 
-    // MARK: Conversations
+    // MARK: - Conversations
 
-    /// The shipped scaffold API: fresh store starts empty, accepts an upsert,
-    /// returns exactly what was written, and upsert never appends duplicates.
-    /// Now backed by real GRDB (Item 1) — same contract, real tables.
-    public func count() -> Int {
-        (try? countConversations()) ?? 0
-    }
-
-    /// Non-throwing upsert for the pinned scaffold contract.
-    public func upsert(_ conversation: StoredConversation) {
-        try? upsertConv(conversation)
-    }
-
-    /// Non-throwing fetch for the pinned scaffold contract.
-    public func get(id: UUID) -> StoredConversation? {
-        try? getConv(id: id)
-    }
-
-    /// Throwing variants (internal, real implementations).
-    func upsertConv(_ conversation: StoredConversation) throws {
-        try dbQueue.write { db in
+    public func upsert(_ conversation: StoredConversation) async {
+        _ = try? dbWriter.write { db in
             try conversation.save(db)
         }
     }
 
-    func getConv(id: UUID) throws -> StoredConversation? {
-        try dbQueue.read { db in
-            try StoredConversation.fetchOne(db, key: id.uuidString)
-        }
-    }
-
-    /// Sidebar list: pinned first, then most-recently-updated.
-    /// `archived: false` by default; pass true for the archive view.
-    public func fetchConversations(
-        archived: Bool = false,
-        limit: Int = 100,
-        offset: Int = 0
-    ) throws -> [StoredConversation] {
-        try dbQueue.read { db in
+    public func get(id: UUID) async -> StoredConversation? {
+        try? dbWriter.read { db in
             try StoredConversation
-                .filter(Column("archived") == archived)
-                .order(!Column("pinned"), Column("updatedAt").desc)
-                .limit(limit, offset: offset)
-                .fetchAll(db)
-        }
+                .filter(Column("id") == id)
+                .fetchOne(db)
+        } ?? nil
     }
 
-    public func countConversations() throws -> Int {
-        try dbQueue.read { db in
+    public func count() async -> Int {
+        (try? dbWriter.read { db in
             try StoredConversation.fetchCount(db)
+        }) ?? 0
+    }
+
+    /// Recents, pinned first, newest first.
+    public func conversations(limit: Int = 200) async -> [StoredConversation] {
+        (try? dbWriter.read { db in
+            try StoredConversation
+                .order(Column("pinned").desc, Column("updated_at").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }) ?? []
+    }
+
+    public func deleteConversation(id: UUID) async -> Bool {
+        (try? dbWriter.write { db in
+            try StoredConversation.filter(Column("id") == id).deleteAll(db)
+        }) ?? false
+    }
+
+    // MARK: - Messages (paginated)
+
+    /// One page of a conversation, oldest first, `messagePageSize` per page.
+    /// Page 0 = oldest 50; pages advance forward. For newest-first paging
+    /// (chat UI "load older" scrolling upward), see `recentMessages`.
+    public func fetchMessages(conversationID: UUID, page: Int) async throws -> [StoredMessage] {
+        try await messages(conversationID: conversationID, limit: Self.messagePageSize,
+                           offset: page * Self.messagePageSize)
+    }
+
+    public func messages(conversationID: UUID) async throws -> [StoredMessage] {
+        try await messages(conversationID: conversationID, limit: nil, offset: 0)
+    }
+
+    private func messages(conversationID: UUID, limit: Int?, offset: Int) async throws -> [StoredMessage] {
+        try dbWriter.read { db in
+            var request = StoredMessage
+                .filter(Column("conversation_id") == conversationID)
+                .order(Column("created_at").asc, Column("id").asc)
+            if let limit { request = request.limit(limit, offset: offset) }
+            else if offset > 0 { request = request.offset(offset) }
+            return try request.fetchAll(db)
         }
     }
 
-    public func delete(id: UUID) throws {
-        try dbQueue.write { db in
-            _ = try StoredConversation.deleteOne(db, key: id.uuidString)
+    /// Newest page of a conversation, returned oldest-first within the page
+    /// (what a chat transcript renders). Chat "load older" = decreasing page.
+    public func recentMessages(conversationID: UUID, page: Int = 0) async throws -> [StoredMessage] {
+        let newest = try dbWriter.read { db in
+            try StoredMessage
+                .filter(Column("conversation_id") == conversationID)
+                .order(Column("created_at").desc, Column("id").desc)
+                .limit(Self.messagePageSize, offset: page * Self.messagePageSize)
+                .fetchAll(db)
         }
+        return newest.reversed()
     }
 
-    // MARK: Messages
+    public func getMessage(id: UUID) async -> StoredMessage? {
+        try? dbWriter.read { db in
+            try StoredMessage.filter(Column("id") == id).fetchOne(db)
+        } ?? nil
+    }
 
-    /// Insert-or-replace one message; keeps the conversation's preview +
-    /// `updatedAt` fresh (the list stays sorted without a second query).
-    public func upsert(_ message: StoredMessage) throws {
-        try dbQueue.write { db in
+    public func messageCount(conversationID: UUID) async -> Int {
+        (try? dbWriter.read { db in
+            try StoredMessage.filter(Column("conversation_id") == conversationID).fetchCount(db)
+        }) ?? 0
+    }
+
+    /// Upsert + touch the conversation (recents ordering + preview).
+    public func upsert(_ message: StoredMessage) async {
+        _ = try? dbWriter.write { db in
             try message.save(db)
             try db.execute(
-                sql: "UPDATE conversations SET lastMessagePreview = ?, updatedAt = ? WHERE id = ?",
-                arguments: [String(message.content.prefix(120)), message.createdAt, message.conversationID.uuidString]
+                sql: """
+                    UPDATE conversations
+                    SET updated_at = ?, last_message_preview = ?
+                    WHERE id = ?
+                    """,
+                arguments: [message.createdAt, preview(message.content), message.conversationID]
             )
         }
     }
 
-    public func get(id: UUID) throws -> StoredMessage? {
-        try dbQueue.read { db in
-            try StoredMessage.fetchOne(db, key: id.uuidString)
-        }
+    private func preview(_ content: String) -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.prefix(140))
     }
 
-    /// Paginated transcript. `page` is 0-based, newest page last: the UI asks
-    /// for the final pages as the user scrolls up through history.
-    public func fetchMessages(
-        conversationID: UUID,
-        page: Int,
-        pageSize: Int = PersistenceStore.messagePageSize
-    ) throws -> [StoredMessage] {
-        try dbQueue.read { db in
-            try StoredMessage
-                .filter(Column("conversationID") == conversationID.uuidString)
-                .order(Column("createdAt").asc, Column("rowid").asc)
-                .limit(pageSize, offset: page * pageSize)
-                .fetchAll(db)
-        }
-    }
-
-    public func messageCount(conversationID: UUID) throws -> Int {
-        try dbQueue.read { db in
-            try StoredMessage
-                .filter(Column("conversationID") == conversationID.uuidString)
-                .fetchCount(db)
-        }
-    }
-
-    /// Streaming engine hook (Item 2): mutate just the status/content of one
-    /// message without a full fetch-modify-save round-trip.
-    public func updateMessage(
-        id: UUID,
-        content: String? = nil,
-        status: MessageStatus? = nil,
-        serverID: String? = nil
-    ) throws {
-        try dbQueue.write { db in
-            var message = try StoredMessage.fetchOne(db, key: id.uuidString)
-            guard var message else { return }
-            if let content { message.content = content }
-            if let status { message.status = status }
-            if let serverID { message.serverID = serverID }
-            try message.save(db)
-        }
-    }
-
-    // MARK: Branches
-
+    /// Streaming delta: upsert the message row in place so a cold launch
+    /// mid-stream restores the transcript. `replaceBody: false` appends the
+    /// delta (token deltas); `true` replaces the content (snapshot commit).
     @discardableResult
-    public func insertBranch(_ branch: StoredBranch) throws -> StoredBranch {
-        try dbQueue.write { db in
-            var branch = branch
-            try branch.insert(db)
-            return branch
+    public func applyStreamDelta(
+        messageID: UUID,
+        conversationID: UUID,
+        role: MessageRole = .assistant,
+        delta: String,
+        replaceBody: Bool
+    ) async throws -> StoredMessage {
+        try dbWriter.write { db in
+            var row: StoredMessage
+            if var existing = try StoredMessage
+                .filter(Column("id") == messageID)
+                .fetchOne(db) {
+                existing.content = replaceBody ? delta : existing.content + delta
+                existing.status = .streaming
+                row = existing
+            } else {
+                row = StoredMessage(
+                    id: messageID, conversationID: conversationID,
+                    role: role, content: delta, status: .streaming
+                )
+            }
+            try row.save(db)
+            try db.execute(
+                sql: "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                arguments: [Date(), conversationID]
+            )
+            return row
         }
     }
 
-    public func fetchBranches(conversationID: UUID) throws -> [StoredBranch] {
-        try dbQueue.read { db in
+    // MARK: - Full-text search (FTS5)
+
+    /// Search message content via the FTS5 index (rank-ordered).
+    public func searchMessages(matching query: String, limit: Int = 50) async throws -> [StoredMessage] {
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        return try dbWriter.read { db in
+            let sql = """
+                SELECT messages.* FROM messages
+                JOIN messages_fts ON messages_fts.rowid = messages.rowid
+                WHERE messages_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """
+            return try StoredMessage
+                .fetchAll(db, sql: sql, arguments: [FTS5Pattern(rawPattern: query), limit])
+        }
+    }
+
+    // MARK: - Branches
+
+    public func upsert(_ branch: StoredBranch) async throws -> StoredBranch {
+        try dbWriter.write { db in
+            var b = branch
+            try b.save(db)
+            return b
+        }
+    }
+
+    public func branches(conversationID: UUID) async throws -> [StoredBranch] {
+        try dbWriter.read { db in
             try StoredBranch
-                .filter(Column("conversationID") == conversationID.uuidString)
-                .order(Column("branchIndex").asc)
+                .filter(Column("conversation_id") == conversationID)
+                .order(Column("branch_index").asc)
                 .fetchAll(db)
         }
     }
 
-    /// Activate one branch, deactivate its siblings (single-active rule).
-    public func setActiveBranch(id: Int64, conversationID: UUID) throws {
-        try dbQueue.write { db in
+    /// Deactivate all other branches of a conversation (switch active branch).
+    public func setActiveBranch(id: Int64, conversationID: UUID) async throws {
+        _ = try dbWriter.write { db in
             try db.execute(
-                sql: "UPDATE branches SET active = 0 WHERE conversationID = ?",
-                arguments: [conversationID.uuidString]
+                sql: "UPDATE branches SET active = false WHERE conversation_id = ?",
+                arguments: [conversationID]
             )
             try db.execute(
-                sql: "UPDATE branches SET active = 1 WHERE id = ?",
+                sql: "UPDATE branches SET active = true WHERE id = ?",
                 arguments: [id]
             )
         }
     }
 
-    public func deleteBranch(id: Int64) throws {
-        try dbQueue.write { db in
-            _ = try StoredBranch.deleteOne(db, key: id)
+    public func deleteBranch(id: Int64) async throws {
+        _ = try dbWriter.write { db in
+            try StoredBranch.filter(Column("id") == id).deleteAll(db)
         }
     }
 
-    // MARK: Outbox (offline-first send queue)
+    // MARK: - Outbox (enqueue / ack / retry-with-backoff)
 
-    /// Enqueue a pending send. Assigns an id and returns the stored entry.
-    @discardableResult
-    public func enqueue(_ payload: OutboxPayload) throws -> OutboxEntry {
-        try dbQueue.write { db in
-            var entry = OutboxEntry(payload: payload)
+    public func enqueue(_ entry: OutboxEntry) async {
+        _ = try? dbWriter.write { db in
             try entry.insert(db)
-            return entry
         }
     }
 
-    /// Drain-ready entries: never-tried or backoff-expired, oldest first.
-    public func dueOutbox(now: Date = Date(), limit: Int = 20) throws -> [OutboxEntry] {
-        try dbQueue.read { db in
-            try OutboxEntry
-                .filter(Column("nextRetryAt") <= now)
-                .order(Column("createdAt").asc)
-                .limit(limit)
-                .fetchAll(db)
-        }
+    public func outboxEntry(id: UUID) async -> OutboxEntry? {
+        try? dbWriter.read { db in
+            try OutboxEntry.filter(Column("id") == id).fetchOne(db)
+        } ?? nil
     }
 
-    /// Ack a successfully sent entry — removes it from the queue.
-    public func ack(id: Int64) throws {
-        try dbQueue.write { db in
-            _ = try OutboxEntry.deleteOne(db, key: id)
-        }
-    }
-
-    /// Failure path: bump attempts, schedule the next retry with exponential
-    /// backoff (2^attempts seconds, capped at 60).
-    public func retry(id: Int64, now: Date = Date()) throws -> OutboxEntry? {
-        let cap = PersistenceStore.retryBackoffCap
-        return try dbQueue.write { db in
-            guard var entry = try OutboxEntry.fetchOne(db, key: id) else { return nil }
-            entry.attempts += 1
-            let backoff = min(pow(2.0, Double(entry.attempts)), cap)
-            entry.nextRetryAt = now.addingTimeInterval(backoff)
-            try entry.update(db)
-            return entry
-        }
-    }
-
-    public func outboxCount() throws -> Int {
-        try dbQueue.read { db in
+    public func outboxCount() async -> Int {
+        (try? dbWriter.read { db in
             try OutboxEntry.fetchCount(db)
-        }
+        }) ?? 0
     }
 
-    // MARK: Run cards
-
-    public func upsert(_ runCard: RunCard) throws {
-        try dbQueue.write { db in
-            try runCard.save(db)
-        }
-    }
-
-    public func fetchRunCards(conversationID: UUID) throws -> [RunCard] {
-        try dbQueue.read { db in
-            try RunCard
-                .filter(Column("conversationID") == conversationID.uuidString)
-                .order(Column("runID").desc)
+    /// Due entries, FIFO by enqueue time. Internal: OutboxActor drains.
+    func dueOutboxEntries(now: Double) async throws -> [OutboxEntry] {
+        try dbWriter.read { db in
+            try OutboxEntry
+                .filter(Column("next_retry_at") <= Date(timeIntervalSince1970: now))
+                .order(Column("created_at").asc)
                 .fetchAll(db)
         }
     }
 
-    // MARK: Search (FTS5)
-
-    public struct SearchHit: Sendable, Equatable {
-        public let message: StoredMessage
-        public let snippet: String
-    }
-
-    /// Full-text search over message bodies via the messages_fts index.
-    public func searchMessages(_ query: String, limit: Int = 25) throws -> [SearchHit] {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return try dbQueue.read { db in
-            let rows = try Row.fetchAll(db, sql: """
-                SELECT m.id AS m_id, m.conversationID AS m_conversationID, m.serverID AS m_serverID,
-                       m.pendingSync AS m_pendingSync, m.role AS m_role, m.content AS m_content,
-                       m.status AS m_status, m.attachmentsJSON AS m_attachmentsJSON,
-                       m.branchID AS m_branchID, m.branchIndex AS m_branchIndex, m.createdAt AS m_createdAt,
-                       snippet(messages_fts, 0, '<b>', '</b>', '…', 12) AS snip
-                FROM messages_fts
-                JOIN messages m ON m.rowid = messages_fts.rowid
-                WHERE messages_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """, arguments: [query, limit])
-            return try rows.map { row in
-                let decoder = JSONDecoder()
-                let message = StoredMessage(
-                    id: UUID(uuidString: try row["m_id"]) ?? UUID(),
-                    conversationID: UUID(uuidString: try row["m_conversationID"]) ?? UUID(),
-                    serverID: try row["m_serverID"],
-                    pendingSync: try row["m_pendingSync"],
-                    role: ((try row["m_role"] as String?).flatMap(MessageRole.init(rawValue:))) ?? .user,
-                    content: (try row["m_content"] as String?) ?? "",
-                    status: ((try row["m_status"] as String?).flatMap(MessageStatus.init(rawValue:))) ?? .sending,
-                    attachments: (try row["m_attachmentsJSON"] as String?).flatMap {
-                        try? decoder.decode([StoredAttachment].self, from: Data($0.utf8))
-                    } ?? [],
-                    branchID: try row["m_branchID"],
-                    branchIndex: (try row["m_branchIndex"] as Int?) ?? 0,
-                    createdAt: (try row["m_createdAt"] as Date?) ?? Date.distantPast
-                )
-                return SearchHit(message: message, snippet: (try row["snip"] as String?) ?? "")
-            }
+    /// Ack: the entry was delivered — it leaves the queue.
+    func removeOutboxEntry(id: UUID) async throws {
+        _ = try dbWriter.write { db in
+            try OutboxEntry.filter(Column("id") == id).deleteAll(db)
         }
     }
 
-    // MARK: App-Group snapshot (feature #40 prep — widget reads only this)
+    /// Retry-with-backoff: attempts++ and push next_retry_at out.
+    func recordOutboxFailure(id: UUID, nextAttemptAt: Date) async throws {
+        _ = try dbWriter.write { db in
+            try db.execute(
+                sql: "UPDATE outbox SET attempts = attempts + 1, next_retry_at = ? WHERE id = ?",
+                arguments: [nextAttemptAt, id]
+            )
+        }
+    }
 
-    public func writeSnapshot(_ entry: WidgetSnapshotEntry) throws {
-        try dbQueue.write { db in
+    /// Reconnect: clear all backoff timers so everything drains immediately.
+    func resetOutboxBackoff(now: Date) async throws {
+        _ = try dbWriter.write { db in
+            try db.execute(sql: "UPDATE outbox SET next_retry_at = ?", arguments: [now])
+        }
+    }
+
+    // MARK: - Widget snapshot (App-Group; feature #40 prep)
+
+    /// App-only writer for the snapshot table the widget will read.
+    public func updateWidgetSnapshot(_ entry: WidgetSnapshotEntry) async {
+        _ = try? dbWriter.write { db in
             try entry.save(db)
         }
     }
 
-    public func readSnapshot(key: String) throws -> WidgetSnapshotEntry? {
-        try dbQueue.read { db in
-            try WidgetSnapshotEntry.fetchOne(db, key: key)
+    public func widgetSnapshotEntry(key: String) async -> WidgetSnapshotEntry? {
+        try? dbWriter.read { db in
+            try WidgetSnapshotEntry.filter(Column("key") == key).fetchOne(db)
+        } ?? nil
+    }
+}
+
+// MARK: - Test hooks (internal extensions — no public API growth for tests)
+
+extension PersistenceStore {
+    /// Test-only hard delete bypassing the actor convenience wrappers.
+    func deleteMessageForTest(id: UUID) throws {
+        try dbWriter.write { db in
+            _ = try StoredMessage.filter(Column("id") == id).deleteAll(db)
         }
-    }
-}
-
-// MARK: - GRDB conformance (Codable records)
-
-extension StoredConversation: FetchableRecord, MutablePersistableRecord {
-    public static let databaseTableName = "conversations"
-
-    public func encode(to container: inout PersistenceContainer) {
-        container["id"] = id.uuidString
-        container["projectID"] = projectID?.uuidString
-        container["title"] = title
-        container["createdAt"] = createdAt
-        container["updatedAt"] = updatedAt
-        container["pinned"] = pinned
-        container["archived"] = archived
-        container["lastMessagePreview"] = lastMessagePreview
-    }
-
-    public init(row: Row) throws {
-        id = try row["id"].map { UUID(uuidString: $0) } ?? UUID()
-        projectID = (try row["projectID"] as String?).flatMap(UUID.init(uuidString:))
-        title = try row["title"]
-        createdAt = try row["createdAt"]
-        updatedAt = try row["updatedAt"]
-        pinned = try row["pinned"]
-        archived = try row["archived"]
-        lastMessagePreview = try row["lastMessagePreview"]
-    }
-}
-
-extension StoredMessage: FetchableRecord, MutablePersistableRecord {
-    public static let databaseTableName = "messages"
-
-    public func encode(to container: inout PersistenceContainer) {
-        container["id"] = id.uuidString
-        container["conversationID"] = conversationID.uuidString
-        container["serverID"] = serverID
-        container["pendingSync"] = pendingSync
-        container["role"] = role.rawValue
-        container["content"] = content
-        container["status"] = status.rawValue
-        container["attachmentsJSON"] = attachmentsJSON
-        container["branchID"] = branchID
-        container["branchIndex"] = branchIndex
-        container["createdAt"] = createdAt
-    }
-
-    public init(row: Row) throws {
-        id = try row["id"].map { UUID(uuidString: $0) } ?? UUID()
-        conversationID = try row["conversationID"].map { UUID(uuidString: $0) } ?? UUID()
-        serverID = try row["serverID"] as String?
-        pendingSync = try row["pendingSync"]
-        role = (try row["role"] as String).flatMap(MessageRole.init(rawValue:)) ?? .user
-        content = try row["content"]
-        status = (try row["status"] as String).flatMap(MessageStatus.init(rawValue:)) ?? .sending
-        branchID = try row["branchID"]
-        branchIndex = try row["branchIndex"]
-        createdAt = try row["createdAt"]
-        let json = try row["attachmentsJSON"] as String?
-        attachments = json.flatMap {
-            try? JSONDecoder().decode([StoredAttachment].self, from: Data($0.utf8))
-        } ?? []
-    }
-
-    var attachmentsJSON: String? {
-        guard !attachments.isEmpty else { return nil }
-        guard let data = try? JSONEncoder().encode(attachments) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-}
-
-extension StoredBranch: FetchableRecord, MutablePersistableRecord {
-    public static let databaseTableName = "branches"
-
-    public func encode(to container: inout PersistenceContainer) {
-        if let id { container["id"] = id }
-        container["conversationID"] = conversationID.uuidString
-        container["parentMessageID"] = parentMessageID?.uuidString
-        container["branchIndex"] = branchIndex
-        container["active"] = active
-    }
-
-    public init(row: Row) throws {
-        id = try row["id"]
-        conversationID = try row["conversationID"].map { UUID(uuidString: $0) } ?? UUID()
-        parentMessageID = (try row["parentMessageID"] as String?).flatMap(UUID.init(uuidString:))
-        branchIndex = try row["branchIndex"]
-        active = try row["active"]
-    }
-
-    public mutating func didInsert(_ inserted: InsertionSuccess) {
-        id = inserted.rowID
-    }
-}
-
-extension OutboxEntry: FetchableRecord, MutablePersistableRecord {
-    public static let databaseTableName = "outbox"
-
-    public func encode(to container: inout PersistenceContainer) {
-        if let id { container["id"] = id }
-        container["payloadJSON"] = payloadJSON
-        container["attempts"] = attempts
-        container["nextRetryAt"] = nextRetryAt
-        container["createdAt"] = createdAt
-    }
-
-    public init(row: Row) throws {
-        id = try row["id"]
-        createdAt = try row["createdAt"]
-        attempts = try row["attempts"]
-        nextRetryAt = try row["nextRetryAt"]
-        let json = try row["payloadJSON"] as String
-        payload = try JSONDecoder().decode(OutboxPayload.self, from: Data(json.utf8))
-    }
-
-    var payloadJSON: String {
-        let data = (try? JSONEncoder().encode(payload)) ?? Data("{}".utf8)
-        return String(data: data, encoding: .utf8) ?? "{}"
-    }
-
-    public mutating func didInsert(_ inserted: InsertionSuccess) {
-        id = inserted.rowID
-    }
-}
-
-extension RunCard: FetchableRecord, MutablePersistableRecord {
-    public static let databaseTableName = "run_cards"
-
-    public func encode(to container: inout PersistenceContainer) {
-        container["id"] = id.uuidString
-        container["conversationID"] = conversationID.uuidString
-        container["runID"] = runID
-        container["status"] = status.rawValue
-        container["stepsJSON"] = stepsJSON
-    }
-
-    public init(row: Row) throws {
-        id = try row["id"].map { UUID(uuidString: $0) } ?? UUID()
-        conversationID = try row["conversationID"].map { UUID(uuidString: $0) } ?? UUID()
-        runID = try row["runID"]
-        status = (try row["status"] as String).flatMap(RunCardStatus.init(rawValue:)) ?? .queued
-        let json = try row["stepsJSON"] as String
-        steps = (try? JSONDecoder().decode([RunStep].self, from: Data(json.utf8))) ?? []
-    }
-
-    var stepsJSON: String {
-        let data = (try? JSONEncoder().encode(steps)) ?? Data("[]".utf8)
-        return String(data: data, encoding: .utf8) ?? "[]"
-    }
-}
-
-extension WidgetSnapshotEntry: FetchableRecord, MutablePersistableRecord {
-    public static let databaseTableName = "widget_snapshot"
-
-    public func encode(to container: inout PersistenceContainer) {
-        container["key"] = key
-        container["valueJSON"] = valueJSON
-        container["updatedAt"] = updatedAt
-    }
-
-    public init(row: Row) throws {
-        key = try row["key"]
-        valueJSON = try row["valueJSON"]
-        updatedAt = try row["updatedAt"]
     }
 }
