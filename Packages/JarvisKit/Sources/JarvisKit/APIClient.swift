@@ -61,11 +61,6 @@ public actor APIClient {
         SSEClient.streamEndpoint(conversationID)
     }
 
-    /// POST message endpoint (fixture contract: JarvisKit/Fixtures/contract.json).
-    public nonisolated static func messageEndpoint(_ conversationID: UUID) -> String {
-        "/v1/conversations/\(conversationID.uuidString)/messages"
-    }
-
     // MARK: - Core HTTP
 
     /// GET an endpoint, returning decoded JSON. Never force-unwraps URLs.
