@@ -182,7 +182,8 @@ final class Item1QATests: XCTestCase {
         // Strict ordering across the whole traversal.
         let stamps = paged.map { $0.createdAt }
         XCTAssertEqual(stamps, stamps.sorted(), "pages must come back oldest→newest")
-        XCTAssertEqual(paged.map { $0.id }, Array(Set(paged.map { $0.id })), "no duplicates across pages")
+        let ids = paged.map { $0.id }
+        XCTAssertEqual(ids.count, Set(ids).count, "no duplicates across pages")
 
         // Off-boundary page is empty, not a crash.
         let beyond = try await store.fetchMessages(conversationID: conv.id, page: 3)
@@ -230,14 +231,20 @@ final class Item1QATests: XCTestCase {
         XCTAssertGreaterThan(retry1, 1_000, "next_retry_at must move into the future")
         XCTAssertLessThanOrEqual(retry1, 1_000 + 5, "attempt-1 backoff must stay within 4s +25% jitter")
 
-        // Attempt 2 fails at the first retry time: attempts=2, backoff = 2^3 = 8s ±25%.
+        // Attempt 2 fires at t = retry1 + 0.5: attempts=2, backoff = 2^2 = 4s ±25%.
+        // Attempt-1's window was 2s ±25% → [1.5, 2.5]; attempt-2's jitter floor
+        // (3s) exceeds attempt-1's ceiling (2.5s), so the measured delay proves
+        // the schedule grows.
         try await outbox.drainOnce(now: retry1 + 0.5)
         let after2 = await store.outboxEntry(id: entry.id)
         XCTAssertEqual(after2?.attempts, 2)
         let retry2 = after2!.nextRetryAt.timeIntervalSince1970
         XCTAssertGreaterThan(retry2, retry1, "next_retry_at must grow monotonically")
-        // 8s floor (worst-case jitter −25%) clears attempt-1's 5s ceiling.
-        XCTAssertGreaterThanOrEqual(retry2, retry1 + 6, "attempt-2 backoff must exceed attempt-1's window")
+        let delay2 = retry2 - (retry1 + 0.5)
+        XCTAssertGreaterThanOrEqual(delay2, 3.0 - 0.001,
+                                    "attempt-2 delay must reach the 4s window's jitter floor (3s)")
+        XCTAssertLessThanOrEqual(delay2, 5.0 + 0.001,
+                                 "attempt-2 delay must stay within the 4s window's jitter ceiling (5s)")
         // Still queued — failures retain the entry.
         let stillQueued = await store.outboxCount()
         XCTAssertEqual(stillQueued, 1)
