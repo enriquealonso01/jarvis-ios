@@ -329,7 +329,10 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(a2?.attempts, 2)
 
         // Third attempt succeeds → entry leaves the queue (ack).
-        clock = t0 + 14
+        // Attempt 3 backoff is 8s ±25% → next due in [t0+15, t0+19]; t0+16
+        // stays inside the window on every jitter draw. (t0+14 could beat a
+        // +25% draw and flake.)
+        clock = t0 + 16
         sent = try await outbox.drainOnce(now: clock)
         XCTAssertEqual(sent, 1)
         let remaining2 = await store.outboxCount()
