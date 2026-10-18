@@ -108,7 +108,7 @@ struct V2SidebarShell: View {
                     // transcript VM and replays composer sends into it.
                     VStack(spacing: 0) {
                         V2ChatHost(store: store, conversationID: id,
-                                   sidebarVM: vm, composerHost: { composerHost })
+                                   sidebarVM: vm)
                     }
                     .id(id)
                 } else {
