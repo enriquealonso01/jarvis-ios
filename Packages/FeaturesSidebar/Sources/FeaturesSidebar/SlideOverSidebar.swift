@@ -1,6 +1,15 @@
 import SwiftUI
 import DesignSystem
 
+// Cross-platform system background (CI runs swift tests for macOS too).
+#if canImport(UIKit)
+import UIKit
+private func sysBackground() -> Color { Color(uiColor: .systemBackground) }
+#else
+import AppKit
+private func sysBackground() -> Color { Color(nsColor: .windowBackgroundColor) }
+#endif
+
 /// iPhone slide-over sidebar geometry (UI Law §1, binding):
 ///   - ~85% width, sliding in ABOVE the conversation without fully
 ///     covering it (the remaining ~15% shows the conversation edge),
@@ -56,7 +65,7 @@ public struct SlideOverSidebar<Panel: View, Under: View>: View {
                 panel()
                     .frame(width: width)
                     .frame(maxHeight: .infinity)
-                    .background(Color(uiColor: .systemBackground))
+                    .background(sysBackground())
                     .ignoresSafeArea(.container, edges: [.top, .bottom])
                     .gesture(
                         DragGesture(minimumDistance: 12)
