@@ -104,7 +104,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
         await vm.setPinned(true, conversationID: target.id)
         XCTAssertTrue(vm.pinnedEntries.contains { $0.kind == .chat(id: target.id) },
                       "pin must surface the row in the Pinned section")
-        XCTAssertEqual(await store.get(id: target.id)?.pinned, true,
+        let hoisted1 = await store.get(id: target.id)?.pinned
+        XCTAssertEqual(hoisted1, true,
                        "pin must write through to the store (re-fetch assert)")
 
         // Fresh VM over the same store = the row survives re-open.
@@ -113,7 +114,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
 
         // Unpin reverses, equally persisted.
         await vm.setPinned(false, conversationID: target.id)
-        XCTAssertEqual(await store.get(id: target.id)?.pinned, false)
+        let hoisted2 = await store.get(id: target.id)?.pinned
+        XCTAssertEqual(hoisted2, false)
         let fresh2 = await loadedVM(store)
         XCTAssertFalse(fresh2.pinnedEntries.contains { $0.kind == .chat(id: target.id) })
     }
@@ -127,7 +129,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
         guard let row = vm.recentChats.first else { return XCTFail("expected a recent row") }
 
         await vm.archive(conversationID: row.id)
-        XCTAssertEqual(await store.get(id: row.id)?.archived, true,
+        let hoisted3 = await store.get(id: row.id)?.archived
+        XCTAssertEqual(hoisted3, true,
                        "archive must write through to the store")
 
         // Every loaded section drops the archived row…
@@ -154,7 +157,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
         let vm = SidebarViewModel(store: store)
         await vm.load()
         await vm.archive(conversationID: row.id)
-        XCTAssertEqual(await store.get(id: row.id)?.archived, true)
+        let hoisted4 = await store.get(id: row.id)?.archived
+        XCTAssertEqual(hoisted4, true)
         let archivedModel = await loadedVM(store)
         XCTAssertFalse(archivedModel.recentChats.contains { $0.id == row.id },
                        "archived row must leave Recents")
@@ -162,7 +166,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
         // …then unarchive through the VM seam (Item 5 builder added it —
         // the original tester defect #2): the row must return to Recents.
         await vm.unarchive(conversationID: row.id)
-        XCTAssertEqual(await store.get(id: row.id)?.archived, false,
+        let hoisted5 = await store.get(id: row.id)?.archived
+        XCTAssertEqual(hoisted5, false,
                        "unarchive must write through to the store")
         let reloaded = await loadedVM(store)
         XCTAssertTrue(reloaded.recentChats.contains { $0.id == row.id },
@@ -184,7 +189,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
             await store.upsert(makeMessage(i, in: doomed.id, base: base))
         }
         let before = await store.count()
-        XCTAssertEqual(try await store.messages(conversationID: doomed.id).count, 3)
+        let hoisted6 = try await store.messages(conversationID: doomed.id).count
+        XCTAssertEqual(hoisted6, 3)
 
         // The UI wraps delete in a confirmation (UI Law §8: red, confirmed);
         // the VM seam itself must be a single decisive store deletion.
@@ -192,7 +198,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
         XCTAssertTrue(removed, "delete must report success for an existing row")
 
         // Row gone…
-        XCTAssertNil(await store.get(id: doomed.id), "delete must remove the row from the store")
+        let hoisted7 = await store.get(id: doomed.id)
+        XCTAssertNil(hoisted7, "delete must remove the row from the store")
         let after = await store.count()
         XCTAssertEqual(after, before - 1)
 
@@ -218,7 +225,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
 
         let removed = await vm.delete(conversationID: UUID())
         XCTAssertFalse(removed, "delete of an unknown id must report false")
-        XCTAssertEqual(await store.count(), before,
+        let hoisted8 = await store.count()
+        XCTAssertEqual(hoisted8, before,
                        "a failed delete must not disturb any existing row")
     }
 
@@ -232,7 +240,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
 
         // Happy path: trimmed, write-through, re-loaded.
         await vm.rename(conversationID: row.id, to: "  Krendora orders  \n")
-        XCTAssertEqual(await store.get(id: row.id)?.title, "Krendora orders",
+        let hoisted9 = await store.get(id: row.id)?.title
+        XCTAssertEqual(hoisted9, "Krendora orders",
                        "rename must trim whitespace and write through")
         let reloaded = await loadedVM(store)
         XCTAssertTrue(reloaded.recentChats.contains { $0.title == "Krendora orders" })
@@ -240,7 +249,8 @@ final class Item5ListMechanicsQATests: XCTestCase {
         // Empty + whitespace-only renames are rejected (no wipe-out).
         await vm.rename(conversationID: row.id, to: "")
         await vm.rename(conversationID: row.id, to: "   \n\t ")
-        XCTAssertEqual(await store.get(id: row.id)?.title, "Krendora orders",
+        let hoisted10 = await store.get(id: row.id)?.title
+        XCTAssertEqual(hoisted10, "Krendora orders",
                        "empty/whitespace rename must be a no-op, never blank the title")
 
         // Rename of an unknown id: silent no-op (no crash).
@@ -277,14 +287,18 @@ final class Item5ListMechanicsQATests: XCTestCase {
         guard let row = vm.recentChats.first else { return XCTFail("expected a recent row") }
 
         await vm.setPinned(true, conversationID: row.id)
-        XCTAssertEqual(await store.get(id: row.id)?.pinned, true, "menu: Pin")
+        let hoisted11 = await store.get(id: row.id)?.pinned
+        XCTAssertEqual(hoisted11, true, "menu: Pin")
         await vm.rename(conversationID: row.id, to: "Menu Renamed")
-        XCTAssertEqual(await store.get(id: row.id)?.title, "Menu Renamed", "menu: Rename")
+        let hoisted12 = await store.get(id: row.id)?.title
+        XCTAssertEqual(hoisted12, "Menu Renamed", "menu: Rename")
         await vm.archive(conversationID: row.id)
-        XCTAssertEqual(await store.get(id: row.id)?.archived, true, "menu: Archive")
+        let hoisted13 = await store.get(id: row.id)?.archived
+        XCTAssertEqual(hoisted13, true, "menu: Archive")
         let deleted = await vm.delete(conversationID: row.id)
         XCTAssertTrue(deleted, "menu: Delete (red, confirmed upstream of this seam)")
-        XCTAssertNil(await store.get(id: row.id))
+        let hoisted14 = await store.get(id: row.id)
+        XCTAssertNil(hoisted14)
     }
 
     // MARK: §8f — Recents exclusions
