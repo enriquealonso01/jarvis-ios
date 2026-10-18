@@ -917,10 +917,17 @@ struct V2ComposerHost: View {
             onStreamStop: onStreamStop)
             .onAppear {
                 holder.vm.conversationID = conversationID
-                // Item 8 QA fix: mirror the host-supplied stream state (see
-                // `isStreaming`) — drives the §3 send⇄stop swap.
-                holder.vm.setStreaming(isStreaming)
                 Task { await holder.vm.restoreState() }
+            }
+            // Item 8 QA fix: mirror the host-supplied stream state (the
+            // transcript VM owns the truth — see V2ChatHost.composerHost).
+            // onChange (not onAppear) so the §3 send⇄stop swap tracks the
+            // stream live, including starting mid-visit.
+            .onChange(of: isStreaming) { _, newValue in
+                holder.vm.setStreaming(newValue)
+            }
+            .onChange(of: holder.vm.isStreaming) { _, newValue in
+                if newValue != isStreaming { holder.vm.setStreaming(isStreaming) }
             }
             .sheet(isPresented: $isModelChooserPresented) {
                 V2ModelChooserSheet(vm: holder.vm, selection: $chooserSelection)
