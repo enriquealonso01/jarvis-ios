@@ -275,7 +275,10 @@ struct SidebarPanelView: View {
     private var projectsSection: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
             Button {
-                withAnimation { Task<Void, Never>(priority: .userInitiated) { @MainActor in await vm.setProjectsExpanded(!vm.projectsExpanded) } }
+                withAnimation {
+            let t = Task<Void, Never>(priority: .userInitiated) { @MainActor in await vm.setProjectsExpanded(!vm.projectsExpanded) }
+            _ = t
+        }
             } label: {
                 HStack(spacing: Tokens.Spacing.xs) {
                     Text("Projects")
