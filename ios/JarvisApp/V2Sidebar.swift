@@ -118,7 +118,7 @@ struct V2SidebarShell: View {
                                 .onEnded { value in
                                     if value.startLocation.x < Tokens.Spacing.l,
                                        value.translation.width > 40 {
-                                        vm.setOpen(true)
+                                        Task { await vm.setOpen(true) }
                                     }
                                 }
                         )
@@ -488,7 +488,7 @@ struct V2ConversationRow: View {
                     Text(conversation.title)
                         .font(.subheadline)
                         .fontWeight(isSelected ? .semibold : .regular)
-                        .foregroundStyle(isSelected ? Color.tint : Color.primary)
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
                         .lineLimit(1)
                     if let preview = conversation.lastMessagePreview {
                         Text(preview)
