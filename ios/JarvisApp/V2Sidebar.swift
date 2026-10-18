@@ -416,14 +416,14 @@ struct SidebarPanelView: View {
 // MARK: - Add-on chips (non-functional stubs are fine, visible is not)
 
 struct V2AddOnChip: Identifiable {
-    enum ID: String {
+    enum ChipID: String {
         case runs, recordings, widgets, library
     }
 
     let id: String
     let title: String
     let systemImage: String
-    let addOnID: ID
+    let addOnID: ChipID
 
     /// Maps to the FeaturesSidebar selection enum (which pins exactly 4
     /// cases: runs / recordings / memory / schedules — a library case is
