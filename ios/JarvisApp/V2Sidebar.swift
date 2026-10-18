@@ -734,6 +734,23 @@ struct V2ChatHost: View {
     var sidebarVM: FeaturesChat.SidebarViewModel? = nil
     /// Item 9: the action row needs the same send path the composer uses.
     private let sendCoordinator: MessageSendCoordinator?
+    /// Item 9: the regenerate send path as a directly-typed closure (built
+    /// once in init; `nil` coordinator → the view omits the control).
+    private var regenerateSendPath: MessageActionViewModel.PerformSend {
+        let coordinatorRef = sendCoordinator
+        return { [weak coordinatorRef] text in
+            guard let coordinatorRef else { return false }
+            do {
+                _ = try await coordinatorRef.send(
+                    conversationID: conversationID, text: text, online: true)
+                return true
+            } catch {
+                // send() already enqueued the outbox entry — the replay
+                // path owns delivery; never double-send.
+                return true
+            }
+        }
+    }
 
     @StateObject private var holder: TranscriptVMHolder
     /// Item 9: action-row VM (copy/share are store-free; regenerate rides
@@ -784,23 +801,26 @@ struct V2ChatHost: View {
         }
         _holder = StateObject(wrappedValue: TranscriptVMHolder(
             store: store, conversationID: conversationID))
-        let sendPath: MessageActionViewModel.PerformSend? = sendCoordinator.map { coordinator in
-            { [weak coordinator] text in
-                guard let coordinator else { return false }
-                do {
-                    _ = try await coordinator.send(
-                        conversationID: conversationID,
-                        text: text,
-                        online: true)
-                    return true
-                } catch {
-                    // The coordinator already enqueued an outbox entry;
-                    // a hard failure here would double-send on replay.
-                    return true
-                }
+        // Item 9: directly-typed send closure — Optional.map with a
+        // multi-statement closure defeats Swift's type inference (CI
+        // 39153190768), so the optionality is expressed in the closure body.
+        let coordinatorRef = sendCoordinator
+        let sendPath: MessageActionViewModel.PerformSend = { [weak coordinatorRef] text in
+            guard let coordinatorRef else { return false }
+            do {
+                _ = try await coordinatorRef.send(
+                    conversationID: conversationID,
+                    text: text,
+                    online: true)
+                return true
+            } catch {
+                // send() already enqueued the outbox entry — the replay
+                // path owns delivery; returning true avoids double-send.
+                return true
             }
         }
-        let actionViewModel = MessageActionViewModel(performSend: sendPath)
+        let actionViewModel = MessageActionViewModel(
+            performSend: sendCoordinator == nil ? nil : sendPath)
         _actionVM = StateObject(wrappedValue: actionViewModel)
     }
 
@@ -820,19 +840,7 @@ struct V2ChatHost: View {
         V2TranscriptView(
             vm: holder.vm,
             actionViewModel: actionVM,
-            regenerateSend: sendCoordinator.map { coordinator in
-                { text in
-                    do {
-                        _ = try await coordinator.send(
-                            conversationID: conversationID, text: text, online: true)
-                        return true
-                    } catch {
-                        // send() already enqueued the outbox entry — the
-                        // replay path owns delivery; never double-send.
-                        return true
-                    }
-                }
-            })
+            regenerateSend: sendCoordinator == nil ? nil : regenerateSendPath)
             .onAppear { Task { await holder.vm.loadInitial() } }
             .onDisappear { holder.vm.cancelTail() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
