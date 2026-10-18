@@ -81,7 +81,7 @@ extension PersistenceStore {
     public func conversationsIncludingArchived(limit: Int = 200) async -> [StoredConversation] {
         (try? await dbWriter.read { db in
             try StoredConversation
-                .order(Column("updated_at").desc)
+                .order(Column("updated_at").desc, Column("created_at").desc, Column("id").desc)
                 .limit(limit)
                 .fetchAll(db)
         }) ?? []

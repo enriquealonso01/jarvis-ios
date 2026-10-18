@@ -24,7 +24,7 @@ extension PersistenceStore {
     public func projects(limit: Int = 200) async -> [StoredProject] {
         (try? await dbWriter.read { db in
             try StoredProject
-                .order(Column("updated_at").desc)
+                .order(Column("updated_at").desc, Column("created_at").desc, Column("id").desc)
                 .limit(limit)
                 .fetchAll(db)
         }) ?? []
@@ -36,7 +36,7 @@ extension PersistenceStore {
         (try? await dbWriter.read { db in
             try StoredProject
                 .filter(Column("pinned") == true)
-                .order(Column("updated_at").desc)
+                .order(Column("updated_at").desc, Column("created_at").desc, Column("id").desc)
                 .limit(limit)
                 .fetchAll(db)
         }) ?? []

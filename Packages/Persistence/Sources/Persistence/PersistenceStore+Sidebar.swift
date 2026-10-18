@@ -21,7 +21,7 @@ extension PersistenceStore {
             try StoredConversation
                 .filter(Column("archived") == false)
                 .filter(Column("pinned") == true)
-                .order(Column("updated_at").desc)
+                .order(Column("updated_at").desc, Column("created_at").desc, Column("id").desc)
                 .limit(limit)
                 .fetchAll(db)
         }) ?? []
@@ -34,7 +34,7 @@ extension PersistenceStore {
             try StoredConversation
                 .filter(Column("archived") == false)
                 .filter(Column("pinned") == false)
-                .order(Column("updated_at").desc)
+                .order(Column("updated_at").desc, Column("created_at").desc, Column("id").desc)
                 .limit(limit + 1, offset: offset)
                 .fetchAll(db)
         }) ?? []
