@@ -40,17 +40,22 @@ private func sysColor(_ name: String) -> Color {
 
 /// The v2 composer capsule. Zero composer behavior lives here — all state
 /// and rules belong to `ComposerViewModel` (tester-pinned contract).
-struct V2ComposerView: View {
-    @ObservedObject var vm: ComposerViewModel
+public struct V2ComposerView: View {
+    @ObservedObject public var vm: ComposerViewModel
     /// Large-paste interception (UI Law §6): SwiftUI delivers typed text
     /// through the binding; this diff detects a paste jump (one edit that
     /// overshoots the threshold) and routes it through the chip path.
     @State private var lastObservedText = ""
     /// One-off model chooser presentation (fired via the .showModelChooser
     /// intent the app target forwards back into this binding).
-    @Binding var isModelChooserPresented: Bool
+    @Binding public var isModelChooserPresented: Bool
 
-    var body: some View {
+    public init(vm: ComposerViewModel, isModelChooserPresented: Binding<Bool>) {
+        self.vm = vm
+        self.isModelChooserPresented = isModelChooserPresented
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
             toolChips
             attachmentChips
@@ -287,12 +292,17 @@ struct V2ComposerPlusSheet: View {
 /// composer); this sheet only selects the model for the next message. The
 /// app target owns this sheet + the `.showModelChooser` intent routing; the
 /// payload is `vm.chooserOptions` (the catalog, never the selection).
-struct V2ModelChooserSheet: View {
-    @ObservedObject var vm: ComposerViewModel
-    @Binding var selection: String?
+public struct V2ModelChooserSheet: View {
+    @ObservedObject public var vm: ComposerViewModel
+    @Binding public var selection: String?
     @Environment(\.dismiss) private var dismiss
 
-    var body: some View {
+    public init(vm: ComposerViewModel, selection: Binding<String?>) {
+        self.vm = vm
+        self.selection = selection
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
             Text("Use model for this message")
                 .font(.headline)

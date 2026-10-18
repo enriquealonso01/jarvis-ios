@@ -275,7 +275,7 @@ struct SidebarPanelView: View {
     private var projectsSection: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
             Button {
-                withAnimation { Task { await vm.setProjectsExpanded(!vm.projectsExpanded) } }
+                withAnimation { Task { @MainActor in await vm.setProjectsExpanded(!vm.projectsExpanded) } }
             } label: {
                 HStack(spacing: Tokens.Spacing.xs) {
                     Text("Projects")
@@ -488,7 +488,7 @@ struct V2ConversationRow: View {
                     Text(conversation.title)
                         .font(.subheadline)
                         .fontWeight(isSelected ? .semibold : .regular)
-                        .foregroundStyle(isSelected ? .tint : .primary)
+                        .foregroundStyle(isSelected ? Color.tint : Color.primary)
                         .lineLimit(1)
                     if let preview = conversation.lastMessagePreview {
                         Text(preview)
@@ -735,9 +735,10 @@ struct V2ComposerHost: View {
         }
     }
 
-    init(store: PersistenceStore?, conversationID: UUID) {
+    init(store: PersistenceStore?, conversationID: UUID, sidebarVM: FeaturesChat.SidebarViewModel? = nil) {
         self.store = store
         self.conversationID = conversationID
+        self.sidebarVM = sidebarVM
         _holder = StateObject(wrappedValue: ComposerVMHolder(store: store))
     }
 
@@ -759,6 +760,7 @@ struct V2ComposerHost: View {
                 Task {
                     let role = holder.vm.lastSentRole ?? .user
                     let text = holder.vm.lastSentText ?? ""
+                    guard let sidebarVM else { return }
                     _ = await sidebarVM.applyAutoTitleIfFirstExchange(
                         conversationID: conversationID,
                         messageRole: role,
