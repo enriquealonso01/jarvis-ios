@@ -47,8 +47,19 @@ public final class ComposerViewModel: ObservableObject {
     @Published public private(set) var selectedModels: [ComposerModelOption] = []
     @Published public private(set) var isSheetPresented: Bool = false
     /// True while the conversation is streaming (send → stop affordance per
-    /// UI Law §3; the composer disables send while busy).
+    /// UI Law §3; the composer disables send while busy). Written only via
+    /// `setStreaming` — the transcript host mirrors TranscriptViewModel's
+    /// live-stream state into it (Item 8 QA defect fix: it was never
+    /// mutated, so the stop button never showed on device).
     @Published public private(set) var isStreaming = false
+
+    /// Public seam for the app-target host: the transcript VM owns the real
+    /// stream state; the composer VM just mirrors it to drive the §3
+    /// send⇄stop swap. No-op on equal values (avoids spurious objectWillChange).
+    public func setStreaming(_ streaming: Bool) {
+        guard isStreaming != streaming else { return }
+        isStreaming = streaming
+    }
 
     // MARK: Item 5 auto-title feed (UI Law §8)
 

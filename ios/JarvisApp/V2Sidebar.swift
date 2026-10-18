@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import JarvisKit
 import Persistence
 import DesignSystem
 import FeaturesChat
@@ -41,9 +42,11 @@ struct V2SidebarShell: View {
             get: { vm.isOpen },
             set: { open in Task { await vm.setOpen(open) } }
         )) {
-            SidebarPanelView(vm: vm) { selection in
-                handle(selection)
-            }
+            SidebarPanelView(
+                vm: vm,
+                onSelect: { selection in handle(selection) },
+                store: store,
+                onOpenProjectChat: { chatID in projectHomeChatTarget = chatID })
         } underlying: {
             chatSurface
         }
@@ -52,7 +55,6 @@ struct V2SidebarShell: View {
             await vm.reload()
         }
     }
-
     // MARK: Routing (Item 3 §3)
 
     /// Item 9/10: set on Project Home chat opens — Project Home and the
@@ -76,7 +78,8 @@ struct V2SidebarShell: View {
             // Item 10: Project Home is the real destination (was a
             // placeholder). Chats open INSIDE its stack (composition law).
             projectHomeChatTarget = nil
-            selection = .projectHome(id: id)
+            // `self.` — the parameter shadows the @State property here.
+            self.selection = .projectHome(id: id)
         case .search, .addOn:
             // Placeholders (Item 6 search, add-on screens).
             self.selection = selection
@@ -155,6 +158,11 @@ struct V2SidebarShell: View {
 struct SidebarPanelView: View {
     @ObservedObject var vm: FeaturesChat.SidebarViewModel
     let onSelect: (SidebarSelection) -> Void
+    /// Item 10: the shell's shared store (Project Home reads the same DB).
+    var store: PersistenceStore? = nil
+    /// Item 10: shell router for chats opened from Project Home (the
+    /// panel struct itself has no access to shell state).
+    var onOpenProjectChat: ((UUID) -> Void)? = nil
     @State private var settingsPresented = false
 
     var body: some View {
@@ -320,9 +328,7 @@ struct SidebarPanelView: View {
                             V2ProjectHomeView(
                                 projectID: node.project.id,
                                 store: store ?? PersistenceStore(),
-                                onOpenChat: { chatID in
-                                    projectHomeChatTarget = chatID
-                                })
+                                onOpenChat: onOpenProjectChat)
                         } label: {
                             HStack(spacing: Tokens.Spacing.s) {
                                 Image(systemName: "folder")
@@ -778,23 +784,24 @@ struct V2ChatHost: View {
         }
         _holder = StateObject(wrappedValue: TranscriptVMHolder(
             store: store, conversationID: conversationID))
-        _actionVM = StateObject(wrappedValue: MessageActionViewModel(
-            performSend: sendCoordinator.map { coordinator in
-                { [weak coordinator] text in
-                    guard let coordinator else { return false }
-                    do {
-                        _ = try await coordinator.send(
-                            conversationID: conversationID,
-                            text: text,
-                            online: true)
-                        return true
-                    } catch {
-                        // The coordinator already enqueued an outbox entry;
-                        // a hard failure here would double-send on replay.
-                        return true
-                    }
+        let sendPath: MessageActionViewModel.PerformSend? = sendCoordinator.map { coordinator in
+            { [weak coordinator] text in
+                guard let coordinator else { return false }
+                do {
+                    _ = try await coordinator.send(
+                        conversationID: conversationID,
+                        text: text,
+                        online: true)
+                    return true
+                } catch {
+                    // The coordinator already enqueued an outbox entry;
+                    // a hard failure here would double-send on replay.
+                    return true
                 }
-            }))
+            }
+        }
+        let actionViewModel = MessageActionViewModel(performSend: sendPath)
+        _actionVM = StateObject(wrappedValue: actionViewModel)
     }
 
     /// The Item-4 composer surface, wired to the transcript host's §3 stop
@@ -827,7 +834,15 @@ struct V2ChatHost: View {
             .onAppear { Task { await holder.vm.loadInitial() } }
             .onDisappear { holder.vm.cancelTail() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Item 8 QA fix: mirror the transcript VM's live-stream state
+                // into the composer VM so the §3 send⇄stop swap actually
+                // fires (bindStreamingFlag + onChange below).
+                bindStreamingFlag()
                 composerHost
+            }
+            .onChange(of: holder.vm.isStreaming) { _, newValue in
+                streamingMirror = newValue
+                bindStreamingFlag()
             }
             .sheet(isPresented: Binding(
                 get: { actionVM.shareText != nil },
@@ -883,6 +898,17 @@ struct V2ComposerHost: View {
         self.onStreamStop = onStreamStop
         _holder = StateObject(wrappedValue: ComposerVMHolder(store: store))
     }
+
+    /// Item 8 QA fix: the composer's §3 stop swap was dead code — nothing
+    /// ever mutated `ComposerViewModel.isStreaming` (always false, so the
+    /// stop button never appeared on device). The transcript VM owns the
+    /// real stream state; this mirrors it into the composer VM via its
+    /// public `setStreaming` seam.
+    private func bindStreamingFlag() {
+        holder.vm.setStreaming(streamingMirror)
+    }
+
+    @State private var streamingMirror = false
 
     var body: some View {
         V2ComposerView(
