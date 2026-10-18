@@ -1,4 +1,5 @@
 import XCTest
+import DesignSystem
 import Foundation
 import Persistence
 @testable import FeaturesSidebar
@@ -159,7 +160,8 @@ final class Item3SidebarQATests: XCTestCase {
 
         await model.setPinned(true, projectID: project.id)
         XCTAssertEqual(model.pinnedEntries.map(\.title), ["Project"])
-        XCTAssertEqual(await store.pinnedProjects().map(\.id), [project.id])
+        let hoisted1 = await store.pinnedProjects().map(\.id)
+        XCTAssertEqual(hoisted1, [project.id])
     }
 
     func testrenameTrimsAndRejectsEmpty() async {
@@ -170,10 +172,12 @@ final class Item3SidebarQATests: XCTestCase {
         await store.upsert(chat)
 
         await model.rename(conversationID: chat.id, to: "   ")
-        XCTAssertEqual(await store.get(id: chat.id)?.title, "Before")
+        let hoisted2 = await store.get(id: chat.id)?.title
+        XCTAssertEqual(hoisted2, "Before")
 
         await model.rename(conversationID: chat.id, to: "  After  ")
-        XCTAssertEqual(await store.get(id: chat.id)?.title, "After")
+        let hoisted3 = await store.get(id: chat.id)?.title
+        XCTAssertEqual(hoisted3, "After")
     }
 
     func testarchiveRemovesFromRecentsButRowStaysSearchable() async {
@@ -187,7 +191,8 @@ final class Item3SidebarQATests: XCTestCase {
 
         XCTAssertTrue(model.recentChats.isEmpty)
         // Archive never deletes: the row persists (stays searchable, UI Law §8).
-        XCTAssertTrue(await store.get(id: chat.id)?.archived ?? false)
+        let hoisted4 = await store.get(id: chat.id)?.archived ?? false
+        XCTAssertTrue(hoisted4)
     }
 
     func testdeleteRemovesRow() async {
@@ -199,7 +204,8 @@ final class Item3SidebarQATests: XCTestCase {
 
         let deleted = await model.delete(conversationID: chat.id)
         XCTAssertTrue(deleted)
-        XCTAssertNil(await store.get(id: chat.id))
+        let hoisted5 = await store.get(id: chat.id)
+        XCTAssertNil(hoisted5)
         XCTAssertTrue(model.recentChats.isEmpty)
     }
 
@@ -234,10 +240,12 @@ final class Item3SidebarQATests: XCTestCase {
         let store = PersistenceStore()
         var project = StoredProject(name: "Pin me")
         await store.upsert(project)
-        XCTAssertTrue(await store.pinnedProjects().isEmpty)
+        let hoisted6 = await store.pinnedProjects().isEmpty
+        XCTAssertTrue(hoisted6)
 
         project.pinned = true
         await store.upsert(project)
-        XCTAssertEqual(await store.pinnedProjects().map(\.id), [project.id])
+        let hoisted7 = await store.pinnedProjects().map(\.id)
+        XCTAssertEqual(hoisted7, [project.id])
     }
 }

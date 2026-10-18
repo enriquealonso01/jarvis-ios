@@ -1,4 +1,5 @@
 import XCTest
+import DesignSystem
 import Foundation
 import SwiftUI
 import Persistence
@@ -262,8 +263,10 @@ final class Item3TesterQATests: XCTestCase {
         // And unpinning persists the same way.
         await freshModel.setPinned(false, conversationID: conversation.id)
         let third = try PersistenceStore(path: path)
-        XCTAssertEqual(await third.get(id: conversation.id)?.pinned, false)
-        XCTAssertEqual(await third.pinnedProjects().map(\.id), [project.id])
+        let hoisted1 = await third.get(id: conversation.id)?.pinned
+        XCTAssertEqual(hoisted1, false)
+        let hoisted2 = await third.pinnedProjects().map(\.id)
+        XCTAssertEqual(hoisted2, [project.id])
     }
 
     func testRecentsQueryReadsThroughStoreWithPaginationContract() async throws {
@@ -309,7 +312,8 @@ final class Item3TesterQATests: XCTestCase {
         let store = PersistenceStore()
         let legacy = StoredProject(name: "Legacy", updatedAt: Date(timeIntervalSince1970: 1))
         await store.upsert(legacy)
-        XCTAssertEqual(await store.pinnedProjects().count, 0,
+        let hoisted3 = await store.pinnedProjects().count
+        XCTAssertEqual(hoisted3, 0,
                        "fresh rows default to unpinned")
 
         var flagged = legacy
