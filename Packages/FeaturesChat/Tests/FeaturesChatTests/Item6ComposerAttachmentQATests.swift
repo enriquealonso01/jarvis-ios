@@ -452,7 +452,8 @@ final class Item6ComposerAttachmentQATests: XCTestCase {
         vm.text = "log attached"
         let ok = try await vm.send()
         XCTAssertTrue(ok)
-        let row = try XCTUnwrap(try await store.recentMessages(conversationID: chatID, limit: 1).first)
+        let fetched = try await store.recentMessages(conversationID: chatID, limit: 1)
+        let row = try XCTUnwrap(fetched.first)
         XCTAssertTrue(row.content.contains(payload), "paste payload rides the content verbatim")
         XCTAssertTrue(row.attachments.contains { $0.kind == "paste" },
                       "row also declares the paste attachment descriptor")
