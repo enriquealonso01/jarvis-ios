@@ -1,22 +1,10 @@
 import SwiftUI
 
-/// Design tokens for v2 (plan §5.1 — bubbles, composer, markdown, cards live
-/// here from M1 items onward). UI Law §2: user bubbles right-aligned tinted,
-/// assistant messages full-width, never bubbled.
+/// Design tokens (UI Law §2): every color, font, and dimension the UI uses
+/// comes from here — no hardcoded palette, no fixed sizes in feature code.
 public enum Tokens {
-    public enum Bubble {
-        /// Max width fraction of the container for a user bubble (UI Law §2: ~85%).
-        public static let maxWidthFraction: CGFloat = 0.85
-        public static let cornerRadius: CGFloat = 18
-        /// Assistant messages render full-width with no bubble chrome.
-        public static let assistantInset: CGFloat = 0
-    }
 
     public enum Composer {
-        /// Composer grows to ~5–6 lines then scrolls internally (UI Law §6).
-        public static let maxVisibleLines: Int = 6
-        public static let cornerRadius: CGFloat = 22
-        /// >5k chars pasted auto-converts to an attachment chip (UI Law §6).
         public static let largePasteThreshold: Int = 5_000
     }
 
@@ -26,18 +14,22 @@ public enum Tokens {
         /// Monotonic bottom buffer — added once, never removed (UI Law §5).
         public static let scrollBottomBuffer: CGFloat = 50
         /// Recents page size (Item 3 §2: lists with pagination).
-        public static let recentsPageSize = 20
+        public static let recentsPageSize: Int = 20
         /// Standard row height — within iOS list norms (≤48pt, tester QA).
         public static let rowHeight: CGFloat = 44
         /// Panel corner radius on the trailing edge.
         public static let panelCornerRadius: CGFloat = 16
-        /// Add-on chip height in the horizontal bar (UI Law §1).
-        public static let addOnChipHeight: CGFloat = 32
+        /// Add-on chip capsule height in the horizontal bar (UI Law §1) —
+        /// icon-over-label chip.
+        public static let addOnChipHeight: CGFloat = 64
         /// KV keys — sidebar state restoration writes through the store.
         public enum Keys {
-            public static let isOpen = "sidebar.is_open"
-            public static let projectsExpanded = "sidebar.projects_expanded"
-            public static let lastSelection = "sidebar.last_selection"
+            /// Store key: sidebar open/closed across launches (Item 3 §4).
+            public static let sidebarOpen = "v2.sidebar.open"
+            /// Store key: last selected sidebar destination (Item 3 §4).
+            public static let lastSelection = "v2.sidebar.last-selection"
+            /// Store key: Projects section expanded/collapsed (Item 3 §4).
+            public static let projectsExpanded = "v2.sidebar.projects-expanded"
         }
     }
 

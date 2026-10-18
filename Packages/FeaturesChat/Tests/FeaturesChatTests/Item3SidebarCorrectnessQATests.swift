@@ -1,5 +1,6 @@
 import XCTest
 import Persistence
+import DesignSystem
 import FeaturesChat
 
 /// Item 3 TESTER QA — independent correctness verification for the

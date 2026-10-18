@@ -51,6 +51,11 @@ public final class SidebarViewModel: ObservableObject {
     /// True once restoreState + first reload completed (drives empty state).
     public private(set) var loaded = false
 
+    /// No-op hook: filtered output is fully derived (see `filteredRecents`
+    /// / `filteredProjects`), so query changes recompute on read. Kept as a
+    /// call target so `didSet` sites have a single, documented seam.
+    private func recomputeFilter() {}
+
     private let store: PersistenceStore
 
     public init(store: PersistenceStore) {

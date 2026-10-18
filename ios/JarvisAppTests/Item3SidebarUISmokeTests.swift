@@ -84,8 +84,8 @@ final class Item3SidebarUISmokeTests: XCTestCase {
         XCTAssertEqual(model.pinned.count, 1, "sample pinned row must load")
         XCTAssertEqual(model.projects.count, 2, "sample projects must load")
         XCTAssertFalse(model.recents.isEmpty, "sample recents must load")
-        let krendora = try! XCTUnwrap(model.projects.first { $0.project.name == "Krendora" })
-        XCTAssertEqual(krendora.conversations.map { $0.title }, ["Supplier thread"])
+        let krendora = model.projects.first { $0.project.name == "Krendora" }
+        XCTAssertEqual(krendora?.conversations.map { $0.title }, ["Supplier thread"])
 
         // Client-side filter narrows recents (Item 6 replaces the field).
         model.searchQuery = "supplier"
