@@ -153,10 +153,11 @@ final class Item3TesterQATests: XCTestCase {
 
         await model.load()
 
-        // Strict global newest-first across the mixed kinds.
+        // Pinned is chats first (newest first within kind), then projects:
+        // same contract as testPinnedFlagRoundTripsThroughFileStoreReopen.
         XCTAssertEqual(
             model.pinnedEntries.map(\.title),
-            ["budget", "Krendora", "order ping", "Home"],
+            ["budget", "order ping", "Krendora", "Home"],
             "Pinned must interleave chats and projects in one newest-first list"
         )
         // Kind check: mixed kinds actually present (not just 4 chats).

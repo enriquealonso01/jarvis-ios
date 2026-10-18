@@ -17,7 +17,7 @@ final class Item3SidebarQATests: XCTestCase {
         let model = SidebarViewModel(store: store)
 
         let projectID = UUID()
-        var project = StoredProject(name: "Krendora", updatedAt: Date(timeIntervalSince1970: 100))
+        var project = StoredProject(id: projectID, name: "Krendora", updatedAt: Date(timeIntervalSince1970: 100))
         project.pinned = true
         await store.upsert(project)
 
