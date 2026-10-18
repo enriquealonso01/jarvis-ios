@@ -295,9 +295,12 @@ public enum RichBlockContent: Sendable, Equatable {
                 headers: try c.decode([String].self, forKey: .headers),
                 rows: try c.decode([[String]].self, forKey: .rows))
         case .image:
-            guard let url = URL(string: try c.decode(String.self, forKey: .url)) else {
+            // One URL-safety definition: http(s) only, ever (the same gate
+            // the view layer applies before opening). Anything else throws —
+            // the lenient decoder turns that into a fallback block.
+            guard let url = RichBlocks.safeURL(try c.decode(String.self, forKey: .url)) else {
                 throw DecodingError.dataCorruptedError(forKey: .url, in: c,
-                    debugDescription: "image url is not a valid URL")
+                    debugDescription: "image url is not a valid http(s) URL")
             }
             return .image(
                 url: url,
@@ -323,9 +326,10 @@ public enum RichBlockContent: Sendable, Equatable {
                 tone: try c.decodeIfPresent(RichNoticeTone.self, forKey: .tone) ?? .info,
                 text: try c.decode(String.self, forKey: .text))
         case .citation:
-            guard let url = URL(string: try c.decode(String.self, forKey: .url)) else {
+            // Same single URL-safety gate as image: http(s) only.
+            guard let url = RichBlocks.safeURL(try c.decode(String.self, forKey: .url)) else {
                 throw DecodingError.dataCorruptedError(forKey: .url, in: c,
-                    debugDescription: "citation url is not a valid URL")
+                    debugDescription: "citation url is not a valid http(s) URL")
             }
             return .citation(
                 title: try c.decode(String.self, forKey: .title),
