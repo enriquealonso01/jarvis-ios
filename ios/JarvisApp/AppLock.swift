@@ -52,6 +52,12 @@ enum AppLockPolicy {
 }
 
 /// Protocol seam so the lock state machine is testable without LAContext.
+/// @MainActor: every implementor (the real AppLockController bridge and the
+/// QA suite's MockPolicy) already lives on the main actor, and constraining
+/// the protocol keeps `policyEvaluator` Sendable-safe across the `await` in
+/// AppLockEngine.appActivated (Swift 6: 'sending ... risks causing data races'
+/// without it).
+@MainActor
 protocol AppLockPolicyEvaluating {
     func evaluate(_ policy: LAPolicy) async -> Bool
 }
