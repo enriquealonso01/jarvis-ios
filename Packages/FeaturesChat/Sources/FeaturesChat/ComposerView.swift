@@ -49,10 +49,20 @@ public struct V2ComposerView: View {
     /// One-off model chooser presentation (fired via the .showModelChooser
     /// intent the app target forwards back into this binding).
     @Binding public var isModelChooserPresented: Bool
+    /// Item 8 wiring (app target owns it; nil in previews/tests):
+    /// fired after a successful send so the transcript refreshes.
+    public var onDidSend: (() -> Void)? = nil
+    /// UI Law §3: fired when the stop (square) button is tapped mid-stream;
+    /// cancels upstream without losing committed text.
+    public var onStreamStop: (() async -> Void)? = nil
 
-    public init(vm: ComposerViewModel, isModelChooserPresented: Binding<Bool>) {
+    public init(vm: ComposerViewModel, isModelChooserPresented: Binding<Bool>,
+                onDidSend: (() -> Void)? = nil,
+                onStreamStop: (() async -> Void)? = nil) {
         self.vm = vm
         _isModelChooserPresented = isModelChooserPresented
+        self.onDidSend = onDidSend
+        self.onStreamStop = onStreamStop
     }
 
     public var body: some View {
@@ -217,7 +227,19 @@ public struct V2ComposerView: View {
     /// of the conversation, never in the composer.
     private var sendButton: some View {
         Button {
-            Task { try? await vm.send() }
+            Task {
+                if vm.isStreaming {
+                    // UI Law §3: mid-stream the send button is a STOP —
+                    // cancels upstream without losing committed text (the
+                    // engine freezes + persists the partial). Optional:
+                    // nil in previews/tests.
+                    await onStreamStop?()
+                } else if (try? await vm.send()) == true {
+                    // Sent: ping the transcript so the user row appears
+                    // immediately (Item 8; app target wires this).
+                    onDidSend?()
+                }
+            }
         } label: {
             Image(systemName: vm.isStreaming ? "stop.fill" : "arrow.up")
                 .font(.body.weight(.semibold))
@@ -231,14 +253,14 @@ public struct V2ComposerView: View {
                     ? sysColor("sysBg")
                     : sysColor("secondaryLabel"))
         }
-        .disabled(!vm.canSend)
+        .disabled(vm.isStreaming ? false : !vm.canSend)
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.5).onEnded { _ in
                 vm.sendLongPressed()
                 isModelChooserPresented = true
             }
         )
-        .accessibilityLabel("Send")
+        .accessibilityLabel(vm.isStreaming ? "Stop" : "Send")
         .accessibilityIdentifier("composer.sendButton")
     }
 

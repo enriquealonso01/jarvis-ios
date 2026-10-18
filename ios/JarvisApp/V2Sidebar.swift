@@ -78,14 +78,14 @@ struct V2SidebarShell: View {
         NavigationStack {
             Group {
                 if let id = vm.selectedConversationID {
-                    // Item 4: the v2 chat surface = composer docked above
-                    // the keyboard (UI Law §6). The transcript body itself
-                    // is the streaming engine's render (Item 5 wires the
-                    // full thread view); for now a scroller placeholder
-                    // sits above the live composer.
+                    // Item 8: the v2 chat surface = REAL transcript (UI Law
+                    // §2/§3/§5 — full-width assistant blocks, tinted user
+                    // bubbles, anchored streaming) + the Item-4 composer
+                    // docked below it. V2ChatHost owns the store-backed
+                    // transcript VM and replays composer sends into it.
                     VStack(spacing: 0) {
-                        V2ChatPlaceholderView(conversationID: id)
-                        V2ComposerHost(store: store, conversationID: id, sidebarVM: vm)
+                        V2ChatHost(store: store, conversationID: id,
+                                   sidebarVM: vm, composerHost: { composerHost })
                     }
                     .id(id)
                 } else {
@@ -677,32 +677,78 @@ struct V2RenameSheet: View {
     }
 }
 
-// MARK: - Placeholder surfaces (this item = navigation shell)
+// MARK: - Item 8: chat surface host (real transcript + composer)
 
-/// Chat surface placeholder: real transcript streaming exists from Item 2
-/// (ChatViewModel); the v2 chat screen lands with the composer item.
-struct V2ChatPlaceholderView: View {
+/// Mounts the FeaturesChat `V2TranscriptView` over one conversation — the
+/// REAL transcript replacing the Item-3 placeholder (UI Law §2/§3/§5):
+///   • loads the newest page from the PersistenceStore (fetchMessages
+///     page=50 paging; store restore path pinned from the view-model layer);
+///   • live-tails the Item-2 ChatStreamEngine's coalesced snapshots for the
+///     active conversation (cold-launch mid-stream restore included);
+///   • replays composer sends into the transcript so the user row +
+///     streaming assistant block appear without a manual refresh;
+///   • §3 stop: the composer's square button cancels upstream without
+///     losing committed text (engine stop, partial persists).
+struct V2ChatHost: View {
+    let store: PersistenceStore?
     let conversationID: UUID
+    /// Item 5: auto-title writes back into the sidebar's VM (shared store,
+    /// one writer at a time — the shell owns exactly one).
+    var sidebarVM: FeaturesChat.SidebarViewModel? = nil
+
+    @StateObject private var holder: TranscriptVMHolder
+
+    /// StateObject needs a concrete holder: the transcript VM's conversation
+    /// target is fixed at shell-selection time, but its stream client needs
+    /// the app's ServerConfig (singleton, available at init).
+    @MainActor
+    final class TranscriptVMHolder: ObservableObject {
+        let vm: TranscriptViewModel
+        init(store: PersistenceStore?, conversationID: UUID) {
+            // Stream client only when the server is configured; the
+            // transcript stays fully functional store-backed otherwise
+            // (headless, no network touched).
+            var client: ChatStreamClient? = nil
+            if ServerConfig.shared.configured,
+               let baseURL = URL(string: ServerConfig.shared.config.baseURL) {
+                client = ChatStreamClient(
+                    config: JarvisKit.ServerConfig(baseURL: baseURL),
+                    conversationID: conversationID,
+                    store: store)
+            }
+            vm = TranscriptViewModel(
+                conversationID: conversationID,
+                store: store,
+                streamClient: client)
+        }
+    }
+
+    init(store: PersistenceStore?, conversationID: UUID,
+         sidebarVM: FeaturesChat.SidebarViewModel? = nil) {
+        self.store = store
+        self.conversationID = conversationID
+        self.sidebarVM = sidebarVM
+        _holder = StateObject(wrappedValue: TranscriptVMHolder(
+            store: store, conversationID: conversationID))
+    }
+
+    /// The Item-4 composer surface, wired to the transcript host's §3 stop
+    /// and send-refresh hooks (its model-chooser sheet + CallManager wiring
+    /// stay owned by the composer host).
+    private var composerHost: some View {
+        V2ComposerHost(
+            store: store, conversationID: conversationID, sidebarVM: sidebarVM,
+            onDidSend: { Task { await holder.vm.userDidSend() } },
+            onStreamStop: { await holder.vm.stopTapped() })
+    }
 
     var body: some View {
-        VStack(spacing: Tokens.Spacing.m) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text("Conversation")
-                .font(.title3.weight(.medium))
-            Text(conversationID.uuidString)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Text("Chat surface continues here (Item 4: composer + transcript)")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, Tokens.Spacing.l)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        V2TranscriptView(vm: holder.vm)
+            .onAppear { Task { await holder.vm.loadInitial() } }
+            .onDisappear { holder.vm.cancelTail() }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                composerHost
+            }
     }
 }
 
@@ -720,6 +766,10 @@ struct V2ComposerHost: View {
     /// Item 5: auto-title writes back into the sidebar's VM (shared store,
     /// one writer at a time — the shell owns exactly one).
     var sidebarVM: FeaturesChat.SidebarViewModel? = nil
+    /// Item 8: fired after a successful send so the transcript refreshes.
+    var onDidSend: (() -> Void)? = nil
+    /// Item 8 / UI Law §3: fired when the stop button is tapped mid-stream.
+    var onStreamStop: (() async -> Void)? = nil
 
     @StateObject private var holder: ComposerVMHolder
     @State private var isModelChooserPresented = false
@@ -735,15 +785,22 @@ struct V2ComposerHost: View {
         }
     }
 
-    init(store: PersistenceStore?, conversationID: UUID, sidebarVM: FeaturesChat.SidebarViewModel? = nil) {
+    init(store: PersistenceStore?, conversationID: UUID, sidebarVM: FeaturesChat.SidebarViewModel? = nil,
+         onDidSend: (() -> Void)? = nil, onStreamStop: (() async -> Void)? = nil) {
         self.store = store
         self.conversationID = conversationID
         self.sidebarVM = sidebarVM
+        self.onDidSend = onDidSend
+        self.onStreamStop = onStreamStop
         _holder = StateObject(wrappedValue: ComposerVMHolder(store: store))
     }
 
     var body: some View {
-        V2ComposerView(vm: holder.vm, isModelChooserPresented: $isModelChooserPresented)
+        V2ComposerView(
+            vm: holder.vm,
+            isModelChooserPresented: $isModelChooserPresented,
+            onDidSend: onDidSend,
+            onStreamStop: onStreamStop)
             .onAppear {
                 holder.vm.conversationID = conversationID
                 Task { await holder.vm.restoreState() }
