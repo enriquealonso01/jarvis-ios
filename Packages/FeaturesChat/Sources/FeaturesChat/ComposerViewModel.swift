@@ -216,7 +216,21 @@ public final class ComposerViewModel: ObservableObject {
             status: .sending,
             createdAt: clock()
         )
-        await store?.upsert(row)
+        if let store {
+            // First send on a fresh chat creates the conversation row
+            // (ChatGPT behavior: the chat is born with its first message).
+            if await store.get(id: conversationID) == nil {
+                let title = String(content.split(separator: "\n").first?.trimmingCharacters(in: .whitespaces) ?? "New chat")
+                await store.upsert(StoredConversation(
+                    id: conversationID,
+                    title: title.isEmpty ? "New chat" : title,
+                    createdAt: clock(),
+                    updatedAt: clock(),
+                    lastMessagePreview: content
+                ))
+            }
+            await store.upsert(row)
+        }
 
         text = ""
         attachments = []

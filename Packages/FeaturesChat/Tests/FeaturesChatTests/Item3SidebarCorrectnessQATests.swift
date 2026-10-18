@@ -156,7 +156,7 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
 
     func testArchivePersistsAndRemovesFromAllSections() async {
         let store = PersistenceStore()
-        await seedConversations(store, count: 10, pinnedCount: 2)
+        await seedConversations(store, count: 10, pinnedCount: 1)
         let vm = SidebarViewModel(store: store)
         await vm.reload()
 

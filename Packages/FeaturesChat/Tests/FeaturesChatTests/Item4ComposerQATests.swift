@@ -219,7 +219,8 @@ final class Item4ComposerQATests: XCTestCase {
             XCTAssertFalse(m.id.isEmpty)
         }
         let vm = makeVM()
-        let custom = chip("web", label: "Web Search")
+        let custom = chip("webSearch", label: "Web Search")
+        vm.models = ComposerModelOption.defaults + [custom]
         vm.toggle(modelID: custom.id)
         XCTAssertEqual(vm.selectedModels.first?.label, "Web Search",
                        "chip label survives into selected state verbatim")
