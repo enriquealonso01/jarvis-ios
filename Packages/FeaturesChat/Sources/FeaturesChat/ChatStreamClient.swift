@@ -123,6 +123,25 @@ public actor ChatStreamClient {
         }
     }
 
+    /// Stream-message-id → local message UUID routing for the transcript
+    /// overlay (Item 8): lets the UI merge stored rows and live snapshots
+    /// without duplicates or gaps.
+    public var snapshotMessageIDs: [Int64: UUID] {
+        get async {
+            guard let pipeline else { return [:] }
+            return await pipeline.messageIDMap
+        }
+    }
+
+    /// One read of everything the transcript overlay needs (snapshots +
+    /// routing) in a single actor hop.
+    public var transcriptState: (snapshots: [StreamMessageSnapshot],
+                                 messageIDs: [Int64: UUID]) {
+        get async {
+            (await snapshots, await snapshotMessageIDs)
+        }
+    }
+
     // MARK: Internals
 
     private func pipelineOrNew() -> ChatStreamPipeline {

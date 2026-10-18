@@ -36,6 +36,9 @@ public actor ChatStreamPipeline {
     /// Highest applied event id (persist as the resume pointer).
     public var lastEventID: Int64 { engine.lastSeq }
 
+    /// Stream-id → local message UUID map (transcript overlay routing).
+    public var messageIDMap: [Int64: UUID] { messageIDs }
+
     /// Frame-id of the most recent message the engine resolved — lets
     /// `ensureLocalUUID` carry a minted UUID when `message_start` re-keys a
     /// token-first message onto a payload-id key.
