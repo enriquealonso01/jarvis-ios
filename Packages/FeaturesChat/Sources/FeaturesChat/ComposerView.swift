@@ -1,6 +1,32 @@
 import SwiftUI
 import DesignSystem
 
+// Cross-platform system colors (CI runs swift tests for macOS too).
+#if canImport(UIKit)
+import UIKit
+private func sysColor(_ name: String) -> Color {
+    switch name {
+    case "secondaryBg": return sysColor("secondaryBg")
+    case "tertiaryBg": return sysColor("tertiaryBg")
+    case "separator": return sysColor("separator")
+    default: return Color.gray
+    }
+}
+#else
+import AppKit
+private func sysColor(_ name: String) -> Color {
+    switch name {
+    case "secondaryBg": return Color(nsColor: .controlBackgroundColor)
+    case "tertiaryBg": return Color(nsColor: .underPageBackgroundColor)
+    case "separator": return Color(nsColor: .separatorColor)
+    case "tertiaryFill": return Color(nsColor: .quaternarySystemFill)
+    case "sysBg": return Color(nsColor: .windowBackgroundColor)
+    case "secondaryLabel": return Color(nsColor: .secondaryLabelColor)
+    default: return Color.gray
+    }
+}
+#endif
+
 // MARK: - Item 4: Composer view (feature #3, P0) — UI Law §6, verbatim:
 //   Rounded capsule docked above keyboard. Three controls: ＋ (left), text
 //   field, mic + waveform (right). ＋ opens bottom sheet: Photos, Camera,
@@ -97,7 +123,7 @@ struct V2ComposerView: View {
                         }
                         .padding(.horizontal, Tokens.Spacing.m)
                         .frame(minHeight: 28)
-                        .background(Capsule().fill(Color(uiColor: .secondarySystemBackground)))
+                        .background(Capsule().fill(sysColor("secondaryBg")))
                         .accessibilityIdentifier("composer.attachmentChip")
                     }
                 }
@@ -118,10 +144,10 @@ struct V2ComposerView: View {
         .padding(.horizontal, Tokens.Spacing.m)
         .padding(.vertical, Tokens.Spacing.s)
         .background(
-            Capsule().fill(Color(uiColor: .secondarySystemBackground))
+            Capsule().fill(sysColor("secondaryBg"))
         )
         .overlay(
-            Capsule().strokeBorder(Color(uiColor: .separator), lineWidth: 0.5)
+            Capsule().strokeBorder(sysColor("separator"), lineWidth: 0.5)
         )
         .accessibilityIdentifier("composer.capsule")
     }
@@ -133,7 +159,7 @@ struct V2ComposerView: View {
             Image(systemName: "plus")
                 .font(.title3.weight(.medium))
                 .frame(width: 32, height: 32)
-                .background(Circle().fill(Color(uiColor: .tertiarySystemBackground)))
+                .background(Circle().fill(sysColor("tertiaryBg")))
         }
         .accessibilityLabel("Add attachment")
         .accessibilityIdentifier("composer.plusButton")
@@ -194,11 +220,11 @@ struct V2ComposerView: View {
                 .background(
                     Circle().fill(vm.canSend
                         ? Color.accentColor
-                        : Color(uiColor: .tertiarySystemFill))
+                        : sysColor("tertiaryFill"))
                 )
                 .foregroundStyle(vm.canSend
-                    ? Color(uiColor: .systemBackground)
-                    : Color(uiColor: .secondaryLabel))
+                    ? sysColor("sysBg")
+                    : sysColor("secondaryLabel"))
         }
         .disabled(!vm.canSend)
         .simultaneousGesture(
