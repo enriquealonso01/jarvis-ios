@@ -28,9 +28,11 @@ struct V2SidebarShell: View {
     /// the store-contract implementation this shell hosts is FeaturesChat's.)
     @StateObject private var vm: FeaturesChat.SidebarViewModel
     @State private var selection: SidebarSelection?
+    private let store: PersistenceStore?
 
     init(store: PersistenceStore?) {
         _vm = StateObject(wrappedValue: FeaturesChat.SidebarViewModel(store: store ?? PersistenceStore()))
+        self.store = store
     }
 
     var body: some View {
@@ -70,14 +72,22 @@ struct V2SidebarShell: View {
         }
     }
 
-    // MARK: Chat surface (v1 placeholder) + open affordances
+    // MARK: Chat surface (v2 composer + open affordances)
 
     private var chatSurface: some View {
         NavigationStack {
             Group {
                 if let id = vm.selectedConversationID {
-                    V2ChatPlaceholderView(conversationID: id)
-                        .id(id)
+                    // Item 4: the v2 chat surface = composer docked above
+                    // the keyboard (UI Law §6). The transcript body itself
+                    // is the streaming engine's render (Item 5 wires the
+                    // full thread view); for now a scroller placeholder
+                    // sits above the live composer.
+                    VStack(spacing: 0) {
+                        V2ChatPlaceholderView(conversationID: id)
+                        V2ComposerHost(store: store, conversationID: id)
+                    }
+                    .id(id)
                 } else {
                     V2EmptyStateView()
                 }
@@ -507,6 +517,50 @@ struct V2ChatPlaceholderView: View {
                 .padding(.horizontal, Tokens.Spacing.l)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Item 4: composer host (app-target intent wiring)
+
+/// Mounts the FeaturesChat `V2ComposerView` over one conversation and owns
+/// the app-target side of the composer intents (UI Law §6):
+///   • `.showModelChooser` (long-press send) → the one-off model sheet;
+///   • `.startCall` (waveform) → CallManager placeDirectCall (M2 machine;
+///     v1 CallManager exists and is reused until the §5.4 rewrite).
+/// The composer itself stays pure — no call or chooser logic in the package.
+struct V2ComposerHost: View {
+    let store: PersistenceStore?
+    let conversationID: UUID
+
+    @StateObject private var holder: ComposerVMHolder
+    @State private var isModelChooserPresented = false
+    @State private var chooserSelection: String?
+
+    /// StateObject needs a concrete holder: the composer VM's conversation
+    /// target is set after init (conversation becomes known on selection).
+    @MainActor
+    final class ComposerVMHolder: ObservableObject {
+        let vm: ComposerViewModel
+        init(store: PersistenceStore?) {
+            vm = ComposerViewModel(store: store)
+        }
+    }
+
+    init(store: PersistenceStore?, conversationID: UUID) {
+        self.store = store
+        self.conversationID = conversationID
+        _holder = StateObject(wrappedValue: ComposerVMHolder(store: store))
+    }
+
+    var body: some View {
+        V2ComposerView(vm: holder.vm, isModelChooserPresented: $isModelChooserPresented)
+            .onAppear {
+                holder.vm.conversationID = conversationID
+                Task { await holder.vm.restoreState() }
+            }
+            .sheet(isPresented: $isModelChooserPresented) {
+                V2ModelChooserSheet(vm: holder.vm, selection: $chooserSelection)
+            }
     }
 }
 
