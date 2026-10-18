@@ -273,7 +273,7 @@ final class Item3TesterQATests: XCTestCase {
         let store = PersistenceStore()
         let model = SidebarViewModel(store: store)
         for i in 0..<120 {
-            await store.upsert(chat("c\(i)", updatedAt: Date(timeIntervalSince1970: i)))
+            await store.upsert(chat("c\(i)", updatedAt: Date(timeIntervalSince1970: TimeInterval(i))))
         }
         await model.load()
         // The VM caps its recents read at 200 (its law: one indexed read).
