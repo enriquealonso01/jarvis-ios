@@ -1,4 +1,5 @@
 import XCTest
+import Persistence
 @testable import FeaturesChat
 
 // MARK: - Item 9 QA: message action row (UI Law §3, no-fake-buttons law)
