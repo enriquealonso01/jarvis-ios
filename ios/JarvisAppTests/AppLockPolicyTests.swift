@@ -34,16 +34,20 @@ final class AppLockPolicyTests: XCTestCase {
         XCTAssertTrue(AppLockPolicy.lockRequired(enabled: true, launchOnly: true, trigger: .manual))
     }
 
-    // MARK: LA policy fallback chain
+    // MARK: LA policy gate (feature #39 spec: .deviceOwnerAuthentication)
 
-    func testBiometricsPolicyWhenAvailable() {
+    func testGateIsAlwaysDeviceOwnerAuthentication() {
+        // Spec #39: the gate is ALWAYS .deviceOwnerAuthentication — biometrics
+        // evaluate inside it when enrolled AND the passcode fallback is part
+        // of the same policy. The biometrics-only variant is never the gate:
+        // with no enrollment it leaves the app unprotected-or-unlockable.
         XCTAssertEqual(AppLockPolicy.authPolicy(biometricsAvailable: true),
-                       .deviceOwnerAuthenticationWithBiometrics)
+                       .deviceOwnerAuthentication)
     }
 
-    func testPasscodeFallbackWhenBiometricsUnavailable() {
-        // No enrollment / biometry locked out → passcode policy, so the app
-        // can never be left unprotected OR permanently locked.
+    func testPasscodeCapableGateWhenBiometricsUnavailable() {
+        // No enrollment / biometry locked out → SAME passcode-capable policy,
+        // so the app can never be left unprotected OR permanently locked.
         XCTAssertEqual(AppLockPolicy.authPolicy(biometricsAvailable: false),
                        .deviceOwnerAuthentication)
     }

@@ -55,21 +55,25 @@ private struct AppLockGate: ViewModifier {
     func body(content: Content) -> some View {
         content
             // Lock on cold launch / foreground return; raise the privacy
-            // shield on background BEFORE iOS snapshots the app switcher.
+            // shield the moment the app leaves .active — at .inactive, BEFORE
+            // iOS snapshots the app switcher (.background is too late for the
+            // snapshot; .background is also handled, harmless/idempotent).
             // Auth is left on purpose — the lock screen also covers the
             // login view (tokens are gone post-logout, but a lock never hurts).
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
-                case .background:
+                case .background, .inactive:
                     lock.appBackgrounded()
                 case .active:
                     lock.appActivated()
-                default:
+                @unknown default:
                     break
                 }
             }
-            .fullScreenCover(isPresented: $lock.isLocked) {
-                LockScreenView()
+            // The lock screen lives in its own window above everything, so a
+            // sheet can never be presented "over" the lock and bypass it.
+            .onChange(of: lock.isLocked) { _, locked in
+                AppLockController.lockWindow.setIsLocked(locked)
             }
             .overlay {
                 if lock.privacyShielded {

@@ -2,26 +2,39 @@ import Foundation
 import LocalAuthentication
 import SwiftUI
 
-/// App lock (Face ID). Three pieces:
+/// App lock (Face ID), feature #39. Four pieces:
 ///   - AppLockPolicy: pure decision logic (unit-tested, no LAContext/Keychain).
 ///   - AppLockStore: Keychain-backed preferences (same store discipline as the
 ///     auth tokens — never UserDefaults; the lock state IS a security knob).
 ///   - AppLockController: scene-phase state machine + biometric prompt.
+///   - AppLockEngine: the same rules with every dependency injected, so the
+///     Item 7 QA suite can drive the machine headlessly.
 ///
 /// Contract: lock on cold launch and (unless "require on launch only") on every
-/// background→foreground return; blur content the moment the app backgrounds.
-/// Policy chain per spec: .deviceOwnerAuthenticationWithBiometrics first, and
-/// when biometrics are unavailable/enrolled-out/locked-out fall back to
-/// .deviceOwnerAuthentication (passcode) — never leave the app either
-/// unprotected or permanently locked.
+/// background→foreground return; shield content the moment the app leaves
+/// .active (BEFORE the app-switcher snapshot). The gate is ALWAYS
+/// `.deviceOwnerAuthentication` — biometrics evaluate inside that policy when
+/// enrolled, and the passcode fallback is built in; the biometrics-only
+/// variant is deliberately never the gate.
 
 // MARK: - Pure policy (unit-testable)
 
 enum AppLockPolicy {
+    /// Activation kinds that can demand an unlock.
     enum Trigger: Equatable {
         case coldLaunch          // first activation after process start
         case foregroundReturn    // background → active mid-session
         case manual              // explicit re-lock (future: panic button)
+    }
+
+    /// The mandated unlock gate for feature #39: `.deviceOwnerAuthentication`
+    /// evaluates biometrics when enrolled AND falls back to the device
+    /// passcode in one policy — with no enrollment it still gates via
+    /// passcode instead of leaving the app unprotected. The biometrics-only
+    /// variant is deliberately NOT the gate.
+    static func authPolicy(biometricsAvailable: Bool) -> LAPolicy {
+        _ = biometricsAvailable // biometry presence is irrelevant to the gate
+        return .deviceOwnerAuthentication
     }
 
     /// Should the lock screen be presented for this activation?
@@ -36,13 +49,83 @@ enum AppLockPolicy {
             return !launchOnly
         }
     }
+}
 
-    /// LA policy with the mandated fallback: biometrics when available,
-    /// passcode otherwise. Extracted so the mapping is pinned by a test.
-    static func authPolicy(biometricsAvailable: Bool) -> LAPolicy {
-        biometricsAvailable
-            ? .deviceOwnerAuthenticationWithBiometrics
-            : .deviceOwnerAuthentication
+/// Protocol seam so the lock state machine is testable without LAContext.
+protocol AppLockPolicyEvaluating {
+    func evaluate(_ policy: LAPolicy) async -> Bool
+}
+
+/// `clock` is unused today (no timeout-based relock is specced) but kept on
+/// the contract so a future idle-timeout can be pinned by these same tests.
+protocol AppLockClock {
+    var now: Date { get }
+}
+
+struct SystemAppLockClock: AppLockClock {
+    var now: Date { Date() }
+}
+
+// MARK: - Testable engine (pure-logic, fully injected)
+
+/// The same trigger/policy rules the scene-phase controller enforces, but
+/// with every outside dependency (enablement flags, policy evaluation)
+/// injected so the Item 7 QA suite can drive every transition headlessly.
+/// The view layer renders `privacyShielded` the moment scenePhase leaves
+/// `.active` (i.e. at `.inactive`, BEFORE the app-switcher snapshot) and hosts
+/// `LockScreenView` in a dedicated window at `lockWindowLevelRaw` so
+/// sheets/covers can't bypass it.
+@MainActor
+final class AppLockEngine: ObservableObject {
+    /// UIWindow.Level.alert + 1 (raw so tests need no UIKit). The dedicated
+    /// lock window is created at this level; alert already floats above all
+    /// sheets/covers, +1 keeps it above any peer alert.
+    static let lockWindowLevelRaw: CGFloat = 1_000 + 1
+    /// The same level expressed the way the window-hosting layer consumes it.
+    static let lockWindowLevelValue: CGFloat = 1_000 + 1
+
+    @Published private(set) var isLocked = false
+    @Published private(set) var privacyShielded = false
+
+    private var hasActivatedOnce = false
+    private let lockEnabled: () -> Bool
+    private let launchOnly: () -> Bool
+    private let policyEvaluator: AppLockPolicyEvaluating
+    let clock: AppLockClock
+
+    init(lockEnabled: @escaping () -> Bool,
+         launchOnly: @escaping () -> Bool,
+         policyEvaluator: AppLockPolicyEvaluating,
+         clock: AppLockClock = SystemAppLockClock()) {
+        self.lockEnabled = lockEnabled
+        self.launchOnly = launchOnly
+        self.policyEvaluator = policyEvaluator
+        self.clock = clock
+    }
+
+    /// Called at scenePhase .background (and harmless at .inactive): raise the
+    /// shield BEFORE iOS takes the app-switcher snapshot.
+    func appBackgrounded() {
+        privacyShielded = true
+    }
+
+    /// Called at scenePhase .active: cold launch locks; mid-session returns
+    /// re-lock unless "require on launch only" is set; a failed evaluation
+    /// keeps the lock up.
+    func appActivated() async {
+        let trigger: AppLockPolicy.Trigger = hasActivatedOnce ? .foregroundReturn : .coldLaunch
+        hasActivatedOnce = true
+        guard AppLockPolicy.lockRequired(enabled: lockEnabled(),
+                                         launchOnly: launchOnly(),
+                                         trigger: trigger) else {
+            privacyShielded = false
+            return
+        }
+        isLocked = true
+        if await policyEvaluator.evaluate(AppLockPolicy.authPolicy(biometricsAvailable: true)) {
+            isLocked = false
+            privacyShielded = false
+        }
     }
 }
 
@@ -83,8 +166,8 @@ final class AppLockStore {
 final class AppLockController: ObservableObject {
     static let shared = AppLockController()
 
-    /// Lock screen (fullScreenCover) visibility. Internal set: the SwiftUI
-    /// binding needs to write it when the cover is dismissed.
+    /// Lock screen (dedicated lock window) visibility. Internal set: the
+    /// SwiftUI binding needs to write it when the window is dismissed.
     @Published var isLocked = false
     /// Privacy blur/cover while backgrounded — applied IMMEDIATELY on
     /// background (before iOS takes the app switcher snapshot).
@@ -93,6 +176,11 @@ final class AppLockController: ObservableObject {
 
     private var hasActivatedOnce = false
     private var unlockInFlight = false
+    /// Shared host for the dedicated lock window. Static (not an instance
+    /// member) because the ViewModifier that drives it is a value type that
+    /// SwiftUI recreates on every parent body evaluation — the window book-
+    /// keeping must survive those recreations exactly like `shared` does.
+    static let lockWindow = LockWindowHost()
 
     func appBackgrounded() {
         privacyShielded = true
@@ -136,29 +224,60 @@ final class AppLockController: ObservableObject {
         }
     }
 
-    /// Evaluate the app-lock policy chain off the main actor. The LAContext is
+    /// Evaluate the app-lock policy off the main actor. The LAContext is
     /// created INSIDE this nonisolated function on purpose: LAContext is not
     /// Sendable, so constructing it inside the Task avoids every cross-actor
     /// capture (same trap class as the CallKit boxing pattern, sidestepped).
     nonisolated private static func biometricUnlock(reason: String) async -> Bool {
         let context = LAContext()
         var evalError: NSError?
-        var policy = AppLockPolicy.authPolicy(
-            biometricsAvailable: context.canEvaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics, error: &evalError))
+        // The gate is ALWAYS .deviceOwnerAuthentication (spec #39): biometrics
+        // evaluate inside it when enrolled, and the passcode fallback is part
+        // of the same policy. The canEvaluatePolicy probe only decides whether
+        // a prompt is even worth raising (no auth method at all → keep locked).
+        guard context.canEvaluatePolicy(
+            .deviceOwnerAuthentication, error: &evalError) else { return false }
         do {
-            return try await context.evaluatePolicy(policy, localizedReason: reason)
+            return try await context.evaluatePolicy(.deviceOwnerAuthentication,
+                                                    localizedReason: reason)
         } catch {
-            // One retry through the FALLBACK policy when biometrics failed for
-            // a reason a passcode can still satisfy (e.g. biometry lockout).
-            if policy == .deviceOwnerAuthenticationWithBiometrics {
-                policy = .deviceOwnerAuthentication
-                do {
-                    return try await context.evaluatePolicy(policy, localizedReason: reason)
-                } catch { return false }
-            }
             return false
         }
+    }
+}
+
+// MARK: - Lock window host (dedicated UIWindow, sheets can't bypass)
+
+/// Hosts `LockScreenView` in its OWN UIWindow at UIWindow.Level.alert + 1, so
+/// no sheet/fullScreenCover/peer alert can ever cover the lock. `isLocked`
+/// drives creation/removal; the hidden-until-shown dance avoids a black flash
+/// on iOS 17+.
+final class LockWindowHost {
+    private weak var window: UIWindow?
+    private let level: CGFloat
+
+    init(level: CGFloat = AppLockEngine.lockWindowLevelRaw) {
+        self.level = level
+    }
+
+    /// Present (or keep) the lock window; tear it down on unlock.
+    func setIsLocked(_ locked: Bool) {
+        if !locked {
+            window?.isHidden = true
+            window = nil
+            return
+        }
+        guard window == nil else { return }
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive })
+            ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
+        else { return }
+        let lockWindow = UIWindow(windowScene: scene)
+        lockWindow.windowLevel = UIWindow.Level(level)
+        lockWindow.rootViewController = UIHostingController(rootView: LockScreenView())
+        lockWindow.isHidden = false
+        window = lockWindow
     }
 }
 

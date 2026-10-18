@@ -28,6 +28,12 @@ final class AuthStore: ObservableObject {
     private let refreshKey = "jarvis.auth.refresh"
     private let expiresKey = "jarvis.auth.expires"
 
+    /// Keychain accessibility class for EVERYTHING this store writes (tokens
+    /// AND app-lock prefs). Spec #39 mandates WhenUnlockedThisDeviceOnly:
+    /// never readable while the device is locked, never migrated to other
+    /// devices via backups. Exposed as a static so tests can pin it.
+    static let keychainAccessibility = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+
     init() {
         isAuthed = Self.loadString(accessKey) != nil
     }
@@ -284,7 +290,7 @@ final class AuthStore: ObservableObject {
             kSecClass: kSecClassGenericPassword,
             kSecAttrAccount: key,
             kSecValueData: data,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrAccessible: keychainAccessibility,
         ] as CFDictionary, nil)
     }
 
