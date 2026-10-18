@@ -276,8 +276,8 @@ public final class ComposerViewModel: ObservableObject {
             role: .user,
             content: content,
             status: .sending,
-            createdAt: clock(),
-            attachments: descriptors
+            attachments: descriptors,
+            createdAt: clock()
         )
         if let store {
             // First send on a fresh chat creates the conversation row
