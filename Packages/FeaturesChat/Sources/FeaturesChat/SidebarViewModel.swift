@@ -194,6 +194,13 @@ public final class SidebarViewModel: ObservableObject {
         await reload()
     }
 
+    /// Unarchive: archive's inverse (Item 5 QA defect #2) — symmetric
+    /// store write + reload; the row returns to its sections (Item 6
+    /// search will route restores through this seam).
+    public func unarchive(conversationID: UUID) async {
+        await setArchived(false, conversationID: conversationID)
+    }
+
     /// New chat: creates the store row, selects it, leads recents.
     @discardableResult
     public func newChat(projectID: UUID? = nil, title: String = "New chat") async -> StoredConversation {
@@ -207,6 +214,58 @@ public final class SidebarViewModel: ObservableObject {
         selectedConversationID = conversation.id
         await persistSelection()
         return conversation
+    }
+
+    // MARK: - Item 5 list mechanics (feature #5, UI Law §8)
+
+    /// Rename via the long-press menu: whitespace-only names are rejected,
+    /// a no-change rename is a no-op, real renames write through and reload.
+    /// Returns true when a write happened.
+    @discardableResult
+    public func rename(conversationID: UUID, to newTitle: String) async -> Bool {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard let current = await store.get(id: conversationID),
+              current.title != trimmed else { return false }
+        await store.renameConversation(id: conversationID, title: trimmed)
+        await reload()
+        return true
+    }
+
+    /// Swipe-left delete (UI Law §8). The swipe UI carries the red styling
+    /// + confirmation; this is the confirmed execution path: remove the
+    /// row, drop selection/restore key if it pointed here, reload.
+    public func swipeDelete(conversationID: UUID) async {
+        await delete(conversationID: conversationID)
+    }
+
+    /// Confirmed delete (long-press menu, after the confirmation dialog).
+    /// Archive never routes through here (§8: archive has NO confirmation
+    /// and keeps the row; delete is the only destructive mechanic).
+    public func delete(conversationID: UUID) async {
+        _ = await store.deleteConversation(id: conversationID)
+        if selectedConversationID == conversationID {
+            selectedConversationID = nil
+            await persistSelection()
+        }
+        await reload()
+    }
+
+    /// Auto-title hook for the chat surface: call after persisting a
+    /// message in this conversation. Applies the §8 first-exchange rule
+    /// (default title + user message → title from that message) and
+    /// reloads when a title changed.
+    @discardableResult
+    public func applyAutoTitleIfFirstExchange(conversationID: UUID,
+                                              messageRole: MessageRole,
+                                              messageText: String) async -> String? {
+        guard let title = await store.applyAutoTitleIfFirstExchange(
+            conversationID: conversationID,
+            messageRole: messageRole,
+            messageText: messageText)
+        else { return nil }
+        await reload()
+        return title
     }
 
     // MARK: - Selection + presentation

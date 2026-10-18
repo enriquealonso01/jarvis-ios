@@ -117,7 +117,7 @@ final class Item4ComposerQATests: XCTestCase {
         let count = await store.count()
         XCTAssertEqual(count, 1, "send must write through to the store (source of truth)")
         let row = await store.recentMessages(limit: 1)
-        XCTAssertEqual(row.first?.role, "user")
+        XCTAssertEqual(row.first?.role, .user)
         XCTAssertEqual(row.first?.content, "hello composer")
         // Double-send with empty field is a no-op (guard holds).
         vm.text = ""

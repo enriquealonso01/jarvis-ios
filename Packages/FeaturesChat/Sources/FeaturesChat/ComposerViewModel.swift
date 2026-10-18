@@ -50,6 +50,18 @@ public final class ComposerViewModel: ObservableObject {
     /// UI Law §3; the composer disables send while busy).
     @Published public private(set) var isStreaming = false
 
+    // MARK: Item 5 auto-title feed (UI Law §8)
+
+    /// Monotonic counter of successful local sends. The chat surface observes
+    /// this to run the first-exchange auto-title rule against the
+    /// conversation row (firing is decided by ListMechanicsEngine — only a
+    /// still-default title + a user message retitles).
+    @Published public private(set) var sentMessageCount = 0
+    /// Role of the last sent row (auto-title only consumes user sends).
+    @Published public private(set) var lastSentRole: MessageRole?
+    /// Verbatim content of the last sent row (auto-title source text).
+    @Published public private(set) var lastSentText: String?
+
     // MARK: Derived outputs (pinned contract)
 
     /// Send enables ONLY with non-whitespace text content. Chips and
@@ -208,6 +220,11 @@ public final class ComposerViewModel: ObservableObject {
 
         text = ""
         attachments = []
+        // Item 5 feed: publish the send facts AFTER the reset so observers
+        // see a stable, already-written row.
+        lastSentRole = MessageRole.user
+        lastSentText = content
+        sentMessageCount += 1
         return true
     }
 

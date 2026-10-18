@@ -109,12 +109,15 @@ public actor PersistenceStore {
 
     /// Newest page of a conversation, returned oldest-first within the page
     /// (what a chat transcript renders). "Load older" = increasing page.
-    public func recentMessages(conversationID: UUID, page: Int = 0) async throws -> [StoredMessage] {
+    /// `limit` overrides the default page size (Item 4 QA suites pin
+    /// smallest-tail probes with `limit: 1`).
+    public func recentMessages(conversationID: UUID, page: Int = 0, limit: Int? = nil) async throws -> [StoredMessage] {
+        let pageSize = limit ?? Self.messagePageSize
         let newest = try await dbWriter.read { db in
             try StoredMessage
                 .filter(Column("conversation_id") == conversationID)
                 .order(Column("created_at").desc, Column("id").desc)
-                .limit(Self.messagePageSize, offset: page * Self.messagePageSize)
+                .limit(pageSize, offset: page * Self.messagePageSize)
                 .fetchAll(db)
         }
         return newest.reversed()

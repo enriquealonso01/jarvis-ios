@@ -165,6 +165,16 @@ public final class SidebarViewModel {
         await load()
     }
 
+    /// Unarchive: archive's inverse (Item 5 QA defect #2) — the row returns
+    /// to Recents/Pinned on the next load (§8: archived stays searchable;
+    /// unarchive is how search results come back to the lists).
+    public func unarchive(conversationID: UUID) async {
+        guard var conversation = await store.get(id: conversationID) else { return }
+        conversation.archived = false
+        await store.upsert(conversation)
+        await load()
+    }
+
     /// Delete: the UI wraps this in a confirmation (UI Law §8).
     @discardableResult
     public func delete(conversationID: UUID) async -> Bool {

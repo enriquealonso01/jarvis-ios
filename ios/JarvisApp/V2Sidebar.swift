@@ -85,7 +85,7 @@ struct V2SidebarShell: View {
                     // sits above the live composer.
                     VStack(spacing: 0) {
                         V2ChatPlaceholderView(conversationID: id)
-                        V2ComposerHost(store: store, conversationID: id)
+                        V2ComposerHost(store: store, conversationID: id, sidebarVM: vm)
                     }
                     .id(id)
                 } else {
@@ -260,6 +260,10 @@ struct SidebarPanelView: View {
                         Task { await vm.setPinned(!conversation.pinned, conversationID: conversation.id) }
                     } onArchive: {
                         Task { await vm.setArchived(true, conversationID: conversation.id) }
+                    } onRename: { newTitle in
+                        Task { await vm.rename(conversationID: conversation.id, to: newTitle) }
+                    } onDelete: {
+                        Task { await vm.delete(conversationID: conversation.id) }
                     }
                 }
             }
@@ -319,6 +323,10 @@ struct SidebarPanelView: View {
                                 Task { await vm.setPinned(!conversation.pinned, conversationID: conversation.id) }
                             } onArchive: {
                                 Task { await vm.setArchived(true, conversationID: conversation.id) }
+                            } onRename: { newTitle in
+                                Task { await vm.rename(conversationID: conversation.id, to: newTitle) }
+                            } onDelete: {
+                                Task { await vm.delete(conversationID: conversation.id) }
                             }
                         }
                     }
@@ -352,6 +360,10 @@ struct SidebarPanelView: View {
                     Task { await vm.setPinned(!conversation.pinned, conversationID: conversation.id) }
                 } onArchive: {
                     Task { await vm.setArchived(true, conversationID: conversation.id) }
+                } onRename: { newTitle in
+                    Task { await vm.rename(conversationID: conversation.id, to: newTitle) }
+                } onDelete: {
+                    Task { await vm.delete(conversationID: conversation.id) }
                 }
             }
         }
@@ -433,6 +445,12 @@ struct V2AddOnChip: Identifiable {
 
 // MARK: - Conversation row (shared by Pinned / Projects / Recents)
 
+/// One conversation row with Item 5 list mechanics (feature #5, UI Law §8):
+///   • Long-press: Rename, Pin/Unpin, Archive, Delete (red, confirmed) —
+///     in exactly that order, from the shared ListMechanicsEngine model.
+///   • Swipe left: Delete (red), confirmed by the same dialog.
+///   • Archive runs immediately — §8 gives it NO confirmation and keeps
+///     the row (searchable later via Item 6).
 struct V2ConversationRow: View {
     enum ContextMenu { case pinAndArchive }
 
@@ -443,6 +461,20 @@ struct V2ConversationRow: View {
     let action: () -> Void
     let onPin: () -> Void
     let onArchive: () -> Void
+    /// Item 5: rename (long-press menu). Blank names are gated VM-side.
+    var onRename: ((String) -> Void)? = nil
+    /// Item 5: confirmed delete (menu item AFTER the confirmation, or the
+    /// swipe action once the user confirms).
+    var onDelete: (() -> Void)? = nil
+
+    @State private var isRenameSheetPresented = false
+    @State private var pendingConfirmation: RowMenuAction.Kind?
+
+    /// The §8 menu model, order pinned by Item 5 tests: Rename,
+    /// Pin/Unpin, Archive, Delete(red).
+    private var menuActions: [RowMenuAction] {
+        ListMechanicsEngine.menuActions(for: conversation)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -475,19 +507,128 @@ struct V2ConversationRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contextMenu {
-            Button {
-                onPin()
-            } label: {
-                Label(conversation.pinned ? "Unpin" : "Pin", systemImage: conversation.pinned ? "pin.slash" : "pin")
-            }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            // UI Law §8: swipe left = Delete (red; confirmed below —
+            // full-swipe never fires it silently).
             Button(role: .destructive) {
-                onArchive()
+                pendingConfirmation = .delete
             } label: {
-                Label("Archive", systemImage: "archivebox")
+                Label("Delete", systemImage: "trash")
+            }
+            .accessibilityIdentifier("sidebar.swipeDelete")
+        }
+        .contextMenu {
+            ForEach(menuActions) { menuAction in
+                Button(role: menuAction.isDestructive ? .destructive : nil) {
+                    handle(menuAction)
+                } label: {
+                    switch menuAction.kind {
+                    case .rename:
+                        Label("Rename", systemImage: "pencil")
+                    case .pin:
+                        Label("Pin", systemImage: "pin")
+                    case .unpin:
+                        Label("Unpin", systemImage: "pin.slash")
+                    case .archive:
+                        Label("Archive", systemImage: "archivebox")
+                    case .delete:
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+                .accessibilityIdentifier("sidebar.menu.\(menuAction.kind)")
             }
         }
         .accessibilityIdentifier("sidebar.conversation.\(conversation.id.uuidString)")
+        // Delete is the only confirmed mechanic (§8). Archive above runs
+        // immediately; rename opens the field instead.
+        .confirmationDialog(
+            "Delete “\(conversation.title)”?",
+            isPresented: confirmationBinding(for: .delete),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                onDelete?()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This conversation and its messages will be removed from this device.")
+        }
+        .sheet(isPresented: $isRenameSheetPresented) {
+            V2RenameSheet(
+                currentTitle: conversation.title,
+                onCancel: { isRenameSheetPresented = false },
+                onSubmit: { newTitle in
+                    isRenameSheetPresented = false
+                    onRename?(newTitle)
+                }
+            )
+        }
+    }
+
+    /// One confirmation binding per mechanic (only delete exists today).
+    private func confirmationBinding(for kind: RowMenuAction.Kind) -> Binding<Bool> {
+        Binding(
+            get: { pendingConfirmation == kind },
+            set: { presented in
+                if !presented { pendingConfirmation = nil }
+            }
+        )
+    }
+
+    private func handle(_ menuAction: RowMenuAction) {
+        switch menuAction.kind {
+        case .rename:
+            isRenameSheetPresented = true
+        case .pin, .unpin:
+            onPin()
+        case .archive:
+            // §8: archive immediately — no confirmation, row stays.
+            onArchive()
+        case .delete:
+            pendingConfirmation = .delete
+        }
+    }
+}
+
+/// Rename sheet (long-press → Rename): a single field with the current
+/// title pre-filled; Cancel never writes, Save hands the draft to the VM
+/// (whitespace-only drafts are rejected VM-side).
+struct V2RenameSheet: View {
+    let currentTitle: String
+    let onCancel: () -> Void
+    let onSubmit: (String) -> Void
+
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Rename conversation") {
+                    TextField("Title", text: $draft)
+                        .focused($fieldFocused)
+                        .submitLabel(.done)
+                        .onSubmit { onSubmit(draft) }
+                        .accessibilityIdentifier("sidebar.rename.field")
+                }
+            }
+            .navigationTitle("Rename")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { onCancel() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Save") { onSubmit(draft) }
+                        .accessibilityIdentifier("sidebar.rename.save")
+                }
+            }
+        }
+        .onAppear {
+            draft = currentTitle
+            fieldFocused = true
+        }
+        .presentationDetents([.medium])
     }
 }
 
@@ -531,6 +672,9 @@ struct V2ChatPlaceholderView: View {
 struct V2ComposerHost: View {
     let store: PersistenceStore?
     let conversationID: UUID
+    /// Item 5: auto-title writes back into the sidebar's VM (shared store,
+    /// one writer at a time — the shell owns exactly one).
+    var sidebarVM: FeaturesChat.SidebarViewModel? = nil
 
     @StateObject private var holder: ComposerVMHolder
     @State private var isModelChooserPresented = false
@@ -560,6 +704,21 @@ struct V2ComposerHost: View {
             }
             .sheet(isPresented: $isModelChooserPresented) {
                 V2ModelChooserSheet(vm: holder.vm, selection: $chooserSelection)
+            }
+            .onChange(of: holder.vm.sentMessageCount) { _, newCount in
+                // Item 5 (UI Law §8): conversations auto-title after the
+                // first exchange. The composer exposes a monotonic send
+                // counter; each tick retitles via the pure rule (fires only
+                // while the row still carries its default title).
+                guard newCount > 0 else { return }
+                Task {
+                    let role = holder.vm.lastSentRole ?? .user
+                    let text = holder.vm.lastSentText ?? ""
+                    _ = await sidebarVM.applyAutoTitleIfFirstExchange(
+                        conversationID: conversationID,
+                        messageRole: role,
+                        messageText: text)
+                }
             }
     }
 }
