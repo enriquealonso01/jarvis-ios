@@ -108,11 +108,11 @@ final class Item8TranscriptQATests: XCTestCase {
         // committed text is never rolled back (§3).
         var engine = ChatStreamEngine()
         let mid = UUID()
-        engine.consume(AgentEvent.make(kind: ChatStreamEngine.Kind.messageStart,
-                                       id: 1, payload: "{\"message_id\":\"\(mid.uuidString.lowercased())\"}"))
+        engine.consume(AgentEvent.make(id: 1, kind: ChatStreamEngine.Kind.messageStart,
+                                       payload: "{\"message_id\":\"\(mid.uuidString.lowercased())\"}"))
         for (i, tok) in ["Hello", " ", "world"].enumerated() {
-            engine.consume(AgentEvent.make(kind: ChatStreamEngine.Kind.token,
-                                           id: Int64(2 + i), payload: tok))
+            engine.consume(AgentEvent.make(id: Int64(2 + i), kind: ChatStreamEngine.Kind.token,
+                                           payload: tok))
         }
         engine.commitIfDue(now: 100)
         let before = engine.snapshots.first?.text ?? ""
@@ -130,11 +130,11 @@ final class Item8TranscriptQATests: XCTestCase {
         // §3: token stream → snapshot → displayText drives the block render.
         var engine = ChatStreamEngine()
         let mid = UUID()
-        engine.consume(AgentEvent.make(kind: ChatStreamEngine.Kind.messageStart,
-                                       id: 1, payload: "{\"message_id\":\"\(mid.uuidString.lowercased())\"}"))
+        engine.consume(AgentEvent.make(id: 1, kind: ChatStreamEngine.Kind.messageStart,
+                                       payload: "{\"message_id\":\"\(mid.uuidString.lowercased())\"}"))
         for (i, tok) in ["a", "b", "c"].enumerated() {
-            engine.consume(AgentEvent.make(kind: ChatStreamEngine.Kind.token,
-                                           id: Int64(2 + i), payload: tok))
+            engine.consume(AgentEvent.make(id: Int64(2 + i), kind: ChatStreamEngine.Kind.token,
+                                           payload: tok))
         }
         engine.commitIfDue(now: 10)
         let snap = engine.snapshots.first
@@ -206,6 +206,9 @@ final class Item8TranscriptQATests: XCTestCase {
 }
 
 extension AgentEvent {
+    /// Mirrors the memberwise init order (id, kind, payload) so every QA
+    /// fixture calls it the same way (CI fix for "argument 'id' must
+    /// precede argument 'kind'").
     static func make(id: Int64, kind: String, payload: String) -> AgentEvent {
         AgentEvent(id: id, kind: kind, payload: payload)
     }

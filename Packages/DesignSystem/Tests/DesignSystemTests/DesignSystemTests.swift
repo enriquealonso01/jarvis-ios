@@ -25,6 +25,46 @@ final class DesignSystemTests: XCTestCase {
 
     // MARK: Item 3 sidebar tokens (UI Law §1)
 
+    // MARK: Orbital Core v2 brand tokens (kit brand-tokens.json)
+
+    func testBrandTokenHexMatchesKit() {
+        XCTAssertEqual(String(format: "#%06X", Tokens.Brand.obsidianHex), "#070E14")
+        XCTAssertEqual(String(format: "#%06X", Tokens.Brand.iceCoreHex), "#E6FFFF")
+        XCTAssertEqual(String(format: "#%06X", Tokens.Brand.jarvisCyanHex), "#3FD6F5")
+        XCTAssertEqual(String(format: "#%06X", Tokens.Brand.deepTealHex), "#0E7490")
+        XCTAssertEqual(String(format: "#%06X", Tokens.Brand.metallicGrayHex), "#A7B3BD")
+        XCTAssertEqual(String(format: "#%06X", Tokens.Brand.deepSurfaceHex), "#0C1B24")
+        XCTAssertEqual(String(format: "#%06X", Tokens.Brand.surfaceBorderHex), "#213C4B")
+    }
+
+    // MARK: Orbital state periods (kit brand-tokens.json animations)
+
+    func testOrbitalStatePeriodsMatchKit() {
+        XCTAssertEqual(OrbitalState.idle.outerOrbitSeconds, 32)
+        XCTAssertEqual(OrbitalState.idle.innerOrbitSeconds, 46)
+        XCTAssertEqual(OrbitalState.listening.outerOrbitSeconds, 13)
+        XCTAssertEqual(OrbitalState.listening.innerOrbitSeconds, 20)
+        XCTAssertEqual(OrbitalState.thinking.outerOrbitSeconds, 7)
+        XCTAssertEqual(OrbitalState.thinking.innerOrbitSeconds, 10)
+        XCTAssertEqual(OrbitalState.responding.outerOrbitSeconds, 17)
+        XCTAssertEqual(OrbitalState.responding.innerOrbitSeconds, 21)
+        // Core effect periods: idle breath 5.5 / listening ripple 1.7 /
+        // thinking scan 1.6 / responding pulse 1.35 (kit tokens).
+        XCTAssertEqual(OrbitalState.idle.coreEffectSeconds, 5.5)
+        XCTAssertEqual(OrbitalState.listening.coreEffectSeconds, 1.7)
+        XCTAssertEqual(OrbitalState.thinking.coreEffectSeconds, 1.6)
+        XCTAssertEqual(OrbitalState.responding.coreEffectSeconds, 1.35)
+    }
+
+    func testOrbitalStateRawValues() {
+        // Raw values are stable API for callers mapping real events.
+        XCTAssertEqual(OrbitalState(rawValue: "idle"), .idle)
+        XCTAssertEqual(OrbitalState(rawValue: "listening"), .listening)
+        XCTAssertEqual(OrbitalState(rawValue: "thinking"), .thinking)
+        XCTAssertEqual(OrbitalState(rawValue: "responding"), .responding)
+        XCTAssertNil(OrbitalState(rawValue: "fake-status"))
+    }
+
     func testSidebarTokensMatchUILaw() {
         // Slide-over is ~85% width per UI Law §1 (research/11: 80–85%).
         XCTAssertTrue((0.80...0.85).contains(Tokens.Sidebar.widthFraction))

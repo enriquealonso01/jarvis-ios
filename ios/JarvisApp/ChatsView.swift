@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 
 /// Chats tab: per-project threads (from the CC dispatch board / knowledge map),
 /// each backed by the dashboard agent conversation endpoints.
@@ -60,9 +61,8 @@ struct ProjectsView: View {
                 }
                 if threads.isEmpty && error == nil && !loading {
                     VStack(spacing: 10) {
-                        Image(systemName: "tray")
-                            .font(.title)
-                            .foregroundStyle(.secondary)
+                        OrbitalCoreView(state: .idle)
+                            .frame(width: 72, height: 72)
                         Text("No open threads.")
                             .foregroundStyle(.secondary)
                     }
@@ -271,7 +271,8 @@ struct WorkThreadView: View {
                     }
                     if sending {
                         HStack(spacing: 8) {
-                            ProgressView().tint(Color.jarvisAccent)
+                            OrbitalCoreView(state: .thinking)
+                                .frame(width: 24, height: 24)
                             Text("JARVIS is thinking…")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
