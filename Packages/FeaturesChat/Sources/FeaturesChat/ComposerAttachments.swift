@@ -1,5 +1,6 @@
 import Foundation
 import DesignSystem
+import Persistence
 
 // MARK: - Item 6: Attachment payload assembly (feature #8, P1 — UI Law §6)
 //
