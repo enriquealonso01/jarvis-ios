@@ -104,6 +104,7 @@ final class Item9MessageActionsQATests: XCTestCase {
 
     // MARK: §3-3 — copy writes the REAL pasteboard
 
+    @MainActor
     func testCopyWritesVerbatimTextToPasteboard() {
         let vm = MessageActionViewModel()
         let text = "Line one\nLine two with  spaces  kept"
@@ -124,6 +125,7 @@ final class Item9MessageActionsQATests: XCTestCase {
 
     // MARK: §3-4 — share payload
 
+    @MainActor
     func testShareBuildsSelfDescribingPayload() {
         let vm = MessageActionViewModel()
         vm.shareTapped(text: "Answer text", isUser: false)
@@ -131,12 +133,14 @@ final class Item9MessageActionsQATests: XCTestCase {
         XCTAssertEqual(vm.lastEvent, .sharePresented(text: "JARVIS:\nAnswer text"))
     }
 
+    @MainActor
     func testShareUserRowsKeepTheirText() {
         let vm = MessageActionViewModel()
         vm.shareTapped(text: "My question", isUser: true)
         XCTAssertEqual(vm.shareText, "My question")
     }
 
+    @MainActor
     func testShareDismissClearsPayload() {
         let vm = MessageActionViewModel()
         vm.shareTapped(text: "x", isUser: false)
@@ -146,6 +150,7 @@ final class Item9MessageActionsQATests: XCTestCase {
 
     // MARK: §3-5 — regenerate drives the REAL send path
 
+    @MainActor
     func testRegenerateSendsLastUserPromptThroughInjectedPath() async throws {
         actor SendRecorder {
             var sent: [String] = []
@@ -165,12 +170,14 @@ final class Item9MessageActionsQATests: XCTestCase {
         XCTAssertFalse(vm.isRegenerating)
     }
 
+    @MainActor
     func testRegenerateWithoutSendPathIsUnavailable_notFake() async {
         let vm = MessageActionViewModel(performSend: nil)
         await vm.regenerateTapped(promptText: "Hello")
         XCTAssertEqual(vm.lastEvent, .regenerateUnavailable)
     }
 
+    @MainActor
     func testRegenerateWithEmptyPromptIsUnavailable() async {
         let vm = MessageActionViewModel(performSend: { _ in true })
         await vm.regenerateTapped(promptText: "   ")

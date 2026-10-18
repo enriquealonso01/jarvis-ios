@@ -1,4 +1,5 @@
 import XCTest
+import Persistence
 @testable import FeaturesChat
 
 // MARK: - Item 10 QA: Project Home + project isolation (package §05)
