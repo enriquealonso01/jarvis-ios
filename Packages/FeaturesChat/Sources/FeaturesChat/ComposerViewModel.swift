@@ -316,6 +316,9 @@ public final class ComposerViewModel: ObservableObject {
         var text: String
         var attachments: [ComposerAttachment]
         var selectedModels: [ComposerModelOption]
+        /// Resume identity: a restored draft continues the SAME conversation
+        /// (ChatGPT behavior — relaunching never forks the chat).
+        var conversationID: UUID?
     }
 
     /// Restore the draft + chips from the store KV. Store-less init
@@ -326,6 +329,9 @@ public final class ComposerViewModel: ObservableObject {
             text = snapshot.text
             attachments = snapshot.attachments
             selectedModels = snapshot.selectedModels
+            if let resumed = snapshot.conversationID {
+                conversationID = resumed
+            }
         }
     }
 
@@ -337,7 +343,8 @@ public final class ComposerViewModel: ObservableObject {
         let snapshot = DraftSnapshot(
             text: text,
             attachments: attachments,
-            selectedModels: selectedModels)
+            selectedModels: selectedModels,
+            conversationID: conversationID)
         await store.setAppState(snapshot, key: Keys.draft)
     }
 }
