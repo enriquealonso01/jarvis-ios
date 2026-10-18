@@ -48,7 +48,7 @@ final class Item8TranscriptBuilderSmokeTests: XCTestCase {
         XCTAssertEqual(rows.first?.text, "msg \(1_000 - TranscriptLayoutEngine.maxVisibleMessages + 1)",
                        "window shows the newest tail, never the stale head")
         // No duplicates: ids stay unique across the merge.
-        XCTAssertEqual(Set(rows.map(\\.id)).count, rows.count, "no duplicate row ids")
+        XCTAssertEqual(Set(rows.map(\.id)).count, rows.count, "no duplicate row ids")
     }
 
     /// Live overlay hands off to the store row without a dup or a gap:
