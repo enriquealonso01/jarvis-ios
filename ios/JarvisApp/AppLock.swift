@@ -79,10 +79,13 @@ struct SystemAppLockClock: AppLockClock {
 final class AppLockEngine: ObservableObject {
     /// UIWindow.Level.alert + 1 (raw so tests need no UIKit). The dedicated
     /// lock window is created at this level; alert already floats above all
-    /// sheets/covers, +1 keeps it above any peer alert.
-    static let lockWindowLevelRaw: CGFloat = 1_000 + 1
+    /// sheets/covers, +1 keeps it above any peer alert. `nonisolated` so the
+    /// nonisolated LockWindowHost default-arg can read it (Swift 6: default
+    /// values evaluate in the caller's isolation, and its callers are
+    /// nonisolated).
+    nonisolated static let lockWindowLevelRaw: CGFloat = 1_000 + 1
     /// The same level expressed the way the window-hosting layer consumes it.
-    static let lockWindowLevelValue: CGFloat = 1_000 + 1
+    nonisolated static let lockWindowLevelValue: CGFloat = 1_000 + 1
 
     @Published private(set) var isLocked = false
     @Published private(set) var privacyShielded = false
