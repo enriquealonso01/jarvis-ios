@@ -150,24 +150,23 @@ final class Item5ListMechanicsQATests: XCTestCase {
             return XCTFail("expected a seeded row")
         }
 
-        // Archive through the VM (the only seam that exists)…
+        // Archive through the VM (§8: no confirmation, row kept)…
         let vm = SidebarViewModel(store: store)
         await vm.load()
         await vm.archive(conversationID: row.id)
         XCTAssertEqual(await store.get(id: row.id)?.archived, true)
+        let archivedModel = await loadedVM(store)
+        XCTAssertFalse(archivedModel.recentChats.contains { $0.id == row.id },
+                       "archived row must leave Recents")
 
-        // …then unarchive at store level and verify the loaded model honors
-        // it: an unarchived row must return to Recents.
-        var restored = await store.get(id: row.id)
-        restored?.archived = false
-        if let restored { await store.upsert(restored) }
+        // …then unarchive through the VM seam (Item 5 builder added it —
+        // the original tester defect #2): the row must return to Recents.
+        await vm.unarchive(conversationID: row.id)
+        XCTAssertEqual(await store.get(id: row.id)?.archived, false,
+                       "unarchive must write through to the store")
         let reloaded = await loadedVM(store)
         XCTAssertTrue(reloaded.recentChats.contains { $0.id == row.id },
                       "an unarchived row must return to Recents")
-        XCTAssertEqual(await store.get(id: row.id)?.archived, false)
-        // DEFECT PIN (see QA log): the VM exposes no unarchive — archive()
-        // has no inverse, so callers would need raw store access. Required:
-        // `unarchive(conversationID:)` (store write + reload).
     }
 
     // MARK: §8c — Swipe-to-delete (real store deletion)
