@@ -1,6 +1,11 @@
 import XCTest
 
 import Persistence
+// OrbitalState + OrbitalCoreView live in DesignSystem (Brand.swift) — the
+// FeaturesChat package already depends on it (both targets), so the test
+// target only needed the import (CI 39172465007: "cannot find type
+// OrbitalState in scope").
+import DesignSystem
 @testable import FeaturesChat
 
 /// Item 12 TESTER QA — transcript persistence + the real-event orbital
@@ -62,11 +67,15 @@ final class Item12VoicePersistenceQATests: XCTestCase {
         let utterance = UUID()
         var partial = segment(recording.id, Self.partialMarker + utterance.uuidString,
                               "what's on the calendar")
-        partial = try XCTUnwrap(await store.addTranscriptSegment(partial),
+        // Hoisted out of the XCTUnwrap autoclosure (autoclosures can't carry
+        // await — CI 39172465007 "async call in an autoclosure").
+        let insertedPartial = await store.addTranscriptSegment(partial)
+        partial = try XCTUnwrap(insertedPartial,
                                 "addTranscriptSegment must return the persisted row")
 
         var final = segment(recording.id, "user", "What's on the calendar for Monday?")
-        final = try XCTUnwrap(await store.addTranscriptSegment(final))
+        let insertedFinal = await store.addTranscriptSegment(final)
+        final = try XCTUnwrap(insertedFinal)
 
         // Replacing the partial = deleting its row; the API surface is
         // upsert-by-id: re-inserting the same id overwrites (GRDB insert
@@ -171,9 +180,13 @@ final class Item12VoicePersistenceQATests: XCTestCase {
                           "\(event): mapped state \(mapped!) must be a kit state")
         }
         // And the four kit states are exactly covered (idle twice is legal —
-        // rest and post-call are the same visual truth).
-        let produced = Set(CallPhaseLike.allCases.compactMap { Self.orbitalEvent(forPhase: $0) })
-        XCTAssertEqual(produced, [.idle, .thinking, .listening],
+        // rest and post-call are the same visual truth). Both sides carry an
+        // explicit Set<OrbitalState> type: with the type implicit, an
+        // unresolved element literal degrades the operand to Any and the
+        // comparison stops conforming to Equatable (CI 39172465007).
+        let produced = Set<OrbitalState>(CallPhaseLike.allCases.compactMap { Self.orbitalEvent(forPhase: $0) })
+        let expectedReachable: Set<OrbitalState> = [.idle, .thinking, .listening]
+        XCTAssertEqual(produced, expectedReachable,
                        "mapping covers the reachable state set; responding arrives from the REAL stream phase, not a timer")
     }
 
