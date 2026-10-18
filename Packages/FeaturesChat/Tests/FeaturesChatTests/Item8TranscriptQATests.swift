@@ -1,4 +1,5 @@
 import XCTest
+import JarvisKit
 @testable import FeaturesChat
 
 /// Item 8 TESTER QA — transcript/thread view (plan §4 #1/#2 completion,
@@ -12,7 +13,10 @@ final class Item8TranscriptQATests: XCTestCase {
 
     /// §2: user bubble geometry decision — right-aligned, tinted, ≤85% width.
     /// Mirrors the transcript row layout decision; the view drives its
-    /// frame from this exact arithmetic.
+    /// frame from this exact arithmetic. (Headless: alignment is a plain
+    /// enum the view maps to SwiftUI's .trailing/.leading.)
+    enum Side: Equatable { case leading, trailing }
+
     struct BubbleGeometrySeam {
         var isUser: Bool
         var proposedWidth: CGFloat
@@ -24,7 +28,7 @@ final class Item8TranscriptQATests: XCTestCase {
             return proposedWidth > cap ? cap : proposedWidth
         }
 
-        var alignment: HorizontalAlignment {
+        var alignment: Side {
             isUser ? .trailing : .leading
         }
 
