@@ -64,10 +64,14 @@ jobs:
         working-directory: ios
         run: |
           set -o pipefail
+          # Runner image drift: pick the first available iPhone sim instead of
+          # hardcoding a name (Xcode 26.3 image dropped "iPhone 16").
+          DEST=$(xcrun simctl list devices available | grep -m1 "iPhone" | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
+          echo "Using simulator UDID: $DEST"
           xcodebuild test \
             -project JarvisApp.xcodeproj \
             -scheme JarvisApp \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "id=$DEST" \
             -skipPackagePluginValidation \
             -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | xcbeautify
