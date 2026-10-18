@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 
 /// Home tab: the CC summary — vitals, gateway, LLM usage, current work,
 /// automations. Same endpoints the web Control Center polls.
@@ -42,6 +43,14 @@ struct HomeView: View {
             .background(Color.black)
             .navigationTitle("JARVIS")
             .toolbar {
+                // Brand mark in the nav header (kit spec: static on
+                // navigation surfaces, animated only on active status UI).
+                // Mark only — the large title already carries the wordmark.
+                ToolbarItem(placement: .topBarLeading) {
+                    OrbitalCoreView(state: .idle, isStatic: true)
+                        .frame(width: 26, height: 26)
+                        .accessibilityLabel("JARVIS orbital mark")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { SettingsView() } label: { Image(systemName: "gearshape") }
                 }
