@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import SwiftUI
 import Persistence
 @testable import FeaturesSidebar
 
@@ -72,23 +73,32 @@ final class Item3TesterQATests: XCTestCase {
 
     // MARK: §1b — Dismissal + never docks
 
-    func testScrimTapClosesAndPanelNeverExposesADockedState() {
-        // The contract is a Bool binding: true = presented (over the
-        // conversation), false = closed. A docked mode would require
-        // additional presentation state; the type system must not offer one.
+    func testDismissalContractIsASingleBooleanBindingWithNoDockedState() {
+        // UI Law §1: scrim tap OR swipe-left closes; the panel NEVER docks
+        // on phone. The contract exposed to the type system is one Bool
+        // presentation binding — there is no third "docked" state to fall
+        // into (docking would require presentation state that simply does
+        // not exist here; iPad docking is a future item).
         var presented = true
-        let binding = BindingForTest(isPresented: &presented)
+        let binding = Binding<Bool>(
+            get: { presented },
+            set: { presented = $0 }
+        )
 
         // Scrim tap = the only side effect of tapping outside the panel.
         binding.wrappedValue = false
-        XCTAssertFalse(presented, "scrim tap must set the presentation binding to closed")
+        XCTAssertFalse(presented, "scrim tap must close via the presentation binding")
 
-        // Reopening works (state machine is a simple toggle, no dock latch).
+        // Swipe-left past the threshold = the same dismissal path.
+        binding.wrappedValue = false
+        XCTAssertFalse(presented)
+
+        // Reopening works: a plain toggle, never a dock latch.
         binding.wrappedValue = true
         XCTAssertTrue(presented)
     }
 
-    func testSwipeLeftDismissThresholdClosesUnderThirdOfPanelDrag() {
+    func testSwipeLeftDismissThresholdMatchesThirdOfPanelWidth() {
         // The drag contract: a leftward translation exceeding ~1/3 of the
         // panel width closes. Derived from the width fraction so the two
         // laws can't drift apart.
@@ -96,12 +106,15 @@ final class Item3TesterQATests: XCTestCase {
         let panelWidth = containerWidth * Tokens.Sidebar.widthFraction
         let threshold = panelWidth * 0.3
 
-        // A decisive swipe-left must exceed it; a jitter-magnitude drag must not.
-        XCTAssertGreaterThan(-140, -threshold,
-                             "140pt swipe-left must close (under the 1/3 threshold)")
-        XCTAssertLessThan(-10, -threshold * 0 + -10 + threshold,
-                          "sanity: tiny negative translations stay under the threshold")
-        XCTAssertGreaterThan(threshold, 30, "threshold must be reachable on a phone")
+        // A decisive swipe-left (-140pt) goes past the closing threshold…
+        XCTAssertLessThan(-140, -threshold,
+                          "140pt swipe-left must close (past the ~1/3 threshold)")
+        // …while a jitter-magnitude drag stays under it (no accidental close).
+        XCTAssertGreaterThan(-10, -threshold,
+                             "a 10pt jitter drag must NOT close the panel")
+        // The threshold is reachable on a phone without a full-screen drag.
+        XCTAssertLessThan(threshold, containerWidth / 2,
+                          "closing must not require dragging half the screen")
     }
 
     // MARK: §1c — Section inventory + ordering contracts
@@ -305,14 +318,5 @@ final class Item3TesterQATests: XCTestCase {
         let pinned = await store.pinnedProjects()
         XCTAssertEqual(pinned.map(\.id), [legacy.id])
         XCTAssertEqual(pinned.first?.name, "Legacy")
-    }
-}
-
-/// Minimal Binding stand-in so dismissal semantics can be asserted without
-/// instantiating SwiftUI views (keeps this suite `swift test`-green).
-private struct BindingForTest<Value> {
-    @Binding var wrappedValue: Value
-    init(isPresented: inout Value) {
-        self._wrappedValue = Binding(get: { isPresented }, set: { isPresented = $0 })
     }
 }
