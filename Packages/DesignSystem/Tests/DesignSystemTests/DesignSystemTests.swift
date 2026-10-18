@@ -22,4 +22,19 @@ final class DesignSystemTests: XCTestCase {
         XCTAssertTrue(Tokens.isLargePaste(50_000))
         XCTAssertFalse(Tokens.isLargePaste(0))
     }
+
+    // MARK: Item 3 sidebar tokens (UI Law §1)
+
+    func testSidebarTokensMatchUILaw() {
+        // Slide-over is ~85% width per UI Law §1 (research/11: 80–85%).
+        XCTAssertTrue((0.80...0.85).contains(Tokens.Sidebar.widthFraction))
+        // Recents pagination page size is sane.
+        XCTAssertTrue(Tokens.Sidebar.recentsPageSize >= 8,
+                      "research/11 §1.6: up to 8 recents visible; page ≥ 8")
+        // Store keys are namespaced and unique.
+        let keys = [Tokens.Sidebar.Keys.isOpen,
+                    Tokens.Sidebar.Keys.lastSelection,
+                    Tokens.Sidebar.Keys.projectsExpanded]
+        XCTAssertEqual(Set(keys).count, keys.count)
+    }
 }
