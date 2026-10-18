@@ -133,7 +133,8 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
         await vm.setPinned(true, conversationID: target.id)
         XCTAssertTrue(vm.pinned.contains { $0.id == target.id })
         XCTAssertFalse(vm.recents.contains { $0.id == target.id })
-        XCTAssertEqual(await store.get(id: target.id)?.pinned, true,
+        let afterPin = await store.get(id: target.id)?.pinned
+        XCTAssertEqual(afterPin, true,
                        "pin must write through to the store (re-fetch assert)")
 
         // A fresh VM (simulating re-open) must see the pinned row.
@@ -144,7 +145,8 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
 
         // Unpin → reverse, equally persisted.
         await vm.setPinned(false, conversationID: target.id)
-        XCTAssertEqual(await store.get(id: target.id)?.pinned, false,
+        let afterUnpin = await store.get(id: target.id)?.pinned
+        XCTAssertEqual(afterUnpin, false,
                        "unpin must write through to the store")
         let fresh2 = SidebarViewModel(store: store)
         await fresh2.reload()
@@ -161,7 +163,8 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
         // Archive an unpinned row.
         guard let unpinned = vm.recents.first else { return XCTFail("expected a recent row") }
         await vm.setArchived(true, conversationID: unpinned.id)
-        XCTAssertEqual(await store.get(id: unpinned.id)?.archived, true,
+        let afterArchive = await store.get(id: unpinned.id)?.archived
+        XCTAssertEqual(afterArchive, true,
                        "archive must write through to the store (re-fetch assert)")
         XCTAssertFalse(vm.recents.contains { $0.id == unpinned.id })
         XCTAssertFalse(vm.pinned.contains { $0.id == unpinned.id })
@@ -183,7 +186,8 @@ final class Item3SidebarCorrectnessQATests: XCTestCase {
 
         // Unarchive restores it to recents (still searchable → still fetchable).
         await vm.setArchived(false, conversationID: unpinned.id)
-        XCTAssertEqual(await store.get(id: unpinned.id)?.archived, false)
+        let afterUnarchive = await store.get(id: unpinned.id)?.archived
+        XCTAssertEqual(afterUnarchive, false)
     }
 
     // MARK: 3. Pagination boundary — 137 conversations

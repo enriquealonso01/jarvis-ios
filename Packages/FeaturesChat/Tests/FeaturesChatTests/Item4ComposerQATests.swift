@@ -1,4 +1,5 @@
 import XCTest
+import DesignSystem
 @testable import FeaturesChat
 
 /// Item 4 TESTER QA — acceptance tests for Feature #3, the Composer
@@ -312,7 +313,8 @@ final class Item4ComposerQATests: XCTestCase {
         XCTAssertFalse(vm.isSheetPresented, "sheet starts dismissed")
         vm.plusTapped()
         XCTAssertTrue(vm.isSheetPresented, "＋ must open the bottom sheet (§6)")
-        XCTAssertEqual(vm.sheetOptions.map { $0.id },
+        let optionIDs: [ComposerSheetOption.ID] = vm.sheetOptions.map { $0.id }
+        XCTAssertEqual(optionIDs,
                        [.photos, .camera, .files, .hermesFiles],
                        "sheet rows must be exactly Photos, Camera, Files, Hermes workspace files — in order")
         XCTAssertEqual(vm.sheetOptions.count, 4, "no extra/missing rows")
