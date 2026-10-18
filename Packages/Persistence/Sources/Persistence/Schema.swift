@@ -187,6 +187,34 @@ enum AppSchema {
             }
         }
 
+        // Item 10 (#10): project sources (package §05 ProjectSource). Additive
+        // FK-cascade table; projects v2 migration already indexed project_id
+        // on conversations, so scoped-chat reads stay index-backed.
+        migrator.registerMigration(Schema.Migrations.v2ProjectSources.identifier) { db in
+            try db.create(table: "project_sources") { t in
+                t.column("id", .blob).primaryKey()
+                t.column("project_id", .blob).notNull()
+                    .references("projects", onDelete: .cascade)
+                t.column("kind", .text).notNull().defaults(to: "file")
+                t.column("reference", .text).notNull()
+                t.column("name", .text).notNull().defaults(to: "")
+                t.column("display_order", .integer).notNull().defaults(to: 0)
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+            try db.create(index: "project_sources.byProject",
+                          on: "project_sources", columns: ["project_id", "display_order"])
+        }
+
+        // Item 10: project archive flag — archived projects leave the sidebar
+        // tree + Project Home surfaces but keep their rows (conversations of
+        // an archived project are untouched).
+        migrator.registerMigration(Schema.Migrations.v2ProjectsArchived.identifier) { db in
+            try db.alter(table: "projects") { t in
+                t.add(column: "archived", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         return migrator
     }
 }

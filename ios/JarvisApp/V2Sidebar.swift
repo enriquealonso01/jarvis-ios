@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Persistence
 import DesignSystem
 import FeaturesChat
@@ -54,6 +55,11 @@ struct V2SidebarShell: View {
 
     // MARK: Routing (Item 3 §3)
 
+    /// Item 9/10: set on Project Home chat opens — Project Home and the
+    /// chat surface share ONE NavigationStack, so the chat cannot appear
+    /// beneath its own Project Home (§P-5 composition contract).
+    @State private var projectHomeChatTarget: UUID?
+
     private func handle(_ selection: SidebarSelection) {
         switch selection {
         case .chat(let id):
@@ -66,18 +72,32 @@ struct V2SidebarShell: View {
                 let conversation = await vm.newChat()
                 self.selection = .chat(id: conversation.id)
             }
-        case .search, .projectHome, .addOn:
-            // Placeholders (Item 6 search, M3 project home, add-on screens).
+        case .projectHome(let id):
+            // Item 10: Project Home is the real destination (was a
+            // placeholder). Chats open INSIDE its stack (composition law).
+            projectHomeChatTarget = nil
+            selection = .projectHome(id: id)
+        case .search, .addOn:
+            // Placeholders (Item 6 search, add-on screens).
             self.selection = selection
         }
     }
 
     // MARK: Chat surface (v2 composer + open affordances)
 
+    @ViewBuilder
     private var chatSurface: some View {
         NavigationStack {
             Group {
-                if let id = vm.selectedConversationID {
+                if let homeID = projectHomeChatTarget {
+                    // Item 10: a chat opened from Project Home keeps the
+                    // project's stack — Project Home stays underneath (the
+                    // back button returns to it; no orphaned chat surface).
+                    V2ChatHost(store: store, conversationID: homeID, sidebarVM: vm)
+                        .id(homeID)
+                        .navigationTitle("")
+                        .navigationBarTitleDisplayMode(.inline)
+                } else if let id = vm.selectedConversationID {
                     // Item 8: the v2 chat surface = REAL transcript (UI Law
                     // §2/§3/§5 — full-width assistant blocks, tinted user
                     // bubbles, anchored streaming) + the Item-4 composer
@@ -292,24 +312,35 @@ struct SidebarPanelView: View {
             .accessibilityIdentifier("sidebar.projectsToggle")
 
             if vm.projectsExpanded {
-                // Sample data is acceptable per the item brief (schema
-                // exists); projects create/manage in a later milestone.
+                // Item 10: each row navigates to its Project Home (title,
+                // instructions, sources, project-scoped chats, new chat).
                 ForEach(vm.projects) { node in
                     VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                        HStack(spacing: Tokens.Spacing.s) {
-                            Image(systemName: "folder")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(node.project.name)
-                                .font(.subheadline.weight(.medium))
-                                .lineLimit(1)
-                            Spacer()
-                            Text("\(node.conversations.count)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        NavigationLink {
+                            V2ProjectHomeView(
+                                projectID: node.project.id,
+                                store: store ?? PersistenceStore(),
+                                onOpenChat: { chatID in
+                                    projectHomeChatTarget = chatID
+                                })
+                        } label: {
+                            HStack(spacing: Tokens.Spacing.s) {
+                                Image(systemName: "folder")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(node.project.name)
+                                    .font(.subheadline.weight(.medium))
+                                    .lineLimit(1)
+                                Spacer()
+                                Text("\(node.conversations.count)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(minHeight: Tokens.Sidebar.rowHeight)
+                            .contentShape(Rectangle())
                         }
-                        .frame(minHeight: Tokens.Sidebar.rowHeight)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("sidebar.project.\(node.project.id.uuidString)")
 
                         ForEach(node.conversations) { conversation in
                             V2ConversationRow(
@@ -695,8 +726,13 @@ struct V2ChatHost: View {
     /// Item 5: auto-title writes back into the sidebar's VM (shared store,
     /// one writer at a time — the shell owns exactly one).
     var sidebarVM: FeaturesChat.SidebarViewModel? = nil
+    /// Item 9: the action row needs the same send path the composer uses.
+    private let sendCoordinator: MessageSendCoordinator?
 
     @StateObject private var holder: TranscriptVMHolder
+    /// Item 9: action-row VM (copy/share are store-free; regenerate rides
+    /// the same transport+outbox path as composer sends).
+    @StateObject private var actionVM: MessageActionViewModel
 
     /// StateObject needs a concrete holder: the transcript VM's conversation
     /// target is fixed at shell-selection time, but its stream client needs
@@ -728,8 +764,37 @@ struct V2ChatHost: View {
         self.store = store
         self.conversationID = conversationID
         self.sidebarVM = sidebarVM
+        // Item 9: the real regenerate path — POST via the coordinator with
+        // outbox replay on failure (offline sends are never lost). When the
+        // server isn't configured there is NO send path, and the regenerate
+        // control is omitted entirely (no fake buttons).
+        if ServerConfig.shared.configured,
+           let baseURL = URL(string: ServerConfig.shared.config.baseURL) {
+            self.sendCoordinator = MessageSendCoordinator(
+                api: JarvisKit.APIClient(config: JarvisKit.ServerConfig(baseURL: baseURL)),
+                store: store ?? PersistenceStore())
+        } else {
+            self.sendCoordinator = nil
+        }
         _holder = StateObject(wrappedValue: TranscriptVMHolder(
             store: store, conversationID: conversationID))
+        _actionVM = StateObject(wrappedValue: MessageActionViewModel(
+            performSend: sendCoordinator.map { coordinator in
+                { [weak coordinator] text in
+                    guard let coordinator else { return false }
+                    do {
+                        _ = try await coordinator.send(
+                            conversationID: conversationID,
+                            text: text,
+                            online: true)
+                        return true
+                    } catch {
+                        // The coordinator already enqueued an outbox entry;
+                        // a hard failure here would double-send on replay.
+                        return true
+                    }
+                }
+            }))
     }
 
     /// The Item-4 composer surface, wired to the transcript host's §3 stop
@@ -743,11 +808,35 @@ struct V2ChatHost: View {
     }
 
     var body: some View {
-        V2TranscriptView(vm: holder.vm)
+        V2TranscriptView(
+            vm: holder.vm,
+            actionViewModel: actionVM,
+            regenerateSend: sendCoordinator.map { coordinator in
+                { text in
+                    do {
+                        _ = try await coordinator.send(
+                            conversationID: conversationID, text: text, online: true)
+                        return true
+                    } catch {
+                        // send() already enqueued the outbox entry — the
+                        // replay path owns delivery; never double-send.
+                        return true
+                    }
+                }
+            })
             .onAppear { Task { await holder.vm.loadInitial() } }
             .onDisappear { holder.vm.cancelTail() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 composerHost
+            }
+            .sheet(isPresented: Binding(
+                get: { actionVM.shareText != nil },
+                set: { presented in
+                    if !presented { actionVM.shareDismissed() }
+                })) {
+                if let shareText = actionVM.shareText {
+                    Item9ShareSheet(text: shareText)
+                }
             }
     }
 }
@@ -844,6 +933,20 @@ struct V2EmptyStateView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+/// Item 9: the UIActivityViewController share sheet (message actions).
+/// Presenting the controller directly inside a sheet works but fights
+/// SwiftUI's presentation machinery on iOS 26 — this wrapper hosts it via
+/// the classic representable bridge.
+struct Item9ShareSheet: UIViewControllerRepresentable {
+    let text: String
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [text], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 /// Settings placeholder sheet (profile row destination — real Settings

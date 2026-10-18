@@ -351,9 +351,19 @@ public final class TranscriptViewModel: ObservableObject {
 
 public struct V2TranscriptView: View {
     @ObservedObject public var vm: TranscriptViewModel
+    /// Item 9: the completed-message action row. `nil` (the default) keeps
+    /// Item-8 call sites and headless tests unchanged — no action row.
+    public var actionViewModel: MessageActionViewModel? = nil
+    /// Real regenerate send path (app wires the coordinator); `nil` omits
+    /// the regenerate control entirely (no fake buttons).
+    public var regenerateSend: MessageActionViewModel.PerformSend? = nil
 
-    public init(vm: TranscriptViewModel) {
+    public init(vm: TranscriptViewModel,
+                actionViewModel: MessageActionViewModel? = nil,
+                regenerateSend: MessageActionViewModel.PerformSend? = nil) {
         self.vm = vm
+        self.actionViewModel = actionViewModel
+        self.regenerateSend = regenerateSend
     }
 
     public var body: some View {
@@ -363,12 +373,31 @@ public struct V2TranscriptView: View {
                     LazyVStack(alignment: .leading, spacing: Tokens.Spacing.m) {
                         conversationHead
                         ForEach(vm.displayRows) { row in
-                            TranscriptRowView(
-                                row: row,
-                                availableWidth: geo.size.width,
-                                onRetry: (row.origin == .live && row.retryAvailable)
-                                    ? { Task { await vm.retryTapped() } }
-                                    : nil)
+                            let rowIndex = vm.displayRows.firstIndex(where: { $0.id == row.id })
+                            let isLast = rowIndex == vm.displayRows.count - 1
+                            let rowRegenPrompt: String? = (rowIndex != nil && isLast && !row.isUser)
+                                ? lastUserPrompt(rows: vm.displayRows, upTo: rowIndex!)
+                                : nil
+                            VStack(alignment: .leading, spacing: 2) {
+                                TranscriptRowView(
+                                    row: row,
+                                    availableWidth: geo.size.width,
+                                    onRetry: (row.origin == .live && row.retryAvailable)
+                                        ? { Task { await vm.retryTapped() } }
+                                        : nil)
+                                if let actionVM = actionViewModel {
+                                    MessageActionRowView(
+                                        row: row,
+                                        isLastRow: isLast,
+                                        canRegenerate: regenerateSend != nil,
+                                        vm: actionVM,
+                                        onRegenerate: (rowRegenPrompt != nil)
+                                            ? { [rowRegenPrompt] in
+                                                await actionVM.regenerateTapped(promptText: rowRegenPrompt)
+                                            }
+                                            : nil)
+                                }
+                            }
                         }
                         workingIndicator
                         Color.clear
@@ -409,6 +438,16 @@ public struct V2TranscriptView: View {
             Spacer()
         }
         .accessibilityIdentifier("transcript.conversationHead")
+    }
+
+    /// Item 9: the last USER prompt above `upTo` — the regenerate replay
+    /// payload (nil when the exchange has no upstream user turn).
+    private func lastUserPrompt(rows: [TranscriptRow], upTo index: Int) -> String? {
+        for row in rows[..<index] where row.isUser {
+            let trimmed = row.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return row.text }
+        }
+        return nil
     }
 
     /// §3 working indicator while the tail is open but has no text yet.

@@ -325,6 +325,9 @@ public struct StoredProject: Sendable, Codable, Equatable, Identifiable,
     public var instructions: String
     /// Sidebar Pinned section mixes pinned chats + pinned projects (UI Law §1).
     public var pinned: Bool
+    /// Item 10: archived projects leave the sidebar tree + Project Home
+    /// surfaces but keep their row (mirrors the conversation archive rule).
+    public var archived: Bool
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -334,18 +337,20 @@ public struct StoredProject: Sendable, Codable, Equatable, Identifiable,
         instructions: String = "",
         createdAt: Date? = nil,
         updatedAt: Date = Date(),
-        pinned: Bool = false
+        pinned: Bool = false,
+        archived: Bool = false
     ) {
         self.id = id
         self.name = name
         self.instructions = instructions
         self.pinned = pinned
+        self.archived = archived
         self.createdAt = createdAt ?? updatedAt
         self.updatedAt = updatedAt
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, instructions, pinned
+        case id, name, instructions, pinned, archived
         case createdAt = "created_at", updatedAt = "updated_at"
     }
 }
@@ -489,6 +494,53 @@ public struct StoredTranscriptSegment: Sendable, Codable, Equatable, Identifiabl
         case id
         case recordingID = "recording_id"
         case speaker, text
+        case createdAt = "created_at", updatedAt = "updated_at"
+    }
+}
+
+/// One user-attached source of a project (Item 10, package §05 project
+/// model: `ProjectSource{id,projectId,kind,uriOrFileId}`). Rows are deleted
+/// with their project (FK cascade); `displayOrder` pins list position.
+public struct StoredProjectSource: Sendable, Codable, Equatable, Identifiable,
+    FetchableRecord, MutablePersistableRecord {
+    public static let databaseTableName = "project_sources"
+
+    public var id: UUID
+    public var projectID: UUID
+    /// `file` | `link` (open set; unknown kinds render as their raw string).
+    public var kind: String
+    /// Local file path or remote URI (package `uriOrFileId`).
+    public var reference: String
+    public var name: String
+    public var displayOrder: Int
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        projectID: UUID,
+        kind: String,
+        reference: String,
+        name: String,
+        displayOrder: Int = 0,
+        createdAt: Date? = nil,
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.projectID = projectID
+        self.kind = kind
+        self.reference = reference
+        self.name = name
+        self.displayOrder = displayOrder
+        self.createdAt = createdAt ?? updatedAt
+        self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case projectID = "project_id"
+        case kind, reference, name
+        case displayOrder = "display_order"
         case createdAt = "created_at", updatedAt = "updated_at"
     }
 }
@@ -638,6 +690,10 @@ public enum Schema {
         public static let v2LastEventID = Migration(identifier: "v2.last-event-id", order: 7)
         /// Item 3 (#2): project pin flag for the sidebar Pinned section.
         public static let v2ProjectPinned = Migration(identifier: "v2.projects-pinned", order: 8)
+        /// Item 10 (#10): project sources (files/links attached to a project).
+        public static let v2ProjectSources = Migration(identifier: "v2.project-sources", order: 9)
+        /// Item 10: project archive flag (archived projects keep their rows).
+        public static let v2ProjectsArchived = Migration(identifier: "v2.projects-archived", order: 10)
     }
 
     /// Ordered migration list — strictly ascending `order`, unique ids.
@@ -650,6 +706,8 @@ public enum Schema {
         Migrations.v2FTSTranscripts,
         Migrations.v2LastEventID,
         Migrations.v2ProjectPinned,
+        Migrations.v2ProjectSources,
+        Migrations.v2ProjectsArchived,
     ]
 
     /// Pure validation of the migration chain — unit-testable anywhere.
