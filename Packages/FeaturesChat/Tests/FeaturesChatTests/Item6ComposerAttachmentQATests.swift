@@ -385,4 +385,133 @@ final class Item6ComposerAttachmentQATests: XCTestCase {
         XCTAssertEqual(decoded.first?.id, original.first?.id,
                        "chip ids are stable across encode/decode")
     }
+
+    // MARK: (h) Item 6 tester additions — round-trip through the store
+    // (criterion 4: "sent with the message … round-trips through the store,
+    // in-memory AND file-backed") + §5.2 row-schema contract.
+
+    /// §5.2/Models.swift pins `StoredMessage.attachments: [StoredAttachment]`
+    /// on the row (inline JSON) — the store contract attachments ride on.
+    func testStoredMessageCarriesAttachmentDescriptors() throws {
+        let row = StoredMessage(
+            conversationID: UUID(),
+            role: .user,
+            content: "see attached",
+            attachments: [
+                StoredAttachment(kind: "image", name: "holidays.jpg"),
+                StoredAttachment(kind: "paste", name: "Pasted text · 5100 chars"),
+            ])
+        XCTAssertEqual(row.attachments.count, 2)
+        XCTAssertEqual(row.attachments[0].kind, "image")
+        XCTAssertEqual(row.attachments[1].kind, "paste")
+        // Codable round trip (the row persists attachments as inline JSON).
+        let data = try JSONEncoder().encode(row)
+        let back = try JSONDecoder().decode(StoredMessage.self, from: data)
+        XCTAssertEqual(back.attachments, row.attachments,
+                       "attachment descriptors survive the row's Codable path")
+    }
+
+    /// ACCEPTANCE #4 — picker chips are sent WITH the message: the row
+    /// persists each staged chip as a StoredAttachment descriptor so the
+    /// attachment survives a store round-trip. Paste chips ride the content
+    /// (verbatim flatten, pinned above); picker descriptors ride `attachments`.
+    func testSendWritesPickerChipDescriptorsOntoRowAndRoundTrips() async throws {
+        let store = makeStore()
+        let vm = makeVM(store: store)
+        let chatID = vm.conversationID
+        vm.plusTapped()
+        vm.selectSheetOption(ComposerSheetOption(
+            id: .photos, label: "holidays.jpg", systemImage: "photo"))
+        vm.plusTapped()
+        vm.selectSheetOption(ComposerSheetOption(
+            id: .files, label: "report.pdf", systemImage: "folder"))
+        vm.text = "two files"
+        let ok = try await vm.send()
+        XCTAssertTrue(ok)
+        let rows = try await store.recentMessages(conversationID: chatID, limit: 1)
+        let row = try XCTUnwrap(rows.first)
+        XCTAssertEqual(row.attachments.count, 2,
+                       "BOTH picker chips must persist as StoredAttachment descriptors on the row")
+        XCTAssertEqual(Set(row.attachments.map { $0.name }), ["holidays.jpg", "report.pdf"])
+        XCTAssertTrue(row.attachments.allSatisfy { $0.kind == "image" || $0.kind == "file" },
+                      "descriptors carry a kind (image|file) — not an unlabeled blob")
+        // Round-trip: fresh read through the store returns the same descriptors.
+        let again = try await store.recentMessages(conversationID: chatID, limit: 5)
+        XCTAssertEqual(again.first?.attachments, row.attachments,
+                       "descriptors are stable across independent store reads")
+    }
+
+    /// Paste chips flatten into content (pinned) AND add a paste descriptor
+    /// so the row declares its attachment even when the body carries it.
+    func testSendWritesPasteChipPayloadAndDescriptor() async throws {
+        let store = makeStore()
+        let vm = makeVM(store: store)
+        let chatID = vm.conversationID
+        let payload = largePaste(5_300)
+        vm.onPaste(text: payload)
+        vm.text = "log attached"
+        let ok = try await vm.send()
+        XCTAssertTrue(ok)
+        let row = try XCTUnwrap(try await store.recentMessages(conversationID: chatID, limit: 1).first)
+        XCTAssertTrue(row.content.contains(payload), "paste payload rides the content verbatim")
+        XCTAssertTrue(row.attachments.contains { $0.kind == "paste" },
+                      "row also declares the paste attachment descriptor")
+    }
+
+    /// ACCEPTANCE #4 (file-backed half): the same send round-trips through a
+    /// FILE-backed store (re-init from disk), not just the in-memory queue.
+    func testSendWithAttachmentsRoundTripsThroughFileBackedStore() async throws {
+        let dir = NSTemporaryDirectory() + "item6-qa-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let path = dir + "/store.sqlite3"
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        let store = try PersistenceStore(path: path)
+        let vm = makeVM(store: store)
+        let chatID = vm.conversationID
+        vm.plusTapped()
+        vm.selectSheetOption(ComposerSheetOption(
+            id: .files, label: "contract.pdf", systemImage: "folder"))
+        vm.text = "sign this"
+        let ok = try await vm.send()
+        XCTAssertTrue(ok)
+
+        // Cold re-init from the same file (relaunch path).
+        let store2 = try PersistenceStore(path: path)
+        let rows = try await store2.recentMessages(conversationID: chatID, limit: 1)
+        let row = try XCTUnwrap(rows.first, "row survives the file-backed re-init")
+        XCTAssertEqual(row.content, "sign this")
+        XCTAssertEqual(row.attachments.map { $0.name }, ["contract.pdf"],
+                       "attachment descriptor survives the disk round-trip (criterion 4)")
+    }
+
+    /// Chips staged but never sent persist as part of the draft (KV path)
+    /// and are still removable after restore — the §5.2 "or document the
+    /// limitation" contract for criterion 5, half B.
+    func testDraftPersistRestoreOnFileBackedStoreKeepsAttachmentsRemovable() async throws {
+        let dir = NSTemporaryDirectory() + "item6-qa-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let path = dir + "/store.sqlite3"
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        let store = try PersistenceStore(path: path)
+        let vm = makeVM(store: store)
+        let payload = largePaste(5_600)
+        vm.onPaste(text: payload)
+        vm.plusTapped()
+        vm.selectSheetOption(.camera)
+        await vm.persistDraft()
+
+        let vm2 = makeVM(store: try PersistenceStore(path: path))
+        await vm2.restoreState()
+        XCTAssertEqual(vm2.attachments.count, 2, "draft incl. chips restores from the file-backed KV")
+        XCTAssertEqual(vm2.text, "", "cleared paste text stays cleared (payload lives in the chip)")
+        let restored = vm2.attachments
+        vm2.removeAttachment(id: restored[0].id)
+        XCTAssertEqual(vm2.attachments.count, 1, "× still works after a disk round-trip")
+        await vm2.persistDraft()
+        let vm3 = makeVM(store: try PersistenceStore(path: path))
+        await vm3.restoreState()
+        XCTAssertEqual(vm3.attachments.count, 1, "post-removal draft re-persists correctly")
+    }
 }
