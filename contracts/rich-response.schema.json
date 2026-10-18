@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enriquealonso01.github.io/jarvis-ios/contracts/rich-response.schema.json",
+  "title": "JARVIS Rich Assistant Message",
+  "description": "Rich-response envelope v1 (Item 11, PLAN_DELTA §D). A typed block AST carried inside an assistant message body. iOS renders every block through a native SwiftUI component registry keyed by block.type — no WKWebView, no agent HTML/JS, ever. Unknown type or corrupt props degrade to a fallbackText card (never crash, never blank). Mirror of truth: Packages/FeaturesChat/Sources/FeaturesChat/RichBlocks.swift.",
+  "type": "object",
+  "required": ["schemaVersion", "messageId", "blocks"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "messageId": { "type": "string", "minLength": 1 },
+    "conversationId": { "type": "string", "minLength": 1 },
+    "projectId": { "type": "string", "minLength": 1 },
+    "blocks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/block" }
+    }
+  },
+
+  "$defs": {
+    "block": {
+      "type": "object",
+      "required": ["id", "type", "version", "props", "fallbackText"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Stable block identity. Interactive state in the VM is keyed by this id and reset on regenerate." },
+        "type": {
+          "type": "string",
+          "enum": ["text", "markdown", "heading", "code", "table", "image", "buttonGroup", "poll", "chart", "form", "notice", "citation", "card", "checklist"],
+          "description": "Known block types. Any other wire value is not decodable by the strict model; the lenient client decoder salvages it as a fallbackText card. `fallback` is an internal client state and never appears on the wire."
+        },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "Per-block schema version." },
+        "props": { "$ref": "#/$defs/props" },
+        "fallbackText": { "type": "string", "minLength": 1, "description": "Plain-text digest shown when the block cannot render natively. Never blank: clients synthesize from the props when absent." },
+        "a11yLabel": { "type": "string" },
+        "interactiveStateRef": { "type": "string", "description": "Optional server-side key for shared interactive state; client-side interaction state remains block.id-keyed." },
+        "print": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "enum": ["native", "snapshot", "summary", "omit"],
+              "description": "Item 13 PDF pipeline: native = render as-is, snapshot = rasterize, summary = fallbackText, omit = skip. Client defaults: text/markdown/heading/code/table/notice/citation/card = native; image/buttonGroup/poll/chart/form/checklist = snapshot; salvage = summary."
+            },
+            "summary": { "type": "string" }
+          },
+          "required": ["strategy"]
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/action" }
+        }
+      }
+    },
+
+    "action": {
+      "type": "object",
+      "required": ["id", "label", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["local", "submit", "navigate", "copy", "openUrl", "serverAction"],
+          "description": "local = handled on-device, submit = form submission, navigate = in-app route, copy = pasteboard, openUrl = must pass the http(s)-only URL gate, serverAction = round-trips through the agent."
+        },
+        "requiresApproval": { "type": "boolean", "default": false },
+        "confirmText": { "type": "string" }
+      }
+    },
+
+    "props": {
+      "description": "Discriminated by the parent block.type. The props object of a block MUST match exactly one branch (per-type oneOf).",
+      "oneOf": [
+        { "$ref": "#/$defs/textProps" },
+        { "$ref": "#/$defs/markdownProps" },
+        { "$ref": "#/$defs/headingProps" },
+        { "$ref": "#/$defs/codeProps" },
+        { "$ref": "#/$defs/tableProps" },
+        { "$ref": "#/$defs/imageProps" },
+        { "$ref": "#/$defs/buttonGroupProps" },
+        { "$ref": "#/$defs/pollProps" },
+        { "$ref": "#/$defs/chartProps" },
+        { "$ref": "#/$defs/formProps" },
+        { "$ref": "#/$defs/noticeProps" },
+        { "$ref": "#/$defs/citationProps" },
+        { "$ref": "#/$defs/cardProps" },
+        { "$ref": "#/$defs/checklistProps" }
+      ]
+    },
+
+    "textProps": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": { "text": { "type": "string" } }
+    },
+
+    "markdownProps": {
+      "type": "object",
+      "required": ["markdown"],
+      "additionalProperties": false,
+      "properties": { "markdown": { "type": "string" } }
+    },
+
+    "headingProps": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "level": { "type": "integer", "minimum": 1, "maximum": 6, "default": 2 }
+      }
+    },
+
+    "codeProps": {
+      "type": "object",
+      "required": ["code"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "language": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "tableProps": {
+      "type": "object",
+      "required": ["headers", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "headers": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "imageProps": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "format": "uri", "description": "Render only after the http(s)-only safety gate." },
+        "alt": { "type": "string", "default": "Image", "description": "Client default when absent." },
+        "caption": { "type": "string" }
+      }
+    },
+
+    "buttonGroupProps": {
+      "type": "object",
+      "required": ["buttons"],
+      "additionalProperties": false,
+      "properties": {
+        "buttons": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/action" } }
+      }
+    },
+
+    "pollProps": {
+      "type": "object",
+      "required": ["question", "options"],
+      "additionalProperties": false,
+      "properties": {
+        "question": { "type": "string", "minLength": 1 },
+        "options": { "type": "array", "minItems": 2, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+
+    "chartProps": {
+      "type": "object",
+      "required": ["points"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["bar", "line", "pie"], "default": "bar" },
+        "title": { "type": "string" },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string" },
+              "value": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+
+    "formProps": {
+      "type": "object",
+      "required": ["fields"],
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/formField" }
+        },
+        "submitLabel": { "type": "string", "minLength": 1, "default": "Submit" }
+      }
+    },
+
+    "formField": {
+      "type": "object",
+      "required": ["id", "kind", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["text", "number", "date", "select", "checkbox"] },
+        "label": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean", "default": false },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Required when kind = select."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "select" } } },
+          "then": { "required": ["options"] }
+        }
+      ]
+    },
+
+    "noticeProps": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "tone": { "type": "string", "enum": ["info", "success", "warning", "error"], "default": "info" },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "citationProps": {
+      "type": "object",
+      "required": ["title", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri", "description": "http(s) only — enforced client-side by the URL safety gate." }
+      }
+    },
+
+    "cardProps": {
+      "type": "object",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "subtitle": { "type": "string" },
+        "body": { "type": "string", "default": "" }
+      }
+    },
+
+    "checklistProps": {
+      "type": "object",
+      "required": ["items"],
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "text"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "text": { "type": "string", "minLength": 1 },
+              "isChecked": { "type": "boolean", "default": false }
+            }
+          }
+        }
+      }
+    }
+  }
+}

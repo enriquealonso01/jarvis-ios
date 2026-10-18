@@ -367,6 +367,7 @@ final class Item11RichBlocksQATests: XCTestCase {
                      "ordinary code fences are NOT rich carriers")
     }
 
+    @MainActor
     func testTranscriptViewModelExtractsBlocksForAssistantRowsOnly() {
         let envelope: [String: Any] = [
             "schemaVersion": "1.0.0", "messageId": "m",
