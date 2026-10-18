@@ -145,6 +145,17 @@ public struct RichFormField: Sendable, Equatable, Codable, Identifiable {
         self.required = required
         self.options = options
     }
+
+    /// Lenient decode: `required` defaults false when the producer omits it
+    /// (synthesized Codable would hard-require the key).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        label = try c.decode(String.self, forKey: .label)
+        required = try c.decodeIfPresent(Bool.self, forKey: .required) ?? false
+        options = try c.decodeIfPresent([String].self, forKey: .options)
+    }
 }
 
 public struct RichChecklistItem: Sendable, Equatable, Codable, Identifiable {
@@ -156,6 +167,14 @@ public struct RichChecklistItem: Sendable, Equatable, Codable, Identifiable {
         self.id = id
         self.text = text
         self.isChecked = isChecked
+    }
+
+    /// Lenient decode: absent `isChecked` means unchecked.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        text = try c.decode(String.self, forKey: .text)
+        isChecked = try c.decodeIfPresent(Bool.self, forKey: .isChecked) ?? false
     }
 }
 
@@ -216,20 +235,20 @@ public enum RichBlockContent: Sendable, Equatable {
             return (headers + rows.flatMap { $0 }).joined(separator: " · ")
         case .image(_, let alt, _):
             return alt
-        case .buttonGroup(let buttons):
-            return buttons.map(\\.label).joined(separator: ", ")
+        case .buttonGroup(let buttonList):
+            return buttonList.map { $0.label }.joined(separator: ", ")
         case .poll(let question, let options):
             return question + ": " + options.joined(separator: ", ")
         case .chart(_, let title, let points):
             return RichCharts.accessibleSummary(title: title, points: points)
-        case .form(let fields, _):
-            return fields.map(\\.label).joined(separator: ", ")
+        case .form(let formFields, _):
+            return formFields.map { $0.label }.joined(separator: ", ")
         case .citation(let title, let url):
             return title + " — " + url.absoluteString
         case .card(let title, _, let body):
             return title + ". " + body
-        case .checklist(let items):
-            return items.map(\\.text).joined(separator: ", ")
+        case .checklist(let checkItems):
+            return checkItems.map { $0.text }.joined(separator: ", ")
         case .fallback(let summary):
             return summary
         }
@@ -255,8 +274,9 @@ public enum RichBlockContent: Sendable, Equatable {
 
     /// Decode `props` for a known wire type. Throws on wrong-shape props —
     /// the lenient decoder (RichBlockSalvage) turns that into a fallback.
-    public static func decode(type: RichBlockType, from decoder: Decoder) throws -> RichBlockContent {
-        let c = try decoder.container(keyedBy: PropKey.self)
+    public static func decode(type: RichBlockType,
+                              from container: inout KeyedDecodingContainer<PropKey>) throws -> RichBlockContent {
+        let c = container
         switch type {
         case .text:
             return .text(try c.decode(String.self, forKey: .text))
@@ -284,7 +304,7 @@ public enum RichBlockContent: Sendable, Equatable {
                 alt: try c.decodeIfPresent(String.self, forKey: .alt) ?? "Image",
                 caption: try c.decodeIfPresent(String.self, forKey: .caption))
         case .buttonGroup:
-            return .buttonGroup(try c.decode([RichBlockAction].self, forKey: .buttons))
+            return .buttonGroup(buttons: try c.decode([RichBlockAction].self, forKey: .buttons))
         case .poll:
             return .poll(
                 question: try c.decode(String.self, forKey: .question),
@@ -316,9 +336,9 @@ public enum RichBlockContent: Sendable, Equatable {
                 subtitle: try c.decodeIfPresent(String.self, forKey: .subtitle),
                 body: try c.decodeIfPresent(String.self, forKey: .body) ?? "")
         case .checklist:
-            return .checklist(try c.decode([RichChecklistItem].self, forKey: .items))
+            return .checklist(items: try c.decode([RichChecklistItem].self, forKey: .items))
         case .fallback:
-            return .fallback(try c.decodeIfPresent(String.self, forKey: .summary) ?? "")
+            return .fallback(summary: try c.decodeIfPresent(String.self, forKey: .summary) ?? "")
         }
     }
 
@@ -430,12 +450,15 @@ public struct RichBlock: Sendable, Equatable, Identifiable, Codable {
         let rawType = try c.decode(String.self, forKey: .type)
         guard let type = RichBlockType(rawValue: rawType) else {
             throw DecodingError.dataCorruptedError(forKey: .type, in: c,
-                debugDescription: "unsupported block type '\\(rawType)'")
+                debugDescription: "unsupported block type '\(rawType)'")
         }
         // `props` may be absent only for the internal fallback state; every
-        // real block carries its props object.
+        // real block carries its props object. Decoded as a nested container
+        // (same keyed container family as the wire object, props-typed keys).
         if c.contains(.props) {
-            content = try RichBlockContent.decode(type: type, from: c.decoder(for: .props))
+            var nested = try c.nestedContainer(keyedBy: RichBlockContent.PropKey.self,
+                                               forKey: .props)
+            content = try RichBlockContent.decode(type: type, from: &nested)
         } else if type == .fallback {
             content = .fallback(summary: fallbackText)
         } else {
@@ -517,9 +540,9 @@ public enum RichCharts: Sendable {
     public static func accessibleSummary(title: String?, points: [RichChartPoint]) -> String {
         let head = title ?? "Chart"
         guard !points.isEmpty else { return head + " (no data)" }
-        let body = points.map { "\\($0.label): \\(formattedValue($0.value))" }
+        let body = points.map { "\($0.label): \(formattedValue($0.value))" }
             .joined(separator: ", ")
-        return "\\(head) — \\(body)"
+        return "\(head) — \(body)"
     }
 
     public static func formattedValue(_ v: Double) -> String {
@@ -572,7 +595,7 @@ public enum RichBlockSalvage: Sendable {
 
     static func synthesizedSummary(typeRaw: String?) -> String {
         if let t = RichBlocks.nonEmpty(typeRaw) {
-            return "This \\(t) block isn't supported by this version of JARVIS."
+            return "This \(t) block isn't supported by this version of JARVIS."
         }
         return "This content block couldn't be displayed."
     }
@@ -598,7 +621,7 @@ public enum RichContentPayload: Sendable {
     public static func parse(_ content: String) -> [RichBlock]? {
         guard let data = extractJSON(from: content) else { return nil }
         // Cheap pre-check so ordinary text never pays for JSON parsing.
-        guard data.contains("blocks") else { return nil }
+        guard data.range(of: Data("blocks\"".utf8)) != nil else { return nil }
         let blocks = RichBlockSalvage.decodeBlocks(from: data)
         return blocks.isEmpty ? nil : blocks
     }
@@ -607,7 +630,7 @@ public enum RichContentPayload: Sendable {
     static func extractJSON(from content: String) -> Data? {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("```") {
-            var lines = trimmed.split(separator: "\\n", omittingEmptySubsequences: false)
+            var lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
             guard lines.count >= 2 else { return nil }
             // Drop the opening fence (```jarvis-rich / ```json / ```).
             lines.removeFirst()
@@ -616,7 +639,7 @@ public enum RichContentPayload: Sendable {
             if let last = lines.last, last.trimmingCharacters(in: .whitespaces) == "```" {
                 lines.removeLast()
             }
-            let body = lines.joined(separator: "\\n")
+            let body = lines.joined(separator: "\n")
             return RichBlocks.nonEmpty(body)?.data(using: .utf8)
         }
         if trimmed.hasPrefix("{") {
@@ -667,11 +690,12 @@ public enum RichBlockRendererRegistry: Sendable {
 
     /// The plan for one block: native renderer, or the standard fallback card.
     public static func renderPlan(for block: RichBlock) -> RichRenderPlan {
-        guard canRender(block.type) else {
-            return .fallbackCard(reason: .unsupportedType(block.type))
-        }
+        // The internal fallback state IS the fallback card (salvage payload).
         if block.type == .fallback {
             return .fallbackCard(reason: .decodingFailure)
+        }
+        guard canRender(block.type) else {
+            return .fallbackCard(reason: .unsupportedType(block.type))
         }
         return .native(block)
     }
@@ -701,7 +725,7 @@ public final class RichInteractionStore: ObservableObject {
     public struct Key: Sendable, Equatable, Hashable {
         public let messageID: String
         public let blockID: String
-        public var rawValue: String { "\\(messageID)|\\(blockID)" }
+        public var rawValue: String { "\(messageID)|\(blockID)" }
         public init(messageID: String, blockID: String) {
             self.messageID = messageID
             self.blockID = blockID
@@ -762,7 +786,7 @@ public final class RichInteractionStore: ObservableObject {
         return fields.filter { field in
             guard field.required else { return false }
             return RichBlocks.nonEmpty(draft[field.id]) == nil
-        }.map(\\.id)
+        }.map { $0.id }
     }
 
     // MARK: Reset (regenerate / teardown)
@@ -775,7 +799,7 @@ public final class RichInteractionStore: ObservableObject {
     }
 
     public func reset(messageID: String) {
-        let prefix = "\\(messageID)|"
+        let prefix = "\(messageID)|"
         pollSelections = pollSelections.filter { !$0.key.hasPrefix(prefix) }
         checklistStates = checklistStates.filter { !$0.key.hasPrefix(prefix) }
         formDrafts = formDrafts.filter { !$0.key.hasPrefix(prefix) }

@@ -524,10 +524,11 @@ struct TranscriptRowView: View {
         self.richInteractions = richInteractions
     }
 
-    /// The row's rich payload, when its raw content carries an envelope.
-    /// Parsed here (pure seam, QA-pinned in Item11RichBlocksQATests); nil for
-    /// ordinary text — the overwhelmingly common case — costs nothing.
+    /// The row's rich payload: the VM-extracted map (parsed once per refresh,
+    /// QA-pinned in Item11RichBlocksQATests), falling back to a direct parse
+    /// for call sites that pass blocks without a host VM. nil = plain text.
     var richContent: [RichBlock]? {
+        if richBlocks != nil { return richBlocks }
         guard !row.isUser else { return nil }
         return RichContentPayload.parse(row.text)
     }

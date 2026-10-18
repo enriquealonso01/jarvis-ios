@@ -129,8 +129,7 @@ final class Item11RichBlocksQATests: XCTestCase {
     func testP0RoundTrip() throws {
         let p0 = ["text", "markdown", "heading", "code", "table", "image",
                   "buttonGroup", "poll", "chart", "form"]
-        XCTAssertEqual(Set(p0), RichBlockRendererRegistry.p0Types
-            .map(\\.rawValue).reduce(into: Set()) { $0.insert($1) },
+        XCTAssertEqual(Set(p0), Set(RichBlockRendererRegistry.p0Types.map { $0.rawValue }),
             "the registry's P0 set must equal the item-11 delivery set")
 
         for raw in p0 {
@@ -142,12 +141,12 @@ final class Item11RichBlocksQATests: XCTestCase {
             // Round-trip: re-encode → decode → equal.
             let data = try JSONEncoder().encode(block)
             let back = try JSONDecoder().decode(RichBlock.self, from: data)
-            XCTAssertEqual(back, block, "round-trip failed for \\(raw)")
+            XCTAssertEqual(back, block, "round-trip failed for \(raw)")
 
             // And the wire keeps the schema's required keys.
             let obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
             for key in ["id", "type", "version", "props", "fallbackText"] {
-                XCTAssertNotNil(obj[key], "\\(raw) wire is missing \\(key)")
+                XCTAssertNotNil(obj[key], "\(raw) wire is missing \(key)")
             }
         }
     }
@@ -166,7 +165,7 @@ final class Item11RichBlocksQATests: XCTestCase {
             let block = try decodeBlock(p0BlockDict(type.rawValue))
             XCTAssertFalse(block.id.isEmpty)
             XCTAssertFalse(block.fallbackDisplayText.isEmpty)
-            XCTAssertNotNil(block.print, "print strategy defaulted for \\(type)")
+            XCTAssertNotNil(block.print, "print strategy defaulted for \(type)")
         }
     }
 
@@ -220,7 +219,7 @@ final class Item11RichBlocksQATests: XCTestCase {
         for type in RichBlockRendererRegistry.supportedTypes {
             let block = try decodeBlock(p0BlockDict(type.rawValue))
             guard case .native(let planned) = RichBlockRendererRegistry.renderPlan(for: block) else {
-                return XCTFail("\\(type.rawValue) must plan native")
+                return XCTFail("\(type.rawValue) must plan native")
             }
             XCTAssertEqual(planned.type, type)
         }
@@ -313,7 +312,7 @@ final class Item11RichBlocksQATests: XCTestCase {
             "blocks": [p0BlockDict("code")]]
         let body = String(data: try! JSONSerialization.data(withJSONObject: envelope),
                           encoding: .utf8)!
-        let fenced = "```jarvis-rich\\n\\(body)\\n```"
+        let fenced = "```jarvis-rich\n\(body)\n```"
 
         let blocks = RichContentPayload.parse(fenced)
         XCTAssertNotNil(blocks)
@@ -364,7 +363,7 @@ final class Item11RichBlocksQATests: XCTestCase {
                      "ordinary text never parses into blocks")
         XCTAssertNil(RichContentPayload.parse("{ not an envelope }"),
                      "a non-envelope JSON blob stays plain text")
-        XCTAssertNil(RichContentPayload.parse("```swift\\nlet x = 1\\n```"),
+        XCTAssertNil(RichContentPayload.parse("```swift\nlet x = 1\n```"),
                      "ordinary code fences are NOT rich carriers")
     }
 

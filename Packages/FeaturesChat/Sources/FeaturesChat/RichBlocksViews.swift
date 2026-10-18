@@ -112,8 +112,8 @@ struct RichBlockView: View {
             RichNoticeView(tone: tone, text: text, block: block)
         case .citation(let title, let url):
             RichCitationView(title: title, url: url, block: block)
-        case .card(let title, let subtitle, let body):
-            RichCardView(title: title, subtitle: subtitle, body: body, block: block)
+        case .card(let title, let subtitle, let cardBody):
+            RichCardView(title: title, subtitle: subtitle, cardBody: cardBody, block: block)
         case .checklist(let items):
             RichChecklistView(
                 block: block, items: items, messageID: messageID,
@@ -256,7 +256,7 @@ struct RichCodeView: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(block.a11yLabel ?? "Code\(language.map { " — \\($0)" } ?? "")")
+        .accessibilityLabel(block.a11yLabel ?? "Code\(language.map { " — \($0)" } ?? "")")
         .accessibilityIdentifier("rich.code.\(block.id)")
     }
 }
@@ -273,18 +273,8 @@ struct RichTableView: View {
                     headerRow
                     Divider()
                 }
-                ForEach(Array(rows.enumerated()), id: \\.offset) { index, row in
-                    HStack(spacing: Tokens.Spacing.m) {
-                        ForEach(Array(row.enumerated()), id: \\.offset) { _, cell in
-                            Text(cell)
-                                .font(.footnote)
-                                .frame(width: 120, alignment: .leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(.vertical, Tokens.Spacing.s)
-                    .padding(.horizontal, Tokens.Spacing.m)
-                    .background(index.isMultiple(of: 2) ? Color.clear : Color.secondary.opacity(0.05))
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    tableRow(index: index, row: row)
                 }
             }
         }
@@ -296,9 +286,27 @@ struct RichTableView: View {
         .accessibilityIdentifier("rich.table.\(block.id)")
     }
 
+    private func tableRow(index: Int, row: [String]) -> some View {
+        HStack(spacing: Tokens.Spacing.m) {
+            ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                Text(cell)
+                    .font(.footnote)
+                    .frame(width: 120, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, Tokens.Spacing.s)
+        .padding(.horizontal, Tokens.Spacing.m)
+        .background(rowBackground(index: index))
+    }
+
+    private func rowBackground(index: Int) -> Color {
+        index.isMultiple(of: 2) ? Color.clear : Color.secondary.opacity(0.05)
+    }
+
     private var headerRow: some View {
         HStack(spacing: Tokens.Spacing.m) {
-            ForEach(Array(headers.enumerated()), id: \\.offset) { _, header in
+            ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
                 Text(header)
                     .font(.footnote.weight(.semibold))
                     .frame(width: 120, alignment: .leading)
@@ -385,10 +393,10 @@ struct RichButtonGroupView: View {
                                 Capsule().fill(Color.accentColor.opacity(0.16)))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("rich.button.\\(block.id).\\(button.id)")
+                    .accessibilityIdentifier("rich.button.\(block.id).\(button.id)")
                 }
             }
-            .accessibilityIdentifier("rich.buttonGroup.\\(block.id)")
+            .accessibilityIdentifier("rich.buttonGroup.\(block.id)")
         } else {
             RichFallbackCardView(
                 block: block,
@@ -426,31 +434,8 @@ struct RichPollView: View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.s) {
             Text(question)
                 .font(.subheadline.weight(.semibold))
-            ForEach(Array(options.enumerated()), id: \\.offset) { index, option in
-                Button {
-                    interactions.selectPoll(
-                        messageID: messageID, blockID: block.id, optionIndex: index)
-                } label: {
-                    HStack(spacing: Tokens.Spacing.s) {
-                        Image(systemName: selection == index
-                            ? "largecircle.fill.circle"
-                            : "circle")
-                            .foregroundStyle(Color.accentColor)
-                        Text(option)
-                            .font(.footnote)
-                            .foregroundStyle(.primary)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, Tokens.Spacing.m)
-                    .padding(.vertical, Tokens.Spacing.s)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(selection == index
-                                ? Color.accentColor.opacity(0.14)
-                                : Color.secondary.opacity(0.08)))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("rich.poll.\\(block.id).option.\\(index)")
+            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                pollOption(index: index, option: option)
             }
         }
         .padding(Tokens.Spacing.m)
@@ -459,7 +444,38 @@ struct RichPollView: View {
                 .fill(Color.secondary.opacity(0.06)))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(block.a11yLabel ?? question)
-        .accessibilityIdentifier("rich.poll.\\(block.id)")
+        .accessibilityIdentifier("rich.poll.\(block.id)")
+    }
+
+    private func pollOption(index: Int, option: String) -> some View {
+        Button {
+            interactions.selectPoll(
+                messageID: messageID, blockID: block.id, optionIndex: index)
+        } label: {
+            HStack(spacing: Tokens.Spacing.s) {
+                Image(systemName: optionIcon(index))
+                    .foregroundStyle(Color.accentColor)
+                Text(option)
+                    .font(.footnote)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Tokens.Spacing.m)
+            .padding(.vertical, Tokens.Spacing.s)
+            .background(optionBackground(index))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("rich.poll.\(block.id).option.\(index)")
+    }
+
+    private func optionIcon(_ index: Int) -> String {
+        selection == index ? "largecircle.fill.circle" : "circle"
+    }
+
+    private func optionBackground(_ index: Int) -> Color {
+        selection == index
+            ? Color.accentColor.opacity(0.14)
+            : Color.secondary.opacity(0.08)
     }
 }
 
@@ -473,7 +489,7 @@ struct RichChartView: View {
     let block: RichBlock
 
     private var maxValue: Double {
-        points.map(\\.value).max() ?? 0
+        points.map { $0.value }.max() ?? 0
     }
 
     var body: some View {
@@ -482,7 +498,7 @@ struct RichChartView: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
             }
-            ForEach(Array(points.enumerated()), id: \\.offset) { _, point in
+            ForEach(Array(points.enumerated()), id: \.offset) { _, point in
                 HStack(spacing: Tokens.Spacing.s) {
                     Text(point.label)
                         .font(.caption)
@@ -511,7 +527,7 @@ struct RichChartView: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.secondary.opacity(0.06)))
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("rich.chart.\\(block.id)")
+        .accessibilityIdentifier("rich.chart.\(block.id)")
     }
 
     private func barWidth(_ value: Double, available: CGFloat) -> CGFloat {
@@ -558,7 +574,7 @@ struct RichFormView: View {
                             .foregroundStyle(.red)
                     }
                 }
-                .accessibilityIdentifier("rich.form.\\(block.id).field.\\(field.id)")
+                .accessibilityIdentifier("rich.form.\(block.id).field.\(field.id)")
             }
 
             if RichBlockRendererRegistry.rendersSubmit(handlerExists: submitHandlerExists) {
@@ -575,7 +591,7 @@ struct RichFormView: View {
                                 .fill(Color.accentColor.opacity(0.16)))
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier("rich.form.\\(block.id).submit")
+                .accessibilityIdentifier("rich.form.\(block.id).submit")
             }
         }
         .padding(Tokens.Spacing.m)
@@ -583,7 +599,7 @@ struct RichFormView: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.secondary.opacity(0.06)))
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("rich.form.\\(block.id)")
+        .accessibilityIdentifier("rich.form.\(block.id)")
     }
 
     @ViewBuilder
@@ -605,7 +621,7 @@ struct RichFormView: View {
             .buttonStyle(.plain)
         case .select:
             Menu {
-                ForEach(field.options ?? [], id: \\.self) { option in
+                ForEach(field.options ?? [], id: \.self) { option in
                     Button(option) {
                         interactions.setFormValue(
                             messageID: messageID, blockID: block.id,
@@ -673,7 +689,7 @@ struct RichNoticeView: View {
                 .fill(Color.secondary.opacity(0.08)))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(block.a11yLabel ?? text)
-        .accessibilityIdentifier("rich.notice.\\(block.id)")
+        .accessibilityIdentifier("rich.notice.\(block.id)")
     }
 }
 
@@ -700,7 +716,7 @@ struct RichCitationView: View {
                     }
                 }
             }
-            .accessibilityIdentifier("rich.citation.\\(block.id)")
+            .accessibilityIdentifier("rich.citation.\(block.id)")
         } else {
             RichFallbackCardView(
                 block: block,
@@ -713,7 +729,7 @@ struct RichCitationView: View {
 struct RichCardView: View {
     let title: String
     let subtitle: String?
-    let body: String
+    let cardBody: String
     let block: RichBlock
 
     var body: some View {
@@ -725,7 +741,7 @@ struct RichCardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text(body)
+            Text(cardBody)
                 .font(.footnote)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -740,7 +756,7 @@ struct RichCardView: View {
                 .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(block.a11yLabel ?? block.fallbackDisplayText)
-        .accessibilityIdentifier("rich.card.\\(block.id)")
+        .accessibilityIdentifier("rich.card.\(block.id)")
     }
 }
 
@@ -757,7 +773,7 @@ struct RichChecklistView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.s) {
-            ForEach(Array(items.enumerated()), id: \\.offset) { index, item in
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 Button {
                     interactions.toggleChecklist(
                         messageID: messageID, blockID: block.id,
@@ -775,7 +791,7 @@ struct RichChecklistView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier("rich.checklist.\\(block.id).item.\\(index)")
+                .accessibilityIdentifier("rich.checklist.\(block.id).item.\(index)")
             }
         }
         .padding(Tokens.Spacing.m)
@@ -783,6 +799,6 @@ struct RichChecklistView: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.secondary.opacity(0.06)))
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("rich.checklist.\\(block.id)")
+        .accessibilityIdentifier("rich.checklist.\(block.id)")
     }
 }
