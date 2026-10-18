@@ -92,6 +92,8 @@ final class Item8TranscriptBuilderSmokeTests: XCTestCase {
 
     /// Store path: a mid-stream row + history restores from
     /// `streamRestoreState` — snapshot found, resume pointer correct.
+    /// (The view-model is @MainActor, so the seam runs there too.)
+    @MainActor
     func testColdLaunchRestoreSeedsMidStreamRowFromStore() async throws {
         let store = PersistenceStore()
         let conv = UUID()
