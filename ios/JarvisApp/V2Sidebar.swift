@@ -806,12 +806,14 @@ struct V2ChatHost: View {
 
     /// The Item-4 composer surface, wired to the transcript host's §3 stop
     /// and send-refresh hooks (its model-chooser sheet + CallManager wiring
-    /// stay owned by the composer host).
+    /// stay owned by the composer host). Item 8 QA fix: passes this host's
+    /// live `isStreaming` down so the composer's stop swap actually fires.
     private var composerHost: some View {
         V2ComposerHost(
             store: store, conversationID: conversationID, sidebarVM: sidebarVM,
             onDidSend: { Task { await holder.vm.userDidSend() } },
-            onStreamStop: { await holder.vm.stopTapped() })
+            onStreamStop: { await holder.vm.stopTapped() },
+            isStreaming: holder.vm.isStreaming)
     }
 
     var body: some View {
@@ -834,15 +836,9 @@ struct V2ChatHost: View {
             .onAppear { Task { await holder.vm.loadInitial() } }
             .onDisappear { holder.vm.cancelTail() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                // Item 8 QA fix: mirror the transcript VM's live-stream state
-                // into the composer VM so the §3 send⇄stop swap actually
-                // fires (bindStreamingFlag + onChange below).
-                bindStreamingFlag()
+                // The composer host below mirrors this host's live
+                // `isStreaming` (Item 8 QA fix — see `composerHost`).
                 composerHost
-            }
-            .onChange(of: holder.vm.isStreaming) { _, newValue in
-                streamingMirror = newValue
-                bindStreamingFlag()
             }
             .sheet(isPresented: Binding(
                 get: { actionVM.shareText != nil },
@@ -874,6 +870,10 @@ struct V2ComposerHost: View {
     var onDidSend: (() -> Void)? = nil
     /// Item 8 / UI Law §3: fired when the stop button is tapped mid-stream.
     var onStreamStop: (() async -> Void)? = nil
+    /// Item 8 QA fix: the transcript host mirrors the transcript VM's live
+    /// stream state in here (it owns the truth); without it the composer's
+    /// §3 send⇄stop swap was dead code — `isStreaming` was never mutated.
+    var isStreaming: Bool = false
 
     @StateObject private var holder: ComposerVMHolder
     @State private var isModelChooserPresented = false
@@ -890,25 +890,16 @@ struct V2ComposerHost: View {
     }
 
     init(store: PersistenceStore?, conversationID: UUID, sidebarVM: FeaturesChat.SidebarViewModel? = nil,
-         onDidSend: (() -> Void)? = nil, onStreamStop: (() async -> Void)? = nil) {
+         onDidSend: (() -> Void)? = nil, onStreamStop: (() async -> Void)? = nil,
+         isStreaming: Bool = false) {
         self.store = store
         self.conversationID = conversationID
         self.sidebarVM = sidebarVM
         self.onDidSend = onDidSend
         self.onStreamStop = onStreamStop
+        self.isStreaming = isStreaming
         _holder = StateObject(wrappedValue: ComposerVMHolder(store: store))
     }
-
-    /// Item 8 QA fix: the composer's §3 stop swap was dead code — nothing
-    /// ever mutated `ComposerViewModel.isStreaming` (always false, so the
-    /// stop button never appeared on device). The transcript VM owns the
-    /// real stream state; this mirrors it into the composer VM via its
-    /// public `setStreaming` seam.
-    private func bindStreamingFlag() {
-        holder.vm.setStreaming(streamingMirror)
-    }
-
-    @State private var streamingMirror = false
 
     var body: some View {
         V2ComposerView(
@@ -918,6 +909,9 @@ struct V2ComposerHost: View {
             onStreamStop: onStreamStop)
             .onAppear {
                 holder.vm.conversationID = conversationID
+                // Item 8 QA fix: mirror the host-supplied stream state (see
+                // `isStreaming`) — drives the §3 send⇄stop swap.
+                holder.vm.setStreaming(isStreaming)
                 Task { await holder.vm.restoreState() }
             }
             .sheet(isPresented: $isModelChooserPresented) {
