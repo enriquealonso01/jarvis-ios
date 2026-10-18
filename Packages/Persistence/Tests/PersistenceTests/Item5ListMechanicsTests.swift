@@ -135,12 +135,10 @@ final class Item5ListMechanicsTests: XCTestCase {
         XCTAssertEqual(actions.filter(\.isDestructive).map(\.kind), [.delete],
                        "Delete is the only red action")
         // Pinned rows show Unpin, not Pin.
-        let pinned = ListMechanicsEngine.menuActions(for: conv("Chat", pinned: true))
-        XCTAssertEqual(pinned.map(\.kind), [.rename, .unpin, .archive, .delete])
+        let pinnedActions = ListMechanicsEngine.menuActions(for: conv("Chat", pinned: true))
+        XCTAssertEqual(pinnedActions.map(\.kind), [.rename, .unpin, .archive, .delete])
         // Swipe left = Delete only.
         XCTAssertEqual(ListMechanicsEngine.swipeActions(for: unpinned), [.delete])
-        XCTAssertEqual(ListMechanicsEngine.menuActions(for: pinned).map(\.kind),
-                       [.rename, .unpin, .archive, .delete])
     }
 
     // MARK: 5. Store write-through: rename
@@ -151,20 +149,24 @@ final class Item5ListMechanicsTests: XCTestCase {
         await store.upsert(row)
 
         await store.renameConversation(id: row.id, title: "After")
-        XCTAssertEqual(await store.get(id: row.id)?.title, "After", "rename writes through")
+        let afterRename = await store.get(id: row.id)?.title
+        XCTAssertEqual(afterRename, "After", "rename writes through")
 
         // Blank rename is a store-level no-op too.
         await store.renameConversation(id: row.id, title: "   ")
-        XCTAssertEqual(await store.get(id: row.id)?.title, "After")
+        let afterBlank = await store.get(id: row.id)?.title
+        XCTAssertEqual(afterBlank, "After")
         // Same-title rename: no-op.
         await store.renameConversation(id: row.id, title: "After")
-        XCTAssertEqual(await store.get(id: row.id)?.title, "After")
+        let afterSame = await store.get(id: row.id)?.title
+        XCTAssertEqual(afterSame, "After")
         // Unknown id: no-op, no crash.
         await store.renameConversation(id: UUID(), title: "Ghost")
 
         // Effect executor routes .updateTitle.
         _ = await store.apply(.updateTitle(conversationID: row.id, title: "Via Effect"))
-        XCTAssertEqual(await store.get(id: row.id)?.title, "Via Effect")
+        let afterEffect = await store.get(id: row.id)?.title
+        XCTAssertEqual(afterEffect, "Via Effect")
     }
 
     // MARK: 6. Store write-through: pin / archive round-trips
@@ -222,7 +224,8 @@ final class Item5ListMechanicsTests: XCTestCase {
 
         let deleted = await store.deleteConversation(id: row.id)
         XCTAssertTrue(deleted)
-        XCTAssertNil(await store.get(id: row.id))
+        let afterDelete = await store.get(id: row.id)
+        XCTAssertNil(afterDelete)
         let messages = try? await store.messages(conversationID: row.id)
         XCTAssertEqual(messages?.count, 0, "messages cascade with the conversation row")
         // Deleting again reports false (idempotent contract).
@@ -244,13 +247,15 @@ final class Item5ListMechanicsTests: XCTestCase {
         let title1 = await store.applyAutoTitleIfFirstExchange(
             conversationID: row.id, messageRole: .user, messageText: "Krendora order status")
         XCTAssertEqual(title1, "Krendora order status")
-        XCTAssertEqual(await store.get(id: row.id)?.title, "Krendora order status")
+        let afterTitle1 = await store.get(id: row.id)?.title
+        XCTAssertEqual(afterTitle1, "Krendora order status")
 
         // Second user message → no further retitling.
         let title2 = await store.applyAutoTitleIfFirstExchange(
             conversationID: row.id, messageRole: .user, messageText: "Also check the budget")
         XCTAssertNil(title2)
-        XCTAssertEqual(await store.get(id: row.id)?.title, "Krendora order status")
+        let afterTitle2 = await store.get(id: row.id)?.title
+        XCTAssertEqual(afterTitle2, "Krendora order status")
 
         // Assistant message on a still-default row → no title.
         let other = conv("New chat")
@@ -258,7 +263,8 @@ final class Item5ListMechanicsTests: XCTestCase {
         let title3 = await store.applyAutoTitleIfFirstExchange(
             conversationID: other.id, messageRole: .assistant, messageText: "Hello!")
         XCTAssertNil(title3)
-        XCTAssertEqual(await store.get(id: other.id)?.title, "New chat")
+        let afterTitle3 = await store.get(id: other.id)?.title
+        XCTAssertEqual(afterTitle3, "New chat")
 
         // Unknown conversation → nil, no crash.
         let title4 = await store.applyAutoTitleIfFirstExchange(
