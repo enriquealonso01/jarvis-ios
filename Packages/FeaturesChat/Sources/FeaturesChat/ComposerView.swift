@@ -52,7 +52,7 @@ public struct V2ComposerView: View {
 
     public init(vm: ComposerViewModel, isModelChooserPresented: Binding<Bool>) {
         self.vm = vm
-        self.isModelChooserPresented = isModelChooserPresented
+        _isModelChooserPresented = isModelChooserPresented
     }
 
     public var body: some View {
@@ -299,7 +299,7 @@ public struct V2ModelChooserSheet: View {
 
     public init(vm: ComposerViewModel, selection: Binding<String?>) {
         self.vm = vm
-        self.selection = selection
+        _selection = selection
     }
 
     public var body: some View {
