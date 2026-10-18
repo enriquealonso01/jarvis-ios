@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import DesignSystem
 
 /// iPhone slide-over sidebar geometry (UI Law §1, binding):
