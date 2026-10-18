@@ -19,13 +19,16 @@ final class Item8TranscriptQATests: XCTestCase {
 
     struct BubbleGeometrySeam {
         var isUser: Bool
-        var proposedWidth: CGFloat
+        var naturalWidth: CGFloat
+        var availableWidth: CGFloat = 400
 
-        /// nil = assistant full-width unbubbled (no width cap applied).
+        /// §2 "max ~85% width" = a CAP: the bubble renders at its natural
+        /// width and shrinks only when natural would exceed 85% (mirrors
+        /// TranscriptRowView: frame(maxWidth: availableWidth × 0.85) —
+        /// maxWidth never stretches content up).
         var bubbleWidth: CGFloat? {
             guard isUser else { return nil }
-            let cap = proposedWidth * 0.85
-            return proposedWidth > cap ? cap : proposedWidth
+            return min(naturalWidth, availableWidth * 0.85)
         }
 
         var alignment: Side {
@@ -74,19 +77,19 @@ final class Item8TranscriptQATests: XCTestCase {
     // MARK: - §2 Bubbles
 
     func testUserBubbleRightAlignedTintedAndCappedAt85Percent() {
-        var b = BubbleGeometrySeam(isUser: true, proposedWidth: 400)
+        var b = BubbleGeometrySeam(isUser: true, naturalWidth: 400)
         XCTAssertEqual(b.alignment, .trailing, "user bubble right-aligned (§2)")
         XCTAssertTrue(b.isBubbled, "user message is bubbled (§2)")
         XCTAssertEqual(b.bubbleWidth ?? 0, 340, accuracy: 0.01,
-                       "user bubble capped at 85% of width (§2)")
+                       "long user bubble capped at 85% of available width (§2)")
 
-        b = BubbleGeometrySeam(isUser: true, proposedWidth: 200)
+        b = BubbleGeometrySeam(isUser: true, naturalWidth: 200)
         XCTAssertEqual(b.bubbleWidth ?? 0, 200, accuracy: 0.01,
-                       "short user bubble not inflated toward cap (§2)")
+                       "short bubble renders at natural width — §2 caps, never inflates")
     }
 
     func testAssistantMessageFullWidthUnbubbled() {
-        let a = BubbleGeometrySeam(isUser: false, proposedWidth: 400)
+        let a = BubbleGeometrySeam(isUser: false, naturalWidth: 400)
         XCTAssertEqual(a.alignment, .leading, "assistant left/full-width (§2)")
         XCTAssertFalse(a.isBubbled, "assistant never bubbled (§2)")
         XCTAssertNil(a.bubbleWidth, "no width cap for assistant block (§2)")
@@ -174,14 +177,18 @@ final class Item8TranscriptQATests: XCTestCase {
     func testOneThousandTokenStreamCoalescesAndTerminatesClean() {
         var engine = ChatStreamEngine()
         let mid = UUID().uuidString.lowercased()
-        engine.consume(AgentEvent.make(id: 0, kind: ChatStreamEngine.Kind.messageStart,
+        // NOTE: consume() dedupes replay with `event.id > lastSeq` and
+        // lastSeq starts at 0 — the opener must carry id >= 1 or it is
+        // swallowed and the done frame lands on a phantom key (Item 2's
+        // phantom-stream-id class of bug, replayed in test form).
+        engine.consume(AgentEvent.make(id: 1, kind: ChatStreamEngine.Kind.messageStart,
                                        payload: "{\"message_id\":\"\(mid)\"}"))
         var reference = ""
         var commits = 0
         for i in 1...1000 {
             let tok = " t\(i)"
             reference += tok
-            engine.consume(AgentEvent.make(id: Int64(i), kind: ChatStreamEngine.Kind.token,
+            engine.consume(AgentEvent.make(id: Int64(i + 1), kind: ChatStreamEngine.Kind.token,
                                            payload: tok))
             // Tokens arrive 1ms apart: the 60ms coalescing cadence must
             // collapse ~1000 tokens into a handful of UI commits (M1 gate:
@@ -191,7 +198,7 @@ final class Item8TranscriptQATests: XCTestCase {
                 commits += 1
             }
         }
-        engine.consume(AgentEvent.make(id: 1001, kind: ChatStreamEngine.Kind.done,
+        engine.consume(AgentEvent.make(id: 1002, kind: ChatStreamEngine.Kind.done,
                                        payload: "{\"message_id\":\"\(mid)\"}"))
         let final = engine.commitIfDue(now: 1.1)
 

@@ -97,6 +97,12 @@ final class Item8TranscriptBuilderSmokeTests: XCTestCase {
     func testColdLaunchRestoreSeedsMidStreamRowFromStore() async throws {
         let store = PersistenceStore()
         let conv = UUID()
+        // messages.conversation_id REFERENCES conversations (Schema.swift:26,
+        // FK enforced — GRDB 7 Configuration.foreignKeysEnabled defaults true).
+        // The parent row MUST exist or every upsert below is silently
+        // rejected (`try?` swallows the constraint failure) — same contract
+        // Item2StoreRoundTripQATests pins with its StoredConversation upsert.
+        await store.upsert(StoredConversation(id: conv, title: "cold launch restore"))
         for i in 0..<20 {
             try await store.upsert(StoredMessage(
                 conversationID: conv,
