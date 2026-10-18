@@ -185,6 +185,49 @@ public final class ComposerViewModel: ObservableObject {
             text: option.label, source: .picker))
     }
 
+    // MARK: - Item 6: real-picker seam (feature #8, UI Law §6)
+    //
+    // The pinned VM contract above is untouched. Real pickers (app-target
+    // thin wrappers: PhotosPicker / camera / fileImporter) call `record`
+    // with a pure `ComposerAttachments.PickedItem` + the sheet row that
+    // launched them; this resolves budgets + dedupe and stages the chip.
+    // `send()` now ALSO writes the `StoredAttachment` payload rows onto the
+    // message (send-time previews per feature #8).
+
+    /// Picked-item metadata by chip id (drive sizes + local paths for the
+    /// send-time payload rows). Not part of the draft KV snapshot — file
+    /// paths don't survive relaunch meaningfully; chips do.
+    private(set) var pickedItems: [UUID: ComposerAttachments.PickedItem] = [:]
+
+    /// Last staging rejection (surfaced by the view — a rejected pick is
+    /// NEVER silent; the view clears it after presenting).
+    @Published public private(set) var lastRejection: ComposerAttachments.Rejection?
+
+    /// Record one picked item from a real picker. Returns the staging
+    /// outcome: a staged chip (appended), a duplicate (existing chip id —
+    /// nothing stacked), or a rejection (surfaced, nothing staged).
+    @discardableResult
+    public func record(_ item: ComposerAttachments.PickedItem) -> ComposerAttachments.Stage {
+        let outcome = ComposerAttachments.stage(item: item, kind: "file", staged: attachments)
+        switch outcome {
+        case .staged(let chip):
+            attachments.append(chip)
+            pickedItems[chip.id] = item
+        case .duplicate(let existingID):
+            // A file-backed re-pick of the SAME document can carry a fresh
+            // local path (copy moved) — refresh the metadata, not the chip.
+            pickedItems[existingID] = item
+        case .rejected(let rejection):
+            lastRejection = rejection
+        }
+        return outcome
+    }
+
+    /// Clear a surfaced rejection (the view calls this after presenting).
+    public func clearRejection() {
+        lastRejection = nil
+    }
+
     // MARK: - Send (content-gated, local-first)
 
     /// Send. Accepts only with non-whitespace content; writes one user row
@@ -209,12 +252,32 @@ public final class ComposerViewModel: ObservableObject {
             content += chip.text
         }
 
+        // Item 6: picker/paste chips persist as StoredAttachment descriptors
+        // on the row (image|file|paste kinds; paste chips ride inside content
+        // AND declare their descriptor).
+        var descriptors: [StoredAttachment] = []
+        let imageExts = ["jpg", "jpeg", "png", "heic", "webp", "gif"]
+        for chip in chips {
+            switch chip.source {
+            case .paste:
+                descriptors.append(StoredAttachment(kind: "paste", name: chip.text))
+            case .picker:
+                let picked = pickedItems[chip.id]
+                let ext = (chip.text as NSString).pathExtension.lowercased()
+                let kind = imageExts.contains(ext) ? "image" : "file"
+                descriptors.append(StoredAttachment(
+                    kind: kind,
+                    name: chip.text,
+                    localPath: picked?.localPath))
+            }
+        }
         let row = StoredMessage(
             conversationID: conversationID,
             role: .user,
             content: content,
             status: .sending,
-            createdAt: clock()
+            createdAt: clock(),
+            attachments: descriptors
         )
         if let store {
             // First send on a fresh chat creates the conversation row
