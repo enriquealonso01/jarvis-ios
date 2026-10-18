@@ -103,6 +103,12 @@ public struct ComposerSheetOption: Identifiable, Sendable, Equatable {
         self.systemImage = systemImage
     }
 
+    /// Shorthand instances (tester QA contract: `.files`-style references).
+    public static let photos = ComposerSheetOption(id: .photos, label: "Photos", systemImage: "photo")
+    public static let camera = ComposerSheetOption(id: .camera, label: "Camera", systemImage: "camera")
+    public static let files = ComposerSheetOption(id: .files, label: "Files", systemImage: "folder")
+    public static let hermesFiles = ComposerSheetOption(id: .hermesFiles, label: "Hermes files", systemImage: "externaldrive.connected.to.line.below")
+
     /// Fixed row set, fixed display order: Photos, Camera, Files, Hermes
     /// workspace files (UI Law §6 — exactly these four, no extras).
     public static let standard: [ComposerSheetOption] = [
