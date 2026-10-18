@@ -175,9 +175,11 @@ final class Item4ComposerQATests: XCTestCase {
         let count = await store.count()
         XCTAssertEqual(count, 1, "text + attachment chip = one user message row")
         let row = try await store.recentMessages(conversationID: vm.conversationID, limit: 1)
-        XCTAssertEqual(row.first?.content, "see attached")
-        XCTAssertFalse(vm.attachments.isEmpty,
-                       "attachment chip must survive until send consumes it")
+        // Item 6 contract: paste payloads flatten into the one row, verbatim.
+        XCTAssertEqual(row.first?.content?.hasPrefix("see attached\n\n"), true,
+                       "send flattens text + paste chip into one row")
+        XCTAssertTrue(vm.attachments.isEmpty,
+                      "send consumes the chips (Item 6 flatten/clear contract)")
         XCTAssertTrue(vm.text.isEmpty || vm.text == "")
     }
 
@@ -218,10 +220,10 @@ final class Item4ComposerQATests: XCTestCase {
             XCTAssertFalse(m.label.isEmpty, "every model chip must be LABELED (§6)")
             XCTAssertFalse(m.id.isEmpty)
         }
-        let custom = chip("webSearch", label: "Web Search")
+        let custom = chip("deepResearch", label: "Deep Research")
         let vm = makeVM(models: ComposerModelOption.defaults + [custom])
         vm.toggle(modelID: custom.id)
-        XCTAssertEqual(vm.selectedModels.first?.label, "Web Search",
+        XCTAssertEqual(vm.selectedModels.first?.label, "Deep Research",
                        "chip label survives into selected state verbatim")
     }
 
