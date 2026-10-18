@@ -441,12 +441,12 @@ public struct RichBlock: Sendable, Equatable, Identifiable, Codable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
-        version = try c.decode(String.self, forKey: .version)
-        fallbackText = try c.decodeIfPresent(String.self, forKey: .fallbackText) ?? ""
-        a11yLabel = try c.decodeIfPresent(String.self, forKey: .a11yLabel)
-        print = try c.decodeIfPresent(RichPrintPolicy.self, forKey: .print)
-        actions = try c.decodeIfPresent([RichBlockAction].self, forKey: .actions)
+        let decodedID = try c.decode(String.self, forKey: .id)
+        let decodedVersion = try c.decode(String.self, forKey: .version)
+        let decodedFallback = try c.decodeIfPresent(String.self, forKey: .fallbackText) ?? ""
+        let decodedA11y = try c.decodeIfPresent(String.self, forKey: .a11yLabel)
+        let decodedPrint = try c.decodeIfPresent(RichPrintPolicy.self, forKey: .print)
+        let decodedActions = try c.decodeIfPresent([RichBlockAction].self, forKey: .actions)
         let rawType = try c.decode(String.self, forKey: .type)
         guard let type = RichBlockType(rawValue: rawType) else {
             throw DecodingError.dataCorruptedError(forKey: .type, in: c,
@@ -455,16 +455,29 @@ public struct RichBlock: Sendable, Equatable, Identifiable, Codable {
         // `props` may be absent only for the internal fallback state; every
         // real block carries its props object. Decoded as a nested container
         // (same keyed container family as the wire object, props-typed keys).
+        let decodedContent: RichBlockContent
         if c.contains(.props) {
             var nested = try c.nestedContainer(keyedBy: RichBlockContent.PropKey.self,
                                                forKey: .props)
-            content = try RichBlockContent.decode(type: type, from: &nested)
+            decodedContent = try RichBlockContent.decode(type: type, from: &nested)
         } else if type == .fallback {
-            content = .fallback(summary: fallbackText)
+            decodedContent = .fallback(summary: decodedFallback)
         } else {
             throw DecodingError.keyNotFound(CodingKeys.props, .init(
                 codingPath: c.codingPath, debugDescription: "block is missing props"))
         }
+        // Same invariants as the memberwise init — a decoded block is a
+        // first-class block: non-blank fallbackText, defaulted print
+        // strategy (schema `print` is optional on the wire, never in-model).
+        id = decodedID
+        version = decodedVersion
+        fallbackText = RichBlocks.nonEmpty(decodedFallback)
+            ?? RichBlocks.nonEmpty(decodedContent.plainSummary)
+            ?? "This content couldn't be displayed."
+        a11yLabel = decodedA11y
+        print = decodedPrint ?? RichPrintPolicy(strategy: RichPrintDefaults.strategy(for: type))
+        actions = decodedActions
+        content = decodedContent
     }
 
     public func encode(to encoder: Encoder) throws {
