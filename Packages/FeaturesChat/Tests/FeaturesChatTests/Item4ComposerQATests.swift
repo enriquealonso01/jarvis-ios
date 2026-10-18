@@ -176,7 +176,7 @@ final class Item4ComposerQATests: XCTestCase {
         XCTAssertEqual(count, 1, "text + attachment chip = one user message row")
         let row = try await store.recentMessages(conversationID: vm.conversationID, limit: 1)
         // Item 6 contract: paste payloads flatten into the one row, verbatim.
-        XCTAssertEqual(row.first?.content?.hasPrefix("see attached\n\n"), true,
+        XCTAssertEqual(row.first.map { $0.content.hasPrefix("see attached\n\n") } ?? false, true,
                        "send flattens text + paste chip into one row")
         XCTAssertTrue(vm.attachments.isEmpty,
                       "send consumes the chips (Item 6 flatten/clear contract)")
