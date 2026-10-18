@@ -103,9 +103,14 @@ extension PersistenceStore {
     public func addProjectSource(_ source: StoredProjectSource) async -> StoredProjectSource? {
         guard await getProject(id: source.projectID) != nil else { return nil }
         let nextOrder = await projectSources(projectID: source.projectID).count
-        var row = source
-        if row.displayOrder == 0 { row.displayOrder = nextOrder }
+        // Adjust BEFORE the write closure: a @Sendable closure cannot capture
+        // a mutated local (Swift 6) — hand it an immutable copy and shadow
+        // the mutable var inside (the house GRDB-write pattern).
+        var adjusted = source
+        if adjusted.displayOrder == 0 { adjusted.displayOrder = nextOrder }
+        let toSave = adjusted
         let saved = (try? await dbWriter.write { db in
+            var row = toSave
             try row.save(db)
             return row
         }) ?? nil
