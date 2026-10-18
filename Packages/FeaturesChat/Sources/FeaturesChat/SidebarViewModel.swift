@@ -281,7 +281,7 @@ public final class SidebarViewModel: ObservableObject {
     /// Awaitable: the write-through completes before this returns.
     public func setOpen(_ open: Bool) async {
         isOpen = open
-        await store.setAppState(open, key: Tokens.Sidebar.Keys.isOpen)
+        await store.setAppState(open, key: Tokens.Sidebar.Keys.sidebarOpen)
     }
 
     /// Projects section collapse — persists across launches (Item 3 §1).
@@ -293,7 +293,7 @@ public final class SidebarViewModel: ObservableObject {
     /// Cold-launch restore: open/closed, projects collapse, last selection.
     /// A selection whose row no longer exists restores to nil.
     public func restoreState() async {
-        isOpen = (await store.appState(Bool.self, key: Tokens.Sidebar.Keys.isOpen)) ?? false
+        isOpen = (await store.appState(Bool.self, key: Tokens.Sidebar.Keys.sidebarOpen)) ?? false
         projectsExpanded = (await store.appState(Bool.self, key: Tokens.Sidebar.Keys.projectsExpanded)) ?? true
         let restored = await store.appState(String.self, key: Tokens.Sidebar.Keys.lastSelection)
         if let uuidString = restored, let id = UUID(uuidString: uuidString),
