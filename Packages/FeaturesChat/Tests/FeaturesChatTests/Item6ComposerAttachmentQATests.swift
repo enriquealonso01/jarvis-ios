@@ -325,7 +325,7 @@ final class Item6ComposerAttachmentQATests: XCTestCase {
         vm.text = "draft body"
         vm.plusTapped()
         vm.selectSheetOption(.files)
-        vm.persistDraft()
+        await vm.persistDraft()
         // Fresh VM (app relaunch) restores the full composer state.
         let vm2 = makeVM(store: store)
         XCTAssertTrue(vm2.attachments.isEmpty, "fresh VM starts clean")

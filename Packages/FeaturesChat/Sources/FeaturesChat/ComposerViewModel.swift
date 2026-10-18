@@ -269,12 +269,12 @@ public final class ComposerViewModel: ObservableObject {
     /// Persist the draft + chips through the store KV (call after user
     /// mutations; explicit instead of `didSet` so pure-logic tests stay
     /// synchronous and store-free).
-    public func persistDraft() {
+    public func persistDraft() async {
         guard let store else { return }
         let snapshot = DraftSnapshot(
             text: text,
             attachments: attachments,
             selectedModels: selectedModels)
-        Task { await store.setAppState(snapshot, key: Keys.draft) }
+        await store.setAppState(snapshot, key: Keys.draft)
     }
 }
