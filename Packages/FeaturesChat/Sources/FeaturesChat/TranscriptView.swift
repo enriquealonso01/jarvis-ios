@@ -123,13 +123,18 @@ public enum TranscriptLayoutEngine: Sendable {
         let anyOverlay = !live.isEmpty
         let claimedUUIDs = Set(liveMessageIDs.values.map(\.uuidString))
         if anyOverlay {
-            // Live stream owns these rows: hide the stored copies (a claimed
-            // row, or any still-.streaming row — the cold-launch restore
-            // seeds exactly those into the overlay).
+            // Live stream owns these rows: hide the stored copies while the
+            // store's copy is NOT yet terminal (a claimed row still pending,
+            // or any still-.streaming row — the cold-launch restore seeds
+            // exactly those into the overlay). Terminal (.sent/.failed)
+            // stored copies stay visible: the store has absorbed the final
+            // text, so hiding them would open a gap when the overlay drops.
             rows.removeAll { row in
                 guard !row.isUser else { return false }
-                let storedID = row.id.dropFirst("m:".count)
-                return row.status == .streaming || claimedUUIDs.contains(storedID)
+                if row.status == .streaming { return true }
+                if row.status == .sent || row.status == .failed { return false }
+                let storedID = String(row.id.dropFirst("m:".count))
+                return claimedUUIDs.contains(storedID)
             }
         }
 

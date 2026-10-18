@@ -51,33 +51,41 @@ final class Item8TranscriptBuilderSmokeTests: XCTestCase {
         XCTAssertEqual(Set(rows.map(\\.id)).count, rows.count, "no duplicate row ids")
     }
 
-    /// Live overlay retires when the store's row goes terminal — no dup, no
-    /// gap (§3 stop: the pipeline froze + persisted the partial).
+    /// Live overlay hands off to the store row without a dup or a gap:
+    /// while the store's copy is mid-stream the overlay is fresher (store
+    /// copy hidden); once the store's copy is terminal the overlay retires
+    /// and the store row is authoritative (§3 stop: the pipeline froze +
+    /// persisted the partial).
     func testLiveOverlayRetiresWhenStoreRowTurnsTerminal() {
         let conv = UUID()
         let msgID = UUID()
-        var stored = StoredMessage(
+
+        // Phase 1: store row still .streaming (pipeline debounce in flight)
+        // → overlay renders, stored copy hidden.
+        var mid = StoredMessage(
             conversationID: conv,
             role: .assistant,
             content: "partial answer",
-            status: .sent,
+            status: .streaming,
             createdAt: Date(timeIntervalSince1970: 1_700_000_001))
-        stored.id = msgID
-
+        mid.id = msgID
         let live = [StreamMessageSnapshot(
-            id: 3, state: .stopped, text: "partial answer", lastEventID: 9)]
-        // Overlay still routed to the message UUID…
+            id: 3, state: .streaming, text: "partial answer", lastEventID: 9)]
         var rows = TranscriptLayoutEngine.renderRows(
-            stored: [stored], live: live, liveMessageIDs: [3: msgID])
+            stored: [mid], live: live, liveMessageIDs: [3: msgID])
         XCTAssertEqual(rows.filter { $0.origin == .live }.count, 1,
-                       "until the store row is terminal the overlay stays (timing-safe)")
+                       "mid-stream: the overlay is the fresher render")
+        XCTAssertEqual(rows.filter { $0.origin == .stored }.count, 0,
+                       "mid-stream: the stale stored copy is hidden, not dup'd")
 
-        // …and once the store row lands terminal, the overlay retires.
+        // Phase 2: store row lands terminal → overlay retires, store row
+        // is the single source of truth.
+        mid.status = .sent
         rows = TranscriptLayoutEngine.renderRows(
-            stored: [stored], live: live, liveMessageIDs: [3: msgID])
-        XCTAssertEqual(rows.count, 1)
+            stored: [mid], live: live, liveMessageIDs: [3: msgID])
+        XCTAssertEqual(rows.count, 1, "exactly one row — no dup, no gap")
         XCTAssertEqual(rows.first?.origin, .stored,
-                       "store-authoritative once terminal — no dup, no gap")
+                       "store-authoritative once terminal")
     }
 
     // MARK: - M1 gate 2: cold-launch restore shows the full transcript
@@ -102,7 +110,7 @@ final class Item8TranscriptBuilderSmokeTests: XCTestCase {
             status: .streaming,
             lastEventID: 321,
             createdAt: Date(timeIntervalSince1970: 1_700_000_100))
-        try await store.upsert(mid)
+        await store.upsert(mid)
 
         let state = try await store.streamRestoreState(conversationID: conv)
         XCTAssertEqual(state.snapshot?.id, mid.id, "mid-stream row is the restore seed")
