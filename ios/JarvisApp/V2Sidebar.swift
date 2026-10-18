@@ -469,6 +469,8 @@ struct V2ConversationRow: View {
 
     @State private var isRenameSheetPresented = false
     @State private var pendingConfirmation: RowMenuAction.Kind?
+    /// Item 5 FIX: reveal offset of the row-drag delete (≤ 0).
+    @State private var swipeOffset: CGFloat = 0
 
     /// The §8 menu model, order pinned by Item 5 tests: Rename,
     /// Pin/Unpin, Archive, Delete(red).
@@ -507,15 +509,51 @@ struct V2ConversationRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            // UI Law §8: swipe left = Delete (red; confirmed below —
-            // full-swipe never fires it silently).
-            Button(role: .destructive) {
-                pendingConfirmation = .delete
-            } label: {
-                Label("Delete", systemImage: "trash")
+        // Item 5 FIX: .swipeActions never fired here — the three sidebar
+        // sections render in a ScrollView+VStack, and .swipeActions is a
+        // List-only modifier. Replaced with a row drag that reveals the
+        // same red, non-full-swipe Delete (§8): confirm dialog → VM
+        // swipeDelete path unchanged. Child gestures beat the shell's
+        // plain .gesture (SlideOverSidebar), so panel-close is untouched.
+        .offset(x: swipeOffset)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 24)
+                .onChanged { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    swipeOffset = max(-96, min(0, value.translation.width))
+                }
+                .onEnded { value in
+                    let horizontalDominant = abs(value.translation.width) > abs(value.translation.height)
+                    if horizontalDominant, value.translation.width < -44 {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                            swipeOffset = -96
+                        }
+                    } else {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                            swipeOffset = 0
+                        }
+                    }
+                }
+        )
+        .background(alignment: .trailing) {
+            // The revealed action: red, trash-labeled, tap = confirm-first
+            // (never a silent full swipe). Same identifier as before so QA
+            // probes are unaffected.
+            if swipeOffset < 0 {
+                Button(role: .destructive) {
+                    pendingConfirmation = .delete
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.white)
+                        .frame(width: 88, height: Tokens.Sidebar.rowHeight)
+                        .background(Color.red, in: Rectangle())
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("sidebar.swipeDelete")
+                .transition(.opacity)
             }
-            .accessibilityIdentifier("sidebar.swipeDelete")
         }
         .contextMenu {
             ForEach(menuActions) { menuAction in
@@ -570,7 +608,14 @@ struct V2ConversationRow: View {
         Binding(
             get: { pendingConfirmation == kind },
             set: { presented in
-                if !presented { pendingConfirmation = nil }
+                if !presented {
+                    pendingConfirmation = nil
+                    // Item 5 FIX: after the delete dialog resolves (confirm
+                    // or cancel) the row-drag reveal snaps closed again.
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        swipeOffset = 0
+                    }
+                }
             }
         )
     }
