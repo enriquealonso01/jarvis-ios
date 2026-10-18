@@ -1,3 +1,4 @@
+import LocalAuthentication
 import XCTest
 @testable import JarvisApp
 
