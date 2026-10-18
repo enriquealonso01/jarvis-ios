@@ -185,15 +185,15 @@ public final class ProjectHomeViewModel: ObservableObject {
         return ok
     }
 
-    // MARK: Derived (pure; pinned headlessly)
+    // MARK: Derived (pure; pinned headlessly — nonisolated: no VM state)
 
     /// The header count line "N chats".
-    public static func chatCountLine(count: Int) -> String {
+    public nonisolated static func chatCountLine(count: Int) -> String {
         "\(count) chat\(count == 1 ? "" : "s")"
     }
 
     /// Truncated instructions preview for the collapsed section.
-    public static func instructionsPreview(_ text: String, limit: Int = 120) -> String {
+    public nonisolated static func instructionsPreview(_ text: String, limit: Int = 120) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > limit else { return trimmed }
         return String(trimmed.prefix(limit)) + "…"
