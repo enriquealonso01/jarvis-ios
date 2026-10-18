@@ -488,17 +488,20 @@ final class Item11RichBlocksQATests: XCTestCase {
     func testUnsafeCitationURLFallsBack() throws {
         var dict = p0BlockDict("citation")
         dict["props"] = ["title": "Evil", "url": "javascript:alert(1)"]
-        let block = try decodeBlock(dict)
-        guard case .citation = block.content else {
-            // Strict decode rejects javascript: URLs entirely — that is also
-            // a safe outcome; assert whichever way the model resolved it.
-            XCTAssertEqual(block.type, .fallback)
-            return
+        // Strict decode REJECTS unsafe URLs outright (throws) — a safe
+        // outcome by itself. It must never produce a citation block.
+        if let block = try? decodeBlock(dict) {
+            XCTAssertNotEqual(block.type, .citation,
+                              "an unsafe URL must never decode into a citation")
         }
-        XCTAssertTrue(URL(string: "javascript:alert(1)") != nil)
-        // The VIEW layer gates via safeURL — pure pin:
+        // The lenient transcript path degrades to the fallback card and
+        // keeps the producer's fallbackText (never blank, never a dead link).
+        let salvaged = RichBlockSalvage.block(from: dict)
+        XCTAssertEqual(salvaged.type, .fallback)
+        XCTAssertEqual(salvaged.fallbackDisplayText,
+                       "Spec — https://jarvis.local/spec")
+        // The view-layer gate is the same function (one definition).
         XCTAssertNil(RichBlocks.safeURL("javascript:alert(1)"))
-        _ = block
     }
 
     // MARK: No-WKWebView / no-HTML law (static, macOS-lane safe)
