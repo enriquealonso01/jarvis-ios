@@ -235,16 +235,15 @@ public struct V2ProjectHomeView: View {
             }
         }
         .navigationTitle(vm.project?.name ?? "Project")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    renamePresented = true
-                } label: {
-                    Image(systemName: "pencil")
-                }
-                .accessibilityIdentifier("projectHome.rename")
-            }
+            #if os(iOS)
+            ToolbarItem(placement: .topBarTrailing) { renameToolbarButton }
+            #else
+            ToolbarItem { renameToolbarButton }
+            #endif
         }
         .sheet(isPresented: $renamePresented) {
             V2ProjectRenameSheet(initialName: vm.project?.name ?? "") { newName in
@@ -259,6 +258,16 @@ public struct V2ProjectHomeView: View {
             }
         }
         .task { await vm.load() }
+    }
+
+    /// The toolbar rename affordance (placement differs per platform).
+    private var renameToolbarButton: some View {
+        Button {
+            renamePresented = true
+        } label: {
+            Image(systemName: "pencil")
+        }
+        .accessibilityIdentifier("projectHome.rename")
     }
 
     private var content: some View {
@@ -279,7 +288,9 @@ public struct V2ProjectHomeView: View {
             instructionsSection
             chatsSection
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #endif
     }
 
     // MARK: Sources
@@ -321,7 +332,9 @@ public struct V2ProjectHomeView: View {
                 TextField("Name", text: $sourceName)
                     .accessibilityIdentifier("projectHome.source.name")
                 TextField("File path or link", text: $sourceReference)
+                    #if os(iOS)
                     .textInputAutocapitalization(.never)
+                    #endif
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("projectHome.source.reference")
                 Button("Add source") {
@@ -451,23 +464,22 @@ struct V2ProjectRenameSheet: View {
                     .accessibilityIdentifier("projectHome.rename.field")
             }
             .navigationTitle("Rename project")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
-                        onCancel()
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
-                        submit()
-                    }
-                    .accessibilityIdentifier("projectHome.rename.save")
-                }
+                #if os(iOS)
+                ToolbarItem(placement: .topBarLeading) { cancelSheetButton }
+                ToolbarItem(placement: .topBarTrailing) { saveSheetButton }
+                #else
+                ToolbarItem { cancelSheetButton }
+                ToolbarItem { saveSheetButton }
+                #endif
             }
         }
+        #if os(iOS)
         .presentationDetents([.medium])
+        #endif
         .onAppear {
             draft = initialName
             fieldFocused = true
@@ -478,5 +490,19 @@ struct V2ProjectRenameSheet: View {
         // The parent owns dismissal (its binding closes the sheet) — the
         // sheet never self-dismisses, so a rejected rename can't strand it.
         onSubmit(draft)
+    }
+
+    private var cancelSheetButton: some View {
+        Button("Cancel") {
+            onCancel()
+            dismiss()
+        }
+    }
+
+    private var saveSheetButton: some View {
+        Button("Save") {
+            submit()
+        }
+        .accessibilityIdentifier("projectHome.rename.save")
     }
 }
