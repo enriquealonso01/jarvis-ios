@@ -2,15 +2,14 @@ import XCTest
 @testable import JarvisApp
 
 /// Item 7 TESTER QA — feature #39 (V2-PLAN.md): Face ID app lock + privacy
-/// shield, P0. This suite PINS the contract before/at implementation time.
-/// It is pure logic only (no UIKit; the only LA-adjacent surface touched is
-/// `LAPolicy`, an enum, via the same pure mapping the app itself uses).
+/// shield, P0. Pure logic only (no UIKit; the only LA-adjacent surface touched
+/// is `LAPolicy`, an enum, via the same pure mapping the app itself uses).
 ///
-/// Seams the implementation must expose (protocol-injected, per task brief):
+/// Seams the implementation exposes (protocol-injected, per task brief):
 ///   - `AppLockPolicy.lockRequired(enabled:launchOnly:trigger:)` — pure.
 ///   - `AppLockPolicy.authPolicy(biometricsAvailable:) -> LAPolicy` — pure
-///     mapping; .deviceOwnerAuthentication (which INCLUDES biometric when
-///     enrolled) is the mandated gate; biometrics-only is a stopgap.
+///     mapping; .deviceOwnerAuthentication (which INCLUDES biometrics when
+///     enrolled) is the mandated gate; biometrics-only is never the gate.
 ///   - `AppLockEngine` — a @MainActor ObservableObject with protocol-injected
 ///     `AppLockPolicyEvaluating` (evaluate) + `AppLockClock` (now), driving
 ///     `appBackgrounded()` / `appActivated()` with the same state machine the
@@ -18,6 +17,12 @@ import XCTest
 ///   - `AuthStore.keychainAccessibility` — the static configuration value
 ///     passed as kSecAttrAccessible; the spec mandates
 ///     kSecAttrAccessibleWhenUnlockedThisDeviceOnly.
+///
+/// NOTE on observation points: `AppLockEngine.appActivated()` unlocks
+/// SYNCHRONOUSLY when the injected evaluator grants — so "locked after
+/// activation" is only observable with a denying evaluator (the lock stays up
+/// for the manual-retry path). The real controller behaves identically
+/// (AppLockController.authenticate() only clears isLocked on a grant).
 @MainActor
 final class Item7AppLockQATests: XCTestCase {
 
@@ -61,14 +66,29 @@ final class Item7AppLockQATests: XCTestCase {
 
     // MARK: 2 — lock state machine: cold launch + background → lock
 
-    func testColdLaunchLocksImmediatelyWhenEnabled() async throws {
-        let (engine, policy) = makeEngine(granted: true)
-        // First activation after process start = cold launch, enabled → the
-        // engine must present the lock and run the auth evaluation.
+    func testColdLaunchLocksAndRunsOnlyTheSpecGate() async {
+        // Denying evaluator = the Face ID dialog was dismissed/failed: the
+        // cold launch MUST still have raised the lock, and the ONLY policy
+        // the machine may request is the spec gate (never biometrics-only).
+        let (engine, policy) = makeEngine(granted: false)
         await engine.appActivated()
-        XCTAssertTrue(engine.isLocked, "cold launch with app-lock enabled MUST be locked")
+        XCTAssertTrue(engine.isLocked, "cold launch with app-lock enabled MUST lock (failed first attempt keeps the lock up)")
         XCTAssertEqual(policy.requestedPolicies, [.deviceOwnerAuthentication],
                        "the evaluation run on cold launch must request the spec gate")
+        XCTAssertFalse(policy.requestedPolicies.contains(.deviceOwnerAuthenticationWithBiometrics),
+                       "biometrics-only must never be requested as the gate")
+    }
+
+    func testColdLaunchSuccessfulUnlockClearsLock() async {
+        // Granted evaluator = user passed Face ID: cold launch ends unlocked
+        // with no shield (the engine unlocks synchronously inside activation,
+        // exactly like the scene-phase controller's authenticate() path).
+        let (engine, policy) = makeEngine(granted: true)
+        await engine.appActivated()
+        XCTAssertFalse(engine.isLocked, "granted cold-launch unlock leaves the app unlocked")
+        XCTAssertFalse(engine.privacyShielded)
+        XCTAssertEqual(policy.requestedPolicies, [.deviceOwnerAuthentication],
+                       "even a granting flow runs the spec gate, not biometrics-only")
     }
 
     func testColdLaunchUnlockedWhenDisabled() async {
@@ -78,24 +98,37 @@ final class Item7AppLockQATests: XCTestCase {
         XCTAssertTrue(policy.requestedPolicies.isEmpty, "no evaluation at all when disabled")
     }
 
-    func testBackgroundReturnRelocksAndLaunchOnlySkipsIt() async {
-        // launchOnly=false: every background→foreground return re-locks.
-        let (relock, _) = makeEngine(granted: true, launchOnly: false)
-        await relock.appActivated()
-        relock.appBackgrounded()
-        await relock.appActivated()
-        XCTAssertTrue(relock.isLocked,
-                      "with default settings a background→foreground return re-locks")
+    // MARK: 3 — background→foreground return re-locks unless launch-only
 
-        // launchOnly=true: only the cold launch demands unlock.
-        let (launchOnly, _) = makeEngine(granted: true, launchOnly: true)
-        await launchOnly.appActivated()
-        await launchOnly.appActivated()
-        XCTAssertFalse(launchOnly.isLocked,
-                       "'require on launch only' does NOT re-lock mid-session returns")
+    func testBackgroundReturnRelocksWhenLaunchOnlyOff() async {
+        // launchOnly=false (default): every background→foreground return
+        // demands the gate again. With a denying evaluator the lock stays up
+        // and the gate has now run TWICE (cold launch + return).
+        let (engine, policy) = makeEngine(granted: false, launchOnly: false)
+        await engine.appActivated()
+        engine.appBackgrounded()
+        await engine.appActivated()
+        XCTAssertTrue(engine.isLocked,
+                      "with default settings a background→foreground return re-locks")
+        XCTAssertEqual(policy.requestedPolicies.count, 2,
+                       "gate ran once for cold launch and once for the foreground return")
     }
 
-    // MARK: 3 — privacy shield: state-driven, set at .inactive (before snapshot)
+    func testLaunchOnlySkipsForegroundReturnRelock() async {
+        // launchOnly=true: only the cold launch demands unlock; the mid-session
+        // return must not re-lock and must not even consult the evaluator.
+        let (engine, policy) = makeEngine(granted: true, launchOnly: true)
+        await engine.appActivated()
+        engine.appBackgrounded()
+        engine.appBackgrounded()
+        await engine.appActivated()
+        XCTAssertFalse(engine.isLocked,
+                       "'require on launch only' does NOT re-lock mid-session returns")
+        XCTAssertEqual(policy.requestedPolicies.count, 1,
+                       "the foreground return must not run the evaluator again")
+    }
+
+    // MARK: 4 — privacy shield: state-driven, set at .inactive (before snapshot)
 
     func testShieldRaisesOnBackgroundBeforeSnapshot() async {
         let (engine, _) = makeEngine(granted: true)
@@ -105,36 +138,40 @@ final class Item7AppLockQATests: XCTestCase {
                       "shield must be up the moment the app leaves .active — the view layer renders it at .inactive so the app-switcher snapshot carries no content")
         engine.appBackgrounded()
         XCTAssertTrue(engine.privacyShielded, "repeated backgrounding is idempotent")
-
-        // Failure keeps the lock (and the shield with it); success clears it.
-        let (failEngine, _) = makeEngine(granted: false)
-        await failEngine.appActivated()
-        failEngine.appBackgrounded()
-        await failEngine.appActivated()
-        XCTAssertTrue(failEngine.privacyShielded, "failed unlock → still locked, shield stays")
-        XCTAssertTrue(failEngine.isLocked, "failed unlock NEVER grants access")
     }
 
-    func testSuccessClearsLockAndShield() async {
-        let (engine, _) = makeEngine(granted: true)
+    func testFailedUnlockNeverGrantsAndKeepsShield() async {
+        let (engine, _) = makeEngine(granted: false)
         await engine.appActivated()
         engine.appBackgrounded()
         await engine.appActivated()
+        XCTAssertTrue(engine.isLocked, "failed unlock NEVER grants access")
+        XCTAssertTrue(engine.privacyShielded, "failed unlock → still locked, shield stays")
+    }
+
+    func testSuccessfulUnlockClearsLockAndShield() async {
+        // Start with a denying evaluator (cold launch locks), raise the shield
+        // by backgrounding, then let the evaluator grant on the foreground
+        // return: BOTH the lock and the shield must clear together.
+        let (engine, policy) = makeEngine(granted: false)
+        await engine.appActivated()
+        engine.appBackgrounded()
         XCTAssertTrue(engine.isLocked && engine.privacyShielded)
+        policy.granted = true
         await engine.appActivated()
         XCTAssertFalse(engine.isLocked)
         XCTAssertFalse(engine.privacyShielded,
                        "granted unlock clears BOTH the lock and the shield")
     }
 
-    // MARK: 4 — lock window level: .alert + 1 (asserted as pure constant)
+    // MARK: 5 — lock window level: .alert + 1 (asserted as pure constant)
 
     func testLockWindowLevelConstant() {
         // The lock UI must sit in a dedicated window ABOVE everything so
         // sheets/fullScreenCovers can't bypass it. The level is defined once,
-        // as a pure constant, and the window-hosting layer must consume it.
-        // UIWindow.Level.alert is +1000 over .normal — asserting the exact
-        // numeric keeps this file UIKit-free while pinning the level.
+        // as a pure constant, and the window-hosting layer (LockWindowHost)
+        // consumes it. UIWindow.Level.alert is +1000 over .normal — asserting
+        // the exact numeric keeps this file UIKit-free while pinning the level.
         XCTAssertEqual(AppLockEngine.lockWindowLevelRaw, 1_000.0 + 1.0,
                        "lock window = UIWindow.Level.alert + 1")
         XCTAssertEqual(AppLockEngine.lockWindowLevelRaw,
@@ -142,7 +179,7 @@ final class Item7AppLockQATests: XCTestCase {
                        "the raw constant and the UIWindow.Level built from it must agree")
     }
 
-    // MARK: 5 — Keychain: tokens WhenUnlockedThisDeviceOnly (spec #39)
+    // MARK: 6 — Keychain: tokens WhenUnlockedThisDeviceOnly (spec #39)
 
     func testTokenKeychainAccessibilityIsWhenUnlockedThisDeviceOnly() {
         // Asserted via the helper's static configuration value (no Keychain
@@ -153,7 +190,7 @@ final class Item7AppLockQATests: XCTestCase {
                        "spec #39: tokens stored with kSecAttrAccessibleWhenUnlockedThisDeviceOnly")
     }
 
-    // MARK: 6 — no retain cycles: the engine deallocs with its owner
+    // MARK: 7 — no retain cycles: the engine deallocs with its owner
 
     func testEngineDeallocsCleanlyNoRetainCycle() {
         // The engine holds only closures + an injected evaluator; nothing may
