@@ -218,9 +218,8 @@ final class Item4ComposerQATests: XCTestCase {
             XCTAssertFalse(m.label.isEmpty, "every model chip must be LABELED (§6)")
             XCTAssertFalse(m.id.isEmpty)
         }
-        let vm = makeVM()
         let custom = chip("webSearch", label: "Web Search")
-        vm.models = ComposerModelOption.defaults + [custom]
+        let vm = makeVM(models: ComposerModelOption.defaults + [custom])
         vm.toggle(modelID: custom.id)
         XCTAssertEqual(vm.selectedModels.first?.label, "Web Search",
                        "chip label survives into selected state verbatim")
