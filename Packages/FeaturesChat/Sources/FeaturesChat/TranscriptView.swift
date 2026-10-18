@@ -185,6 +185,33 @@ public final class TranscriptViewModel: ObservableObject {
     /// Whether the user is currently scrolled to the bottom (auto-scroll gate).
     @Published public var isAtBottom = true
 
+    // MARK: Item 11 — rich blocks (additive)
+
+    /// Block-interaction state for this transcript. Per-message isolated
+    /// (keys are `"<rowID>|<blockID>"`); a regenerate produces a NEW message
+    /// id, so interactive state never leaks across turns by construction.
+    @Published public private(set) var richInteractions = RichInteractionStore()
+
+    /// The rich blocks a row renders (nil = plain text). Extracted once per
+    /// refresh into `rowRichBlocks` so parsing is NOT re-run from the view
+    /// body on every layout pass.
+    @Published public private(set) var rowRichBlocks: [String: [RichBlock]] = [:]
+
+    /// Lookup seam the row view consumes (nil = ordinary text row).
+    public func richBlocks(for row: TranscriptRow) -> [RichBlock]? {
+        rowRichBlocks[row.id]
+    }
+
+    private static func extractRichBlocks(_ rows: [TranscriptRow]) -> [String: [RichBlock]] {
+        var map: [String: [RichBlock]] = [:]
+        for row in rows where !row.isUser {
+            if let blocks = RichContentPayload.parse(row.text) {
+                map[row.id] = blocks
+            }
+        }
+        return map
+    }
+
     // MARK: Dependencies
 
     public let conversationID: UUID
@@ -295,6 +322,9 @@ public final class TranscriptViewModel: ObservableObject {
             stored: storedPage,
             live: liveSnapshots,
             liveMessageIDs: liveMessageIDs)
+        // Item 11: re-extract rich payloads alongside the rows (once per
+        // refresh, not per layout pass).
+        rowRichBlocks = TranscriptViewModel.extractRichBlocks(displayRows)
         isStreaming = liveSnapshots.contains {
             $0.state == .pending || $0.state == .streaming
         }
@@ -344,6 +374,9 @@ public final class TranscriptViewModel: ObservableObject {
     public func cancelTail() {
         tailTask?.cancel()
         tailTask = nil
+        // Item 11: regenerate/teardown resets per-message interaction state
+        // (PLAN_DELTA §D: "reset on regenerate").
+        richInteractions.resetAll()
     }
 }
 
@@ -384,7 +417,9 @@ public struct V2TranscriptView: View {
                                     availableWidth: geo.size.width,
                                     onRetry: (row.origin == .live && row.retryAvailable)
                                         ? { Task { await vm.retryTapped() } }
-                                        : nil)
+                                        : nil,
+                                    richBlocks: vm.richBlocks(for: row),
+                                    richInteractions: vm.richInteractions)
                                 if let actionVM = actionViewModel {
                                     MessageActionRowView(
                                         row: row,
@@ -468,15 +503,33 @@ public struct V2TranscriptView: View {
 
 /// One row: user = right-aligned tinted bubble ≤85% width; assistant =
 /// full-width, no bubble (UI Law §2 — never bubble the assistant).
+/// Item 11: an assistant row whose content carries a rich envelope renders
+/// its typed blocks below the plain text (additive; plain rows are untouched).
 struct TranscriptRowView: View {
     let row: TranscriptRow
     let availableWidth: CGFloat
     var onRetry: (() -> Void)? = nil
+    /// Item 11: injected by the transcript host (app owns the interaction
+    /// store + handlers); nil = plain-text row exactly as Item 8 shipped.
+    var richBlocks: [RichBlock]? = nil
+    var richInteractions: RichInteractionStore? = nil
 
-    init(row: TranscriptRow, availableWidth: CGFloat, onRetry: (() -> Void)? = nil) {
+    init(row: TranscriptRow, availableWidth: CGFloat, onRetry: (() -> Void)? = nil,
+         richBlocks: [RichBlock]? = nil,
+         richInteractions: RichInteractionStore? = nil) {
         self.row = row
         self.availableWidth = availableWidth
         self.onRetry = onRetry
+        self.richBlocks = richBlocks
+        self.richInteractions = richInteractions
+    }
+
+    /// The row's rich payload, when its raw content carries an envelope.
+    /// Parsed here (pure seam, QA-pinned in Item11RichBlocksQATests); nil for
+    /// ordinary text — the overwhelmingly common case — costs nothing.
+    var richContent: [RichBlock]? {
+        guard !row.isUser else { return nil }
+        return RichContentPayload.parse(row.text)
     }
 
     var body: some View {
@@ -523,6 +576,17 @@ struct TranscriptRowView: View {
             Text(row.text.isEmpty ? " " : row.text)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+            // Item 11: typed blocks render BELOW the plain text (the raw
+            // envelope stays selectable/copyable — never hidden, so the
+            // action row's copy still copies the verbatim content). Rows
+            // without an envelope render exactly as before (additive).
+            if let blocks = richContent,
+               let interactions = richInteractions {
+                RichBlocksView(
+                    blocks: blocks,
+                    messageID: row.id,
+                    interactions: interactions)
+            }
             if row.status == .failed {
                 HStack(spacing: Tokens.Spacing.s) {
                     Text("Failed")
