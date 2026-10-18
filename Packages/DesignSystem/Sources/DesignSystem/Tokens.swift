@@ -4,7 +4,14 @@ import SwiftUI
 /// comes from here — no hardcoded palette, no fixed sizes in feature code.
 public enum Tokens {
 
+    public enum Bubble {
+        /// UI Law §2: user bubble max ~85% width.
+        public static let maxWidthFraction: CGFloat = 0.85
+    }
+
     public enum Composer {
+        /// UI Law §6: composer grows to ~5–6 visible lines before scrolling.
+        public static let maxVisibleLines: Int = 6
         public static let largePasteThreshold: Int = 5_000
     }
 
