@@ -41,7 +41,8 @@ final class Item5AutoTitleFeedTests: XCTestCase {
         let store = PersistenceStore()
         let sidebar = SidebarViewModel(store: store)
         let conversation = await sidebar.newChat(title: "New chat")
-        XCTAssertEqual(await store.get(id: conversation.id)?.title, "New chat")
+        let hoisted1 = await store.get(id: conversation.id)?.title
+        XCTAssertEqual(hoisted1, "New chat")
 
         // The composer send (local-first user row) + the shell's
         // onChange hook, replayed exactly as V2ComposerHost wires them.
@@ -54,7 +55,8 @@ final class Item5AutoTitleFeedTests: XCTestCase {
             messageRole: composer.lastSentRole ?? .user,
             messageText: composer.lastSentText ?? "")
 
-        XCTAssertEqual(await store.get(id: conversation.id)?.title,
+        let hoisted2 = await store.get(id: conversation.id)?.title
+        XCTAssertEqual(hoisted2,
                        "Check the Krendora order queue",
                        "first user exchange must retitle the conversation")
         // The sidebar model surfaces the new title after reload.
@@ -74,7 +76,8 @@ final class Item5AutoTitleFeedTests: XCTestCase {
         XCTAssertFalse(vm.recents.contains { $0.id == row.id })
 
         await vm.unarchive(conversationID: row.id)
-        XCTAssertEqual(await store.get(id: row.id)?.archived, false,
+        let hoisted3 = await store.get(id: row.id)?.archived
+        XCTAssertEqual(hoisted3, false,
                        "unarchive writes through (defect #2 seam)")
         XCTAssertTrue(vm.recents.contains { $0.id == row.id },
                       "unarchived row returns to Recents")

@@ -35,7 +35,8 @@ final class Item5SidebarListMechanicsTests: XCTestCase {
 
         let changed = await vm.rename(conversationID: row.id, to: "Trip plans")
         XCTAssertTrue(changed)
-        XCTAssertEqual(await store.get(id: row.id)?.title, "Trip plans", "rename must write through")
+        let hoisted1 = await store.get(id: row.id)?.title
+        XCTAssertEqual(hoisted1, "Trip plans", "rename must write through")
         let fresh = SidebarViewModel(store: store)
         await fresh.reload()
         XCTAssertTrue(fresh.recents.contains { $0.title == "Trip plans" },
@@ -49,13 +50,18 @@ final class Item5SidebarListMechanicsTests: XCTestCase {
         await store.upsert(row)
 
         // Blank/whitespace-only names never land.
-        XCTAssertFalse(await vm.rename(conversationID: row.id, to: ""))
-        XCTAssertFalse(await vm.rename(conversationID: row.id, to: "   \n "))
-        XCTAssertEqual(await store.get(id: row.id)?.title, "Keep")
+        let hoisted2 = await vm.rename(conversationID: row.id, to: "")
+        XCTAssertFalse(hoisted2)
+        let hoisted3 = await vm.rename(conversationID: row.id, to: "   \n ")
+        XCTAssertFalse(hoisted3)
+        let hoisted4 = await store.get(id: row.id)?.title
+        XCTAssertEqual(hoisted4, "Keep")
         // No-change rename: false, no write.
-        XCTAssertFalse(await vm.rename(conversationID: row.id, to: "Keep"))
+        let hoisted5 = await vm.rename(conversationID: row.id, to: "Keep")
+        XCTAssertFalse(hoisted5)
         // Unknown id: false, no crash.
-        XCTAssertFalse(await vm.rename(conversationID: UUID(), to: "Ghost"))
+        let hoisted6 = await vm.rename(conversationID: UUID(), to: "Ghost")
+        XCTAssertFalse(hoisted6)
     }
 
     // MARK: 2. Delete + swipe-delete through the VM
@@ -73,7 +79,8 @@ final class Item5SidebarListMechanicsTests: XCTestCase {
         // Swipe left → delete, confirmed UI-side; the VM path runs it.
         await vm.swipeDelete(conversationID: doomed.id)
 
-        XCTAssertNil(await store.get(id: doomed.id), "swipe delete removes the row")
+        let hoisted7 = await store.get(id: doomed.id)
+        XCTAssertNil(hoisted7, "swipe delete removes the row")
         XCTAssertNil(vm.selectedConversationID,
                      "a deleted selected row must drop the selection")
         // The restore key is cleaned so a cold launch can't restore a ghost.
@@ -99,7 +106,8 @@ final class Item5SidebarListMechanicsTests: XCTestCase {
         await vm.delete(conversationID: doomed.id)
 
         // Menu delete (confirmed) has the same semantics as swipe delete.
-        XCTAssertNil(await store.get(id: doomed.id))
+        let hoisted8 = await store.get(id: doomed.id)
+        XCTAssertNil(hoisted8)
         XCTAssertEqual(vm.selectedConversationID, nil)
 
         // File-backed re-init: the deletion is durable, selection stays nil.
@@ -122,7 +130,8 @@ final class Item5SidebarListMechanicsTests: XCTestCase {
         await vm.select(conversationID: a.id)
 
         await vm.delete(conversationID: b.id)
-        XCTAssertNotNil(await store.get(id: a.id), "deleting B must not touch A")
+        let hoisted9 = await store.get(id: a.id)
+        XCTAssertNotNil(hoisted9, "deleting B must not touch A")
         XCTAssertEqual(vm.selectedConversationID, a.id, "A's selection survives")
     }
 
@@ -139,7 +148,8 @@ final class Item5SidebarListMechanicsTests: XCTestCase {
             conversationID: row.id, messageRole: .user,
             messageText: "What is the Krendora order status today")
         XCTAssertEqual(t1, "What is the Krendora order status today")
-        XCTAssertEqual(await store.get(id: row.id)?.title, t1)
+        let hoisted10 = await store.get(id: row.id)?.title
+        XCTAssertEqual(hoisted10, t1)
 
         let t2 = await vm.applyAutoTitleIfFirstExchange(
             conversationID: row.id, messageRole: .user, messageText: "Second message")
@@ -155,7 +165,8 @@ final class Item5SidebarListMechanicsTests: XCTestCase {
         let t = await vm.applyAutoTitleIfFirstExchange(
             conversationID: row.id, messageRole: .user, messageText: "hello there")
         XCTAssertNil(t, "rename wins permanently — auto-title must not override")
-        XCTAssertEqual(await store.get(id: row.id)?.title, "My custom name")
+        let hoisted11 = await store.get(id: row.id)?.title
+        XCTAssertEqual(hoisted11, "My custom name")
     }
 
     // MARK: 4. Archive through the VM (regression: §8 semantics on the
