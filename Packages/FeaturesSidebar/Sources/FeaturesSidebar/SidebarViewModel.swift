@@ -76,8 +76,7 @@ public final class SidebarViewModel {
                     updatedAt: project.updatedAt
                 )
             }
-        pinnedEntries = (pinnedChats + pinnedProjects)
-            .sorted { $0.updatedAt > $1.updatedAt }
+        pinnedEntries = pinnedChats + pinnedProjects
 
         // --- Projects: expandable rows, pinned first, then newest.
         projectGroups = visibleProjects
@@ -127,7 +126,7 @@ public final class SidebarViewModel {
             return SidebarRecentsGroup(
                 projectID: projectID,
                 projectName: projectID.flatMap { names[$0] },
-                conversations: chats
+                conversations: chats.sorted { $0.updatedAt > $1.updatedAt }
             )
         }
     }
