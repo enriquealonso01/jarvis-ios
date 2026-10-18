@@ -170,13 +170,12 @@ public struct OrbitalCoreView: View {
         context.stroke(circlePath(center: c, radius: 194 * unit),
                        with: .color(cyan.opacity(0.30)), lineWidth: 1.4 * unit)
         let outerAngle = -84 + 360 * t / state.outerOrbitSeconds
-        context.stroke(circlePath(center: c, radius: 194 * unit)
-            .trimmedPath(from: 0, to: 0.28),
+        context.stroke(rotatedPath(circlePath(center: c, radius: 194 * unit)
+            .trimmedPath(from: 0, to: 0.28), around: c, degrees: outerAngle),
             with: .linearGradient(orbitGradient,
                 startPoint: CGPoint(x: c.x - 180 * unit, y: c.y - 180 * unit),
                 endPoint: CGPoint(x: c.x + 185 * unit, y: c.y + 185 * unit)),
-            style: StrokeStyle(lineWidth: 5 * unit, lineCap: .round),
-            rotation: .degrees(outerAngle), center: c)
+            style: StrokeStyle(lineWidth: 5 * unit, lineCap: .round))
         drawTracker(&context, center: c, radius: 194 * unit, angle: outerAngle,
                     unit: unit, color: ice, r: 7)
 
@@ -188,13 +187,12 @@ public struct OrbitalCoreView: View {
         context.stroke(circlePath(center: c, radius: 160 * unit),
                        with: .color(gray.opacity(0.42)), lineWidth: 1.4 * unit)
         let innerAngle = 28 - 360 * t / state.innerOrbitSeconds
-        context.stroke(circlePath(center: c, radius: 160 * unit)
-            .trimmedPath(from: 0, to: 0.22),
+        context.stroke(rotatedPath(circlePath(center: c, radius: 160 * unit)
+            .trimmedPath(from: 0, to: 0.22), around: c, degrees: innerAngle),
             with: .linearGradient(orbitGradient,
                 startPoint: CGPoint(x: c.x - 150 * unit, y: c.y - 150 * unit),
                 endPoint: CGPoint(x: c.x + 150 * unit, y: c.y + 150 * unit)),
-            style: StrokeStyle(lineWidth: 3.5 * unit, lineCap: .round),
-            rotation: .degrees(innerAngle), center: c)
+            style: StrokeStyle(lineWidth: 3.5 * unit, lineCap: .round))
         context.stroke(circlePath(center: c, radius: 148 * unit),
                        with: .color(Color(hex: 0x9AEFFF).opacity(0.7)),
                        style: StrokeStyle(lineWidth: 3 * unit, lineCap: .round,
@@ -219,11 +217,10 @@ public struct OrbitalCoreView: View {
         case .thinking:
             // Scanning light arc sweeping faster than the orbits.
             let scanAngle = 360 * t / state.coreEffectSeconds
-            context.stroke(circlePath(center: c, radius: 135 * unit)
-                .trimmedPath(from: 0, to: 0.14),
+            context.stroke(rotatedPath(circlePath(center: c, radius: 135 * unit)
+                .trimmedPath(from: 0, to: 0.14), around: c, degrees: scanAngle),
                 with: .color(ice.opacity(0.65)),
-                style: StrokeStyle(lineWidth: 3 * unit, lineCap: .round),
-                rotation: .degrees(scanAngle), center: c)
+                style: StrokeStyle(lineWidth: 3 * unit, lineCap: .round))
         case .responding:
             // Measured pulse rings synced to the kit pulse period.
             let phase = (t / state.coreEffectSeconds)
@@ -304,5 +301,16 @@ public struct OrbitalCoreView: View {
     private func circlePath(center: CGPoint, radius: CGFloat) -> Path {
         Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
                                width: 2 * radius, height: 2 * radius))
+    }
+
+    /// Rotates a path about `center` by `degrees` (GraphicsContext.stroke has
+    /// no rotation parameter, so arcs are pre-rotated with a transform).
+    private func rotatedPath(_ path: Path, around center: CGPoint,
+                             degrees: Double) -> Path {
+        let radians = CGFloat(degrees) * .pi / 180
+        let transform = CGAffineTransform(translationX: center.x, y: center.y)
+            .rotated(by: radians)
+            .translatedBy(x: -center.x, y: -center.y)
+        return path.applying(transform)
     }
 }
