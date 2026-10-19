@@ -66,15 +66,17 @@ final class Item12CallStateQATests: XCTestCase {
     /// machine must make every shortcut to the audio-on state impossible.
     func testAudioOnStateReachableOnlyThroughAnsweredOrDeactivated() {
         for start in [CallPhase.idle, .reported] {
-            let s = state(start)
+            var s = state(start)
             XCTAssertFalse(
                 s.transition(to: .activated),
                 "\(start) → activated must be illegal: audio before answer/activate is the dead-mic class of bug (§5.4)"
             )
         }
         // The only legal entrances to .activated:
-        XCTAssertTrue(state(.answered).transition(to: .activated))
-        XCTAssertTrue(state(.deactivated).transition(to: .activated), "§5.4 step 8: hold→resume re-activation")
+        var answeredMachine = state(.answered)
+        XCTAssertTrue(answeredMachine.transition(to: .activated))
+        var deactivatedMachine = state(.deactivated)
+        XCTAssertTrue(deactivatedMachine.transition(to: .activated), "§5.4 step 8: hold→resume re-activation")
     }
 
     /// §5.4 forbidden move: "capture started before didActivate". Modeled at
@@ -139,10 +141,10 @@ final class Item12CallStateQATests: XCTestCase {
 
     func testEndedIsTerminalExceptForTheIdleReset() {
         for to in Self.allPhases where to != .idle {
-            let s = state(.ended)
+            var s = state(.ended)
             XCTAssertFalse(s.transition(to: to), "ended → \(to) must be illegal")
         }
-        let f = state(.failed)
+        var f = state(.failed)
         for to in Self.allPhases where to != .idle {
             XCTAssertFalse(f.transition(to: to), "failed → \(to) must be illegal")
         }
