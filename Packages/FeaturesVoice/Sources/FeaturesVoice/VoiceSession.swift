@@ -328,6 +328,7 @@ public final class VoiceSessionViewModel: ObservableObject {
     public func start() async {
         guard docState == .idle || docState == .ended || docState == .failed else { return }
         intentLog.append("start:\(docState)")
+        isMuted = false // mute is per-session (doc §Voice lifecycle)
         docState = .requestingPermission
         let granted = await audioSource.requestPermission()
         await handle(.permissionResult(granted))
@@ -387,7 +388,9 @@ public final class VoiceSessionViewModel: ObservableObject {
         }
 
         docState = next
-        if let feelTransition = VoiceFeel.transition(forBecoming: next) {
+        // Feel fires on PERCEPTIBLE change only: same-state re-application
+        // (a no-op event) must never re-buzz (feel-review idempotence).
+        if next != from, let feelTransition = VoiceFeel.transition(forBecoming: next) {
             feel?.play(feelTransition)
         }
     }

@@ -107,7 +107,8 @@ final class Item12VoiceSessionQATests: XCTestCase {
 
         await writer.beginRecording(filePath: "recordings/walk.m4a")
         await vm.start()
-        XCTAssertEqual(vm.docState, .requestingPermission)
+        XCTAssertEqual(vm.docState, .connecting,
+                       "granted permission connects; .requesting_permission is visible only between the intent and the async grant")
         XCTAssertEqual(audio.permissionAsked, 1, "permission is user-initiated, exactly once per start")
 
         await transport.simulate(.sessionConnected)
@@ -363,8 +364,10 @@ final class Item12VoiceSessionQATests: XCTestCase {
 
         await vm.end()
         XCTAssertEqual(feel.played.last, .sessionEnded)
-        // Full walk produced exactly one buzz per perceptible transition.
-        XCTAssertEqual(feel.played.count, 6)
+        // Full walk: listening, thinking, responding, listening, ended —
+        // exactly one buzz per perceptible transition (5 total; the no-op
+        // partial added none).
+        XCTAssertEqual(feel.played.count, 5)
     }
 
     func testFeelFailureTransitionFiresOnRealFailureEvent() async throws {
