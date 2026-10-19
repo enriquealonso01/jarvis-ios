@@ -22,7 +22,7 @@ final class Item13ChatExportQATests: XCTestCase {
         try await store.upsert(conversation)
         let richJSON = """
         ```jarvis-rich
-        {"schemaVersion":1,"blocks":[{"type":"chart","title":"Spend","points":[{"label":"Mon","value":12.5},{"label":"Tue","value":9.0}],"print":{"strategy":"snapshot"}}]}
+        {"schemaVersion":1,"blocks":[{"id":"qa-chart-1","type":"chart","version":"1.0.0","fallbackText":"Spend chart","props":{"kind":"bar","title":"Spend","points":[{"label":"Mon","value":12.5},{"label":"Tue","value":9.0}]},"print":{"strategy":"snapshot"}}]}
         ```
         """
         let m1 = StoredMessage(conversationID: conversation.id, role: .user,
