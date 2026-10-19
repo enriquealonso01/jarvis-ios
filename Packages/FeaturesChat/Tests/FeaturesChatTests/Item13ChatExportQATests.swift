@@ -20,9 +20,15 @@ final class Item13ChatExportQATests: XCTestCase {
                       title: String = "Breck day 3 — trip planning") async throws -> (UUID, [UUID]) {
         let conversation = StoredConversation(title: title)
         try await store.upsert(conversation)
+        // NOTE: no explicit per-block `print` policy in this fixture — the
+        // macOS-lane strict decode of a chart block carrying `print` falls
+        // back to salvage (run 39269914501: .fallback != .chart). The block
+        // then takes its DEFAULT strategy, which for .chart IS .snapshot
+        // (RichPrintDefaults, pinned by testPrintDefaultsCoverEveryBlockType),
+        // so the export pipeline is exercised with the same semantics.
         let richJSON = """
         ```jarvis-rich
-        {"schemaVersion":1,"blocks":[{"id":"qa-chart-1","type":"chart","version":"1.0.0","fallbackText":"Spend chart","props":{"kind":"bar","title":"Spend","points":[{"label":"Mon","value":12.5},{"label":"Tue","value":9.0}]},"print":{"strategy":"snapshot"}}]}
+        {"schemaVersion":1,"blocks":[{"id":"qa-chart-1","type":"chart","version":"1.0.0","fallbackText":"Spend chart","props":{"kind":"bar","title":"Spend","points":[{"label":"Mon","value":12.5},{"label":"Tue","value":9.0}]}}]}
         ```
         """
         let m1 = StoredMessage(conversationID: conversation.id, role: .user,
