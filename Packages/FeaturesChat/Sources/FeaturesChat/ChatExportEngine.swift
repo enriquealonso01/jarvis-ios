@@ -145,7 +145,7 @@ public enum ChatExportEngine {
         let blocks = ordered.map(messageBlock)
         let hasContent = blocks.contains { block in
             switch block.kind {
-            case .text, .rich: return true
+            case .text, .richBlocks: return true
             case .omitted: return false
             }
         }
