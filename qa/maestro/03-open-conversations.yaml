@@ -7,6 +7,12 @@ name: "03 open each seeded chat from the sidebar and read it"
     visible:
       id: "chat.menuButton"
     timeout: 30000
+    optional: true
+- runFlow: common/close-sidebar.yaml
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
 - tapOn:
     id: "chat.menuButton"
 - tapOn: "Pedal trainer.*"

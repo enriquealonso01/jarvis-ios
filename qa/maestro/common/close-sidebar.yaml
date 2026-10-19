@@ -1,0 +1,13 @@
+appId: com.enriquecodes.jarvis
+# Start every journey on the chat surface: the sidebar's open state persists
+# across launches, so a previous journey can leave it open. Close it the way a
+# user does: tap the dimmed strip of conversation to the right of the panel.
+---
+- runFlow:
+    when:
+      visible:
+        id: "sidebar.newChat"
+    commands:
+      - tapOn:
+          point: "93%,50%"
+      - waitForAnimationToEnd

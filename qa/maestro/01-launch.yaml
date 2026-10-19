@@ -5,6 +5,12 @@ name: "01 launch lands on the v2 chat shell not login no crash"
     stopApp: true
 - extendedWaitUntil:
     visible:
+      id: "chat.menuButton"
+    timeout: 30000
+    optional: true
+- runFlow: common/close-sidebar.yaml
+- extendedWaitUntil:
+    visible:
       id: "composer.textField"
     timeout: 30000
 - takeScreenshot: 01-launch

@@ -5,6 +5,12 @@ name: "04 composer type plus-menu model chooser"
     stopApp: true
 - extendedWaitUntil:
     visible:
+      id: "chat.menuButton"
+    timeout: 30000
+    optional: true
+- runFlow: common/close-sidebar.yaml
+- extendedWaitUntil:
+    visible:
       id: "composer.textField"
     timeout: 30000
 - tapOn:
