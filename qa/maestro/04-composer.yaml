@@ -18,7 +18,12 @@ name: "04 composer type plus-menu model chooser"
 - inputText: "draft that I will not send"
 - takeScreenshot: 04-composer-typing
 - assertVisible: "Send"
-- hideKeyboard
+# Put the keyboard away the way a user does: drag the conversation down.
+- swipe:
+    start: "50%,30%"
+    end: "50%,60%"
+- waitForAnimationToEnd
+- takeScreenshot: 04-keyboard-dismissed
 - tapOn:
     id: "composer.plusButton"
 - waitForAnimationToEnd
