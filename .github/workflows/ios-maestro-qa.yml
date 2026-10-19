@@ -87,14 +87,30 @@ jobs:
           xcrun simctl install "$UDID" "$APP"
           # Seed once; Keychain/UserDefaults/GRDB persist, so every Maestro
           # cold launch afterwards sees the same signed-in demo state.
+          mkdir -p "$GITHUB_WORKSPACE/qa-out"
           xcrun simctl launch "$UDID" com.enriquecodes.jarvis -SCREENSHOT_SEED
           sleep 10
+          xcrun simctl io "$UDID" screenshot "$GITHUB_WORKSPACE/qa-out/00-seeded-launch.png" || true
+          xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
+          sleep 2
+          # Plain second launch (what a real user does next) BEFORE Maestro,
+          # so a launch crash is attributed to the app, not the driver.
+          xcrun simctl launch "$UDID" com.enriquecodes.jarvis
+          sleep 10
+          xcrun simctl io "$UDID" screenshot "$GITHUB_WORKSPACE/qa-out/00-plain-relaunch.png" || true
+          if xcrun simctl spawn "$UDID" launchctl list | grep -q "com.enriquecodes.jarvis"; then
+            echo "plain relaunch: app ALIVE after 10s"
+          else
+            echo "plain relaunch: app NOT RUNNING after 10s"
+          fi
           xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
           maestro --version
 
       - name: Run Maestro journeys
         id: maestro
         continue-on-error: true
+        env:
+          MAESTRO_CLI_NO_ANALYTICS: "1"
         run: |
           mkdir -p "$GITHUB_WORKSPACE/qa-out"
           cd "$GITHUB_WORKSPACE/qa-out"
@@ -111,6 +127,30 @@ jobs:
             --predicate 'process == "JarvisApp"' > "$GITHUB_WORKSPACE/qa-out/app.log" 2>&1 || true
           cp -R ~/.maestro/tests "$GITHUB_WORKSPACE/qa-out/maestro-debug" 2>/dev/null || true
           find "$GITHUB_WORKSPACE/qa-out" -name "*.png" | sort
+          echo "---- crash reports ----"
+          for f in $(ls -t ~/Library/Logs/DiagnosticReports/JarvisApp* 2>/dev/null | head -3); do
+            echo "== $f"; cp "$f" "$GITHUB_WORKSPACE/qa-out/" || true
+            python3 - "$f" <<'PY' || head -c 6000 "$f"
+          import json, sys
+          raw = open(sys.argv[1]).read()
+          head, _, body = raw.partition(chr(10))
+          try:
+              j = json.loads(body)
+          except Exception:
+              print(raw[:6000]); sys.exit(0)
+          print("exception:", json.dumps(j.get("exception")), "termination:", json.dumps(j.get("termination"))[:600])
+          asi = j.get("asi") or {}
+          if asi: print("asi:", json.dumps(asi)[:1500])
+          imgs = j.get("usedImages", [])
+          ft = j.get("faultingThread", 0)
+          th = (j.get("threads") or [{}])[ft]
+          for fr in (th.get("frames") or [])[:25]:
+              img = imgs[fr.get("imageIndex", 0)] if imgs else {}
+              print("  ", img.get("name", "?"), fr.get("symbol", "?"), "+", fr.get("symbolLocation", ""))
+          PY
+          done
+          echo "---- app log (errors/faults, last 60) ----"
+          grep -iE "error|fault|fatal|crash|precondition" "$GITHUB_WORKSPACE/qa-out/app.log" | tail -60 || true
           echo "---- JUnit ----"
           cat "$GITHUB_WORKSPACE/qa-out/report.xml" || true
 
