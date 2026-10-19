@@ -24,7 +24,9 @@ concurrency:
 jobs:
   test:
     runs-on: macos-15
-    timeout-minutes: 14
+    # 14 was too tight on a slow/degraded runner (2026-10-19: two runs killed
+    # mid-compile at 14m while a healthy run takes ~10m).
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
