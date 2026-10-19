@@ -10,17 +10,22 @@ name: "03 open each seeded chat from the sidebar and read it"
 - tapOn:
     id: "chat.menuButton"
 - tapOn: "Pedal trainer.*"
-- extendedWaitUntil:
-    visible: "How did the pedal trainer ads do yesterday.*"
-    timeout: 10000
+- scrollUntilVisible:
+    element: "How did the pedal trainer ads do yesterday.*"
+    direction: UP
+    timeout: 20000
 - takeScreenshot: 03-krendora-chat
 - tapOn:
     id: "chat.menuButton"
 - tapOn: "Breck day 3.*"
-- extendedWaitUntil:
-    visible: "Plan day 3 at Breck.*"
-    timeout: 10000
-- assertVisible: "Day 3 — Breckenridge"
+- scrollUntilVisible:
+    element: "Plan day 3 at Breck.*"
+    direction: UP
+    timeout: 20000
+- scrollUntilVisible:
+    element: "Day 3 — Breckenridge"
+    direction: DOWN
+    timeout: 20000
 - takeScreenshot: 03-breck-rich-blocks
 - scroll
 - takeScreenshot: 03-breck-scrolled

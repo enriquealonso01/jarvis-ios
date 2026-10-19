@@ -130,6 +130,30 @@ jobs:
               for c in n.get("children", []): walk(c, d + 1)
           walk(root)
           PY
+          cat > /tmp/type.yaml <<'YML'
+          appId: com.enriquecodes.jarvis
+          ---
+          - tapOn:
+              id: "composer.textField"
+          - inputText: "hierarchy probe"
+          YML
+          maestro --device "$UDID" test /tmp/type.yaml || true
+          maestro --device "$UDID" hierarchy > /tmp/h2.json 2>/dev/null || true
+          echo "---- after typing (composer subtree) ----"
+          python3 - <<'PY'
+          import json
+          root = json.load(open("/tmp/h2.json"))
+          def walk(n):
+              a = n.get("attributes", {})
+              rid = a.get("resource-id") or ""
+              txt = (a.get("text") or a.get("accessibilityText") or "")[:40]
+              b = a.get("bounds", "")
+              try: y = int(b.split("][")[0].split(",")[1])
+              except Exception: y = 0
+              if y > 600 and (rid or txt): print(f"[{rid}] '{txt}' {b} enabled={a.get('enabled','')}")
+              for c in n.get("children", []): walk(c)
+          walk(root)
+          PY
           xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
 
       - name: Run Maestro journeys

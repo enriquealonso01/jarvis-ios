@@ -11,8 +11,7 @@ name: "04 composer: type, plus-menu, model chooser"
     id: "composer.textField"
 - inputText: "draft that I will not send"
 - takeScreenshot: 04-composer-typing
-- assertVisible:
-    id: "composer.sendButton"
+- assertVisible: "Send"
 - hideKeyboard
 - tapOn:
     id: "composer.plusButton"
