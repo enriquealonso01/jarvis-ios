@@ -296,23 +296,25 @@ struct MessageActionRowView: View {
     var body: some View {
         let actions = resolvedActions
         if !actions.isEmpty {
-            HStack(spacing: Tokens.Spacing.m) {
+            HStack(spacing: 0) {
                 ForEach(actions) { resolved in
                     Button {
                         run(resolved.action)
                     } label: {
+                        // Quiet, tint-free tools (prototype `.tool-btn`):
+                        // 15pt glyph, full 36pt hit area, accent on press.
                         Image(systemName: resolved.systemImage)
-                            .font(.footnote.weight(.medium))
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(Color.secondary.opacity(0.12)))
+                            .font(.system(size: 14, weight: .medium))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Tokens.Palette.textMuted)
                     .accessibilityLabel(resolved.label)
                     .accessibilityIdentifier("transcript.action.\(resolved.action.rawValue)")
                 }
             }
-            .padding(.top, 2)
+            .padding(.leading, row.isUser ? 0 : -9)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("transcript.actionRow.\(row.id)")
         }

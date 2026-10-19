@@ -43,7 +43,7 @@ struct V2InChatVoiceOverlay: View {
                     onEnd?()
                     Haptics.tap()
                 } label: {
-                    Image(systemName: "end-call")
+                    Image(systemName: "phone.down.fill")
                         .font(.body)
                         .foregroundStyle(.red)
                         .frame(width: Tokens.Voice.pillHeight, height: Tokens.Voice.pillHeight)

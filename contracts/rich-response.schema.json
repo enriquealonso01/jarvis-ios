@@ -68,7 +68,8 @@
           "description": "local = handled on-device, submit = form submission, navigate = in-app route, copy = pasteboard, openUrl = must pass the http(s)-only URL gate, serverAction = round-trips through the agent."
         },
         "requiresApproval": { "type": "boolean", "default": false },
-        "confirmText": { "type": "string" }
+        "confirmText": { "type": "string" },
+        "url": { "type": "string", "format": "uri", "description": "Target of an openUrl action; http(s) only, enforced client-side by the URL safety gate." }
       }
     },
 

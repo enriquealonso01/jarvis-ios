@@ -16,23 +16,20 @@ enum V2Auth {
     }
 }
 
-// MARK: - Item 3: ChatGPT-grammar slide-over sidebar (feature #2, P0)
+// MARK: - ChatGPT-grammar shell (Item 3 + UI expansion package)
 //
-// UI Law §1 + research/11 §1, verbatim:
-//   • Slide-over ~85% width sliding in ABOVE the conversation (chat edge
-//     stays visible) — never push navigation, never docked on phone.
-//   • Opens via the ≡ menu button or a leading-edge swipe; closes via
-//     scrim tap or swipe-left.
-//   • Contents top-to-bottom: New chat + Search rows → horizontal add-ons
-//     bar (Agent Runs · Recordings · Memory · Schedules) → Library
-//     placeholder → Pinned → Projects (collapsible) → Recents (paginated)
-//     → profile row → Settings placeholder sheet.
-// Dark mode + Dynamic Type: every color/font is a system or token value —
-// no hardcoded palette, no fixed font sizes.
+// UI expansion 03_SCREEN_SPECS / prototype, binding (Enrique's package wins
+// over the earlier UI Law where they differ):
+//   • Header: sidebar toggle, chat title + subtitle (project or "General
+//     chat"), export + new-chat actions on the right.
+//   • Mobile drawer ~85% of the width (≤320pt) over a dimmed chat; opens via
+//     ≡ or a leading-edge swipe, closes via scrim tap, ✕, or swipe-left.
+//   • Drawer: brand row → New chat → Search chats (inline, live) → Pinned →
+//     Projects (collapsible) → Recents → profile row (v1 settings/calls).
+//   • Obsidian canvas, deep-surface surfaces, surface-border hairlines, one
+//     cyan accent. Dark only.
 
-/// The v2 chat surface + slide-over sidebar shell. The chat body is a v1
-/// placeholder screen — Item 3 ships the navigation shell, not the new
-/// transcript (Item 4 lands the composer + transcript).
+/// The v2 chat surface + slide-over sidebar shell.
 struct V2SidebarShell: View {
     /// View model over the shared store; nil store (open failure) degrades
     /// to an empty sidebar — never a launch crash (same contract as Item 1).
@@ -40,6 +37,8 @@ struct V2SidebarShell: View {
     /// the store-contract implementation this shell hosts is FeaturesChat's.)
     @StateObject private var vm: FeaturesChat.SidebarViewModel
     @State private var selection: SidebarSelection?
+    /// Header export button → the conversation's PDF export sheet.
+    @State private var exportPresented = false
     private let store: PersistenceStore?
 
     init(store: PersistenceStore?) {
@@ -56,27 +55,22 @@ struct V2SidebarShell: View {
                 vm: vm,
                 onSelect: { selection in handle(selection) },
                 store: store,
-                onOpenProjectChat: { chatID in projectHomeChatTarget = chatID })
+                onOpenProjectChat: { chatID in handle(.chat(id: chatID)) })
         } underlying: {
             chatSurface
         }
+        .background(Tokens.Palette.canvas.ignoresSafeArea())
         .task {
             await vm.restoreState()
             await vm.reload()
         }
     }
-    // MARK: Routing (Item 3 §3)
 
-    /// Item 9/10: set on Project Home chat opens — Project Home and the
-    /// chat surface share ONE NavigationStack, so the chat cannot appear
-    /// beneath its own Project Home (§P-5 composition contract).
-    @State private var projectHomeChatTarget: UUID?
+    // MARK: Routing (Item 3 §3)
 
     private func handle(_ selection: SidebarSelection) {
         switch selection {
-        // Picking a destination closes the slide-over (ChatGPT grammar):
-        // before this the panel stayed over the chat it had just opened,
-        // and since open-state persists, relaunches came back covered too.
+        // Picking a destination closes the slide-over (ChatGPT grammar).
         case .chat(let id):
             Task {
                 await vm.select(conversationID: id)
@@ -90,60 +84,88 @@ struct V2SidebarShell: View {
                 await vm.setOpen(false)
             }
         case .projectHome(let id):
-            // Item 10: Project Home is the real destination (was a
-            // placeholder). Chats open INSIDE its stack (composition law).
-            projectHomeChatTarget = nil
+            // Item 10: Project Home renders in the chat surface; chats opened
+            // from it route back through `.chat` (same header + composer).
             // `self.` — the parameter shadows the @State property here.
             self.selection = .projectHome(id: id)
             Task { await vm.setOpen(false) }
         case .search, .addOn:
-            // Placeholders (Item 6 search, add-on screens).
+            // Search is inline in the drawer (live filter + message search);
+            // add-on destinations are not part of the v2 drawer.
             self.selection = selection
         }
     }
 
-    // MARK: Chat surface (v2 composer + open affordances)
+    // MARK: Header model
+
+    /// The open conversation's row from the sidebar lists (title source).
+    private var currentConversation: StoredConversation? {
+        guard let id = vm.selectedConversationID else { return nil }
+        if let hit = vm.pinned.first(where: { $0.id == id }) { return hit }
+        if let hit = vm.recents.first(where: { $0.id == id }) { return hit }
+        for node in vm.projects {
+            if let hit = node.conversations.first(where: { $0.id == id }) { return hit }
+        }
+        return nil
+    }
+
+    private var headerTitle: String {
+        guard vm.selectedConversationID != nil else { return "JARVIS" }
+        return currentConversation?.title ?? "New chat"
+    }
+
+    private var headerSubtitle: String {
+        guard vm.selectedConversationID != nil else { return "Personal Intelligence" }
+        if let projectID = currentConversation?.projectID,
+           let node = vm.projects.first(where: { $0.project.id == projectID }) {
+            return node.project.name
+        }
+        return "General chat"
+    }
+
+    // MARK: Chat surface
 
     @ViewBuilder
     private var chatSurface: some View {
         NavigationStack {
             Group {
-                if let homeID = projectHomeChatTarget {
-                    // Item 10: a chat opened from Project Home keeps the
-                    // project's stack — Project Home stays underneath (the
-                    // back button returns to it; no orphaned chat surface).
-                    V2ChatHost(store: store, conversationID: homeID, sidebarVM: vm)
-                        .id(homeID)
-                        .navigationTitle("")
-                        .navigationBarTitleDisplayMode(.inline)
-                } else if let id = vm.selectedConversationID {
-                    // Item 8: the v2 chat surface = REAL transcript (UI Law
-                    // §2/§3/§5 — full-width assistant blocks, tinted user
-                    // bubbles, anchored streaming) + the Item-4 composer
-                    // docked below it. V2ChatHost owns the store-backed
-                    // transcript VM and replays composer sends into it.
-                    VStack(spacing: 0) {
-                        V2ChatHost(store: store, conversationID: id,
-                                   sidebarVM: vm)
-                    }
-                    .id(id)
+                if case .projectHome(let projectID)? = selection {
+                    V2ProjectHomeView(
+                        projectID: projectID,
+                        store: store ?? PersistenceStore(),
+                        onOpenChat: { chatID in handle(.chat(id: chatID)) })
+                        .id(projectID)
+                        .scrollContentBackground(.hidden)
+                        .background(Tokens.Palette.canvas.ignoresSafeArea())
+                        .toolbarBackground(Tokens.Palette.canvas, for: .navigationBar)
+                        .toolbarBackground(.visible, for: .navigationBar)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button {
+                                    Task { await vm.setOpen(true) }
+                                } label: {
+                                    Image(systemName: "line.3.horizontal")
+                                }
+                                .accessibilityLabel("Open sidebar")
+                                .accessibilityIdentifier("chat.menuButton")
+                            }
+                        }
                 } else {
-                    V2EmptyStateView()
+                    chatContent
+                        .safeAreaInset(edge: .top, spacing: 0) {
+                            V2ChatHeader(
+                                title: headerTitle,
+                                subtitle: headerSubtitle,
+                                onMenu: { Task { await vm.setOpen(true) } },
+                                onExport: vm.selectedConversationID == nil
+                                    ? nil
+                                    : { exportPresented = true },
+                                onNewChat: { handle(.newChat) })
+                        }
+                        .toolbar(.hidden, for: .navigationBar)
                 }
             }
-            .navigationTitle("JARVIS")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        Task { await vm.setOpen(true) }
-                    } label: {
-                        Image(systemName: "line.3.horizontal")
-                    }
-                    .accessibilityLabel("Open sidebar")
-                    .accessibilityIdentifier("chat.menuButton")
-                }
-            }
+            .background(Tokens.Palette.canvas.ignoresSafeArea())
             .background(
                 // Edge-swipe from the leading edge opens the sidebar
                 // (UI Law §1). Narrow leading strip so it never fights the
@@ -167,42 +189,181 @@ struct V2SidebarShell: View {
             )
         }
     }
+
+    @ViewBuilder
+    private var chatContent: some View {
+        if let id = vm.selectedConversationID {
+            // Item 8: the v2 chat surface = REAL transcript (full-width
+            // assistant blocks, user bubbles, anchored streaming) + the
+            // composer docked below it.
+            V2ChatHost(store: store, conversationID: id, sidebarVM: vm,
+                       exportPresented: $exportPresented)
+                .id(id)
+        } else {
+            V2EmptyStateView(onNewChat: { handle(.newChat) })
+        }
+    }
 }
 
-// MARK: - The sidebar panel (contents per UI Law §1)
+// MARK: - Chat header (prototype `.topbar`)
+
+/// ≡ · title / subtitle · export · new chat. Custom (not the system nav
+/// bar) so the layout matches the reference exactly: left-aligned title
+/// block, 44pt icon targets, near-invisible hairline underneath.
+struct V2ChatHeader: View {
+    let title: String
+    let subtitle: String
+    let onMenu: () -> Void
+    var onExport: (() -> Void)? = nil
+    let onNewChat: () -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Button(action: onMenu) {
+                Image(systemName: "line.3.horizontal")
+            }
+            .buttonStyle(JarvisIconButtonStyle())
+            .accessibilityLabel("Open sidebar")
+            .accessibilityIdentifier("chat.menuButton")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(Tokens.Typography.headerTitle)
+                    .foregroundStyle(Tokens.Palette.textPrimary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(Tokens.Typography.headerSubtitle)
+                    .foregroundStyle(Tokens.Palette.textMuted)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 4)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("chat.headerTitle")
+
+            if let onExport {
+                Button(action: onExport) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .buttonStyle(JarvisIconButtonStyle())
+                .accessibilityLabel("Export chat as PDF")
+                .accessibilityIdentifier("chat.exportButton")
+            }
+
+            Button(action: onNewChat) {
+                Image(systemName: "square.and.pencil")
+            }
+            .buttonStyle(JarvisIconButtonStyle())
+            .accessibilityLabel("New chat")
+            .accessibilityIdentifier("chat.newChatButton")
+        }
+        .padding(.horizontal, 6)
+        .frame(height: Tokens.Layout.headerHeight)
+        .background(Tokens.Palette.canvas.ignoresSafeArea(edges: .top))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Tokens.Palette.hairline)
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+// MARK: - The sidebar panel (prototype `.sidebar`)
+
+/// One message-search hit (a conversation whose CONTENT matched).
+struct V2SearchHit: Identifiable, Equatable {
+    let id: UUID
+    let title: String
+    let snippet: String
+}
+
+/// Pure helpers for the drawer search (FTS pattern + readable snippet).
+enum V2Search {
+    /// FTS5 prefix query from free text: each token stripped to bareword
+    /// characters and quoted (`"breck"* "day"*`) so user input can never be
+    /// FTS syntax (no injection of MATCH operators, no syntax errors).
+    static func ftsPattern(_ query: String) -> String? {
+        let tokens = query
+            .components(separatedBy: .whitespacesAndNewlines)
+            .map { token in token.filter { $0.isLetter || $0.isNumber } }
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return nil }
+        return tokens.map { "\"\($0)\"*" }.joined(separator: " ")
+    }
+
+    /// A one-line excerpt around the first match; rich envelopes are read
+    /// through their plain summaries, never shown as raw JSON.
+    static func snippet(_ content: String, query: String) -> String {
+        var text = content
+        if let blocks = RichContentPayload.parse(content) {
+            text = blocks.map { $0.content.plainSummary }.joined(separator: " · ")
+        }
+        text = text.replacingOccurrences(of: "\n", with: " ")
+        let needle = query.components(separatedBy: .whitespaces).first(where: { !$0.isEmpty }) ?? query
+        guard let range = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else {
+            return String(text.prefix(90))
+        }
+        let start = text.index(range.lowerBound, offsetBy: -32, limitedBy: text.startIndex) ?? text.startIndex
+        let end = text.index(range.upperBound, offsetBy: 64, limitedBy: text.endIndex) ?? text.endIndex
+        let prefix = start > text.startIndex ? "…" : ""
+        let suffix = end < text.endIndex ? "…" : ""
+        return prefix + String(text[start..<end]).trimmingCharacters(in: .whitespaces) + suffix
+    }
+}
 
 struct SidebarPanelView: View {
     @ObservedObject var vm: FeaturesChat.SidebarViewModel
     let onSelect: (SidebarSelection) -> Void
-    /// Item 10: the shell's shared store (Project Home reads the same DB).
+    /// Item 10: the shell's shared store (search + Project Home read it).
     var store: PersistenceStore? = nil
-    /// Item 10: shell router for chats opened from Project Home (the
-    /// panel struct itself has no access to shell state).
+    /// Item 10: shell router for chats opened from Project Home.
     var onOpenProjectChat: ((UUID) -> Void)? = nil
     @State private var settingsPresented = false
+    /// Conversations whose message CONTENT matched the query (FTS).
+    @State private var messageHits: [V2SearchHit] = []
+    @FocusState private var searchFocused: Bool
+
+    private var trimmedQuery: String {
+        vm.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isSearching: Bool { !trimmedQuery.isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            brandRow
+            VStack(spacing: 10) {
+                newChatRow
+                searchRow
+            }
+            .padding(.horizontal, 12)
+
             ScrollView {
-                VStack(alignment: .leading, spacing: Tokens.Spacing.m) {
-                    newChatRow
-                    searchRow
-                    addOnsBar
-                    libraryRow
-                    pinnedSection
-                    projectsSection
-                    recentsSection
-                    if vm.canLoadMoreRecents {
-                        loadMoreButton
+                VStack(alignment: .leading, spacing: 22) {
+                    if isSearching {
+                        searchResults
+                    } else {
+                        pinnedSection
+                        projectsSection
+                        recentsSection
+                        if vm.canLoadMoreRecents {
+                            loadMoreButton
+                        }
                     }
                 }
-                .padding(.horizontal, Tokens.Spacing.l)
-                .padding(.top, Tokens.Spacing.l)
+                .padding(.horizontal, 12)
+                .padding(.top, 20)
                 .padding(.bottom, Tokens.Spacing.l)
             }
+            .scrollDismissesKeyboard(.immediately)
 
-            Divider()
             profileRow
+        }
+        .background(Tokens.Palette.elevated)
+        .task(id: vm.searchQuery) {
+            await runContentSearch()
         }
         // Until v2 has its own Settings, the profile row opens the full v1
         // app (Sessions · Projects · Calls · More → Secrets, Settings with
@@ -212,106 +373,235 @@ struct SidebarPanelView: View {
         }
     }
 
-    // MARK: New chat + Search rows
+    // MARK: Brand row
+
+    private var brandRow: some View {
+        HStack(spacing: 11) {
+            OrbitalCoreView(state: .idle, isStatic: true)
+                .frame(width: 30, height: 30)
+                .accessibilityHidden(true)
+            Text("JARVIS")
+                .font(.footnote.weight(.heavy))
+                .tracking(2.6)
+                .foregroundStyle(Tokens.Palette.textPrimary)
+            Spacer()
+            Button {
+                searchFocused = false
+                Task { await vm.setOpen(false) }
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(JarvisIconButtonStyle())
+            .accessibilityLabel("Close sidebar")
+            .accessibilityIdentifier("sidebar.closeButton")
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 14)
+    }
+
+    // MARK: New chat + Search
 
     private var newChatRow: some View {
         Button {
+            searchFocused = false
             onSelect(.newChat)
         } label: {
-            Label("New chat", systemImage: "square.and.pencil")
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: Tokens.Sidebar.rowHeight,
-                       alignment: .leading)
+            HStack(spacing: 10) {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("New chat")
+                    .font(.subheadline.weight(.bold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Tokens.Palette.accentLabel)
+            .padding(.horizontal, 14)
+            .frame(minHeight: Tokens.Layout.hitTarget)
+            .background(
+                RoundedRectangle(cornerRadius: Tokens.Radius.row, style: .continuous)
+                    .fill(Tokens.Palette.accentSurface))
+            .overlay(
+                RoundedRectangle(cornerRadius: Tokens.Radius.row, style: .continuous)
+                    .strokeBorder(Tokens.Palette.accentBorder, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.row, style: .continuous))
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar.newChat")
     }
 
-    /// Search row — placeholder routing to Item 6 (client-side filter in
-    /// the VM already narrows the lists once a field lands here).
+    /// Inline live search (03 Sidebar: debounced, titles AND content).
     private var searchRow: some View {
-        Button {
-            onSelect(.search)
-        } label: {
-            Label("Search chats", systemImage: "magnifyingglass")
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: Tokens.Sidebar.rowHeight,
-                       alignment: .leading)
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Tokens.Palette.textMuted)
+            TextField(text: $vm.searchQuery,
+                      prompt: Text("Search chats").foregroundColor(Tokens.Palette.textMuted)) {
+                Text("Search chats")
+            }
+            .font(.subheadline)
+            .foregroundStyle(Tokens.Palette.textPrimary)
+            .tint(Tokens.Palette.accent)
+            .focused($searchFocused)
+            .submitLabel(.search)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .accessibilityIdentifier("sidebar.search")
+            if !vm.searchQuery.isEmpty {
+                Button {
+                    vm.searchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Tokens.Palette.textMuted)
+                        .frame(width: 32, height: Tokens.Layout.hitTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+                .accessibilityIdentifier("sidebar.searchClear")
+            }
         }
-        .buttonStyle(.bordered)
-        .accessibilityIdentifier("sidebar.search")
+        .padding(.leading, 12)
+        .padding(.trailing, vm.searchQuery.isEmpty ? 12 : 2)
+        .frame(minHeight: Tokens.Layout.hitTarget)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Tokens.Palette.sunken))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(searchFocused ? Tokens.Palette.accent.opacity(0.45) : Tokens.Palette.border,
+                              lineWidth: 1))
+        .contentShape(Rectangle())
+        .onTapGesture { searchFocused = true }
+        .accessibilityElement(children: .contain)
     }
 
-    // MARK: Horizontal add-ons bar (chips; destinations are stubs)
+    // MARK: Search results
 
-    private var addOnsBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Tokens.Spacing.s) {
-                ForEach(V2AddOnChip.standard) { chip in
-                    Button {
-                        if let sel = chip.sidebarSelection {
-                            onSelect(sel)
-                        }
-                    } label: {
-                        Label(chip.title, systemImage: chip.systemImage)
-                            .font(.footnote.weight(.medium))
-                            .lineLimit(1)
-                            .padding(.horizontal, Tokens.Spacing.m)
-                            .frame(minHeight: Tokens.Sidebar.addOnChipHeight)
-                            .background(
-                                Capsule().fill(Color(uiColor: .secondarySystemBackground))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("sidebar.addOn.\(chip.id)")
+    /// Title / preview matches across every section (deduplicated).
+    private var titleMatches: [StoredConversation] {
+        var seen = Set<UUID>()
+        var out: [StoredConversation] = []
+        let q = trimmedQuery
+        let pinned = vm.pinned.filter {
+            $0.title.localizedCaseInsensitiveContains(q)
+                || ($0.lastMessagePreview?.localizedCaseInsensitiveContains(q) ?? false)
+        }
+        let projectChats = vm.filteredProjects.flatMap { $0.conversations }
+        for conversation in pinned + vm.filteredRecents + projectChats where !seen.contains(conversation.id) {
+            seen.insert(conversation.id)
+            out.append(conversation)
+        }
+        return out
+    }
+
+    @ViewBuilder
+    private var searchResults: some View {
+        let chats = titleMatches
+        let chatIDs = Set(chats.map(\.id))
+        let hits = messageHits.filter { !chatIDs.contains($0.id) }
+        if chats.isEmpty && hits.isEmpty {
+            Text("No conversations found")
+                .font(.footnote)
+                .foregroundStyle(Tokens.Palette.textMuted)
+                .padding(.horizontal, 12)
+                .accessibilityIdentifier("sidebar.searchEmpty")
+        }
+        if !chats.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                sectionLabel("Chats")
+                ForEach(chats) { conversation in
+                    searchResultRow(id: conversation.id, title: conversation.title,
+                              snippet: conversation.lastMessagePreview)
                 }
             }
-            .padding(.vertical, 2)
+        }
+        if !hits.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                sectionLabel("In messages")
+                ForEach(hits) { hit in
+                    searchResultRow(id: hit.id, title: hit.title, snippet: hit.snippet)
+                }
+            }
         }
     }
 
-    /// Library row placeholder (ChatGPT-grammar slot; images/files land in
-    /// a later milestone item). No navigation yet — the row is the contract.
-    private var libraryRow: some View {
+    private func searchResultRow(id: UUID, title: String, snippet: String?) -> some View {
         Button {
-            // Placeholder destination (no selection case yet).
+            vm.searchQuery = ""
+            searchFocused = false
+            onSelect(.chat(id: id))
         } label: {
-            Label("Library", systemImage: "books.vertical")
-                .font(.body)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, minHeight: Tokens.Sidebar.rowHeight,
-                       alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(Tokens.Typography.row)
+                    .foregroundStyle(Tokens.Palette.textPrimary)
+                    .lineLimit(1)
+                if let snippet, !snippet.isEmpty {
+                    Text(snippet)
+                        .font(.caption)
+                        .foregroundStyle(Tokens.Palette.textMuted)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: Tokens.Layout.hitTarget, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("sidebar.library")
+        .buttonStyle(V2RowButtonStyle(isSelected: false))
+        .accessibilityIdentifier("sidebar.searchResult.\(id.uuidString)")
     }
 
-    // MARK: Pinned (chats, newest first)
+    /// Debounced FTS search over message content (250 ms; `.task(id:)`
+    /// cancels the previous query as the user types).
+    private func runContentSearch() async {
+        let q = trimmedQuery
+        guard q.count >= 2, let store, let pattern = V2Search.ftsPattern(q) else {
+            messageHits = []
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(250))
+        guard !Task.isCancelled else { return }
+        let messages = (try? await store.searchMessages(matching: pattern, limit: 40)) ?? []
+        var seen = Set<UUID>()
+        var hits: [V2SearchHit] = []
+        for message in messages where !seen.contains(message.conversationID) {
+            seen.insert(message.conversationID)
+            guard let conversation = await store.get(id: message.conversationID) else { continue }
+            hits.append(V2SearchHit(
+                id: conversation.id,
+                title: conversation.title,
+                snippet: V2Search.snippet(message.content, query: q)))
+            if hits.count >= 12 { break }
+        }
+        guard !Task.isCancelled else { return }
+        messageHits = hits
+    }
+
+    // MARK: Section label (prototype `.section-head`)
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(Tokens.Typography.sectionLabel)
+            .tracking(1.5)
+            .foregroundStyle(Tokens.Palette.sectionLabel)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    // MARK: Pinned
 
     @ViewBuilder
     private var pinnedSection: some View {
         if !vm.pinned.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                Text("Pinned")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
+            VStack(alignment: .leading, spacing: 2) {
+                sectionLabel("Pinned")
                 ForEach(vm.pinned) { conversation in
-                    V2ConversationRow(
-                        conversation: conversation,
-                        isSelected: vm.selectedConversationID == conversation.id,
-                        contextMenu: .pinAndArchive
-                    ) {
-                        onSelect(.chat(id: conversation.id))
-                    } onPin: {
-                        Task { await vm.setPinned(!conversation.pinned, conversationID: conversation.id) }
-                    } onArchive: {
-                        Task { await vm.setArchived(true, conversationID: conversation.id) }
-                    } onRename: { newTitle in
-                        Task { await vm.rename(conversationID: conversation.id, to: newTitle) }
-                    } onDelete: {
-                        Task { await vm.delete(conversationID: conversation.id) }
-                    }
+                    conversationRow(conversation)
                 }
             }
         }
@@ -320,71 +610,65 @@ struct SidebarPanelView: View {
     // MARK: Projects (collapsible section; schema from Item 1)
 
     private var projectsSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+        VStack(alignment: .leading, spacing: 2) {
             Button {
                 Task(priority: .userInitiated) { await vm.setProjectsExpanded(!vm.projectsExpanded) }
             } label: {
-                HStack(spacing: Tokens.Spacing.xs) {
-                    Text("Projects")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
+                HStack(spacing: 6) {
+                    Text("PROJECTS")
+                        .font(Tokens.Typography.sectionLabel)
+                        .tracking(1.5)
+                        .foregroundStyle(Tokens.Palette.sectionLabel)
                     Image(systemName: vm.projectsExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Tokens.Palette.sectionLabel)
                     Spacer()
                 }
+                .padding(.horizontal, 12)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(vm.projectsExpanded ? "Projects, expanded" : "Projects, collapsed")
             .accessibilityIdentifier("sidebar.projectsToggle")
 
             if vm.projectsExpanded {
-                // Item 10: each row navigates to its Project Home (title,
+                if vm.projects.isEmpty {
+                    Text("No projects yet")
+                        .font(.footnote)
+                        .foregroundStyle(Tokens.Palette.textMuted)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+                // Item 10: each row opens its Project Home (title,
                 // instructions, sources, project-scoped chats, new chat).
                 ForEach(vm.projects) { node in
-                    VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                        NavigationLink {
-                            V2ProjectHomeView(
-                                projectID: node.project.id,
-                                store: store ?? PersistenceStore(),
-                                onOpenChat: onOpenProjectChat)
-                        } label: {
-                            HStack(spacing: Tokens.Spacing.s) {
-                                Image(systemName: "folder")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(node.project.name)
-                                    .font(.subheadline.weight(.medium))
-                                    .lineLimit(1)
-                                Spacer()
-                                Text("\(node.conversations.count)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(minHeight: Tokens.Sidebar.rowHeight)
-                            .contentShape(Rectangle())
+                    Button {
+                        searchFocused = false
+                        onSelect(.projectHome(id: node.project.id))
+                    } label: {
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(Tokens.Palette.accent)
+                                .frame(width: 8, height: 8)
+                            Text(node.project.name)
+                                .font(Tokens.Typography.row)
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(node.conversations.count)")
+                                .font(.caption)
+                                .foregroundStyle(Tokens.Palette.textMuted)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("sidebar.project.\(node.project.id.uuidString)")
+                        .foregroundStyle(Tokens.Palette.textBody)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: Tokens.Layout.hitTarget)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(V2RowButtonStyle(isSelected: false))
+                    .accessibilityIdentifier("sidebar.project.\(node.project.id.uuidString)")
 
-                        ForEach(node.conversations) { conversation in
-                            V2ConversationRow(
-                                conversation: conversation,
-                                isSelected: vm.selectedConversationID == conversation.id,
-                                contextMenu: .pinAndArchive,
-                                indented: true
-                            ) {
-                                onSelect(.chat(id: conversation.id))
-                            } onPin: {
-                                Task { await vm.setPinned(!conversation.pinned, conversationID: conversation.id) }
-                            } onArchive: {
-                                Task { await vm.setArchived(true, conversationID: conversation.id) }
-                            } onRename: { newTitle in
-                                Task { await vm.rename(conversationID: conversation.id, to: newTitle) }
-                            } onDelete: {
-                                Task { await vm.delete(conversationID: conversation.id) }
-                            }
-                        }
+                    ForEach(node.conversations) { conversation in
+                        conversationRow(conversation, indented: true)
                     }
                 }
             }
@@ -394,34 +678,38 @@ struct SidebarPanelView: View {
     // MARK: Recents (paginated from the store)
 
     private var recentsSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-            Text("Recents")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+        VStack(alignment: .leading, spacing: 2) {
+            sectionLabel("Recents")
             if vm.recents.isEmpty && vm.loaded {
-                Text(vm.searchQuery.isEmpty ? "No conversations yet" : "No matches")
+                Text("No conversations yet")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Tokens.Palette.textMuted)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, Tokens.Spacing.s)
             }
             ForEach(vm.filteredRecents) { conversation in
-                V2ConversationRow(
-                    conversation: conversation,
-                    isSelected: vm.selectedConversationID == conversation.id,
-                    contextMenu: .pinAndArchive
-                ) {
-                    onSelect(.chat(id: conversation.id))
-                } onPin: {
-                    Task { await vm.setPinned(!conversation.pinned, conversationID: conversation.id) }
-                } onArchive: {
-                    Task { await vm.setArchived(true, conversationID: conversation.id) }
-                } onRename: { newTitle in
-                    Task { await vm.rename(conversationID: conversation.id, to: newTitle) }
-                } onDelete: {
-                    Task { await vm.delete(conversationID: conversation.id) }
-                }
+                conversationRow(conversation)
             }
+        }
+    }
+
+    private func conversationRow(_ conversation: StoredConversation, indented: Bool = false) -> some View {
+        V2ConversationRow(
+            conversation: conversation,
+            isSelected: vm.selectedConversationID == conversation.id,
+            contextMenu: .pinAndArchive,
+            indented: indented
+        ) {
+            searchFocused = false
+            onSelect(.chat(id: conversation.id))
+        } onPin: {
+            Task { await vm.setPinned(!conversation.pinned, conversationID: conversation.id) }
+        } onArchive: {
+            Task { await vm.setArchived(true, conversationID: conversation.id) }
+        } onRename: { newTitle in
+            Task { await vm.rename(conversationID: conversation.id, to: newTitle) }
+        } onDelete: {
+            Task { await vm.delete(conversationID: conversation.id) }
         }
     }
 
@@ -430,73 +718,64 @@ struct SidebarPanelView: View {
             Task { await vm.loadMoreRecents() }
         } label: {
             Text("Load more")
-                .font(.footnote.weight(.medium))
-                .frame(maxWidth: .infinity, minHeight: Tokens.Sidebar.rowHeight)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Tokens.Palette.accent)
+                .frame(maxWidth: .infinity, minHeight: Tokens.Layout.hitTarget)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.tint)
         .accessibilityIdentifier("sidebar.loadMore")
     }
 
-    // MARK: Profile row (→ Settings placeholder sheet)
+    // MARK: Profile row (→ v1 app: settings, calls, secrets)
 
     private var profileRow: some View {
         Button {
             settingsPresented = true
         } label: {
             HStack(spacing: Tokens.Spacing.m) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.tint)
+                OrbitalCoreView(state: .idle, isStatic: true)
+                    .frame(width: 30, height: 30)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("JARVIS")
-                        .font(.headline)
-                    Text("Calls · Projects · Secrets · Settings")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Tokens.Palette.textPrimary)
+                    Text("Settings · Calls · Projects · Secrets")
+                        .font(.caption)
+                        .foregroundStyle(Tokens.Palette.textMuted)
+                        .lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: "chevron.up")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Tokens.Palette.textMuted)
             }
             .padding(.horizontal, Tokens.Spacing.l)
             .padding(.vertical, Tokens.Spacing.m)
+            .frame(minHeight: Tokens.Layout.hitTarget + 12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Tokens.Palette.border).frame(height: 1)
+        }
         .accessibilityIdentifier("sidebar.profileRow")
     }
 }
 
-// MARK: - Add-on chips (non-functional stubs are fine, visible is not)
+/// Sidebar row chrome: 11pt continuous corners, tonal press + selected
+/// state (02 "selected: tonal background + semibold text, not just color").
+struct V2RowButtonStyle: ButtonStyle {
+    let isSelected: Bool
 
-struct V2AddOnChip: Identifiable {
-    enum ChipID: String {
-        case runs, recordings, widgets, library
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: Tokens.Radius.row, style: .continuous)
+                    .fill(isSelected
+                          ? Tokens.Palette.selected
+                          : (configuration.isPressed ? Tokens.Palette.raised : Color.clear)))
     }
-
-    let id: String
-    let title: String
-    let systemImage: String
-    let addOnID: ChipID
-
-    /// Maps to the FeaturesSidebar selection enum (which pins exactly 4
-    /// cases: runs / recordings / memory / schedules — a library case is
-    /// intentionally absent there; Library is a sidebar row, not a chip).
-    var sidebarSelection: SidebarSelection? {
-        switch addOnID {
-        case .runs: return .addOn(.runs)
-        case .recordings: return .addOn(.recordings)
-        case .widgets, .library: return nil // placeholder destinations
-        }
-    }
-
-    static let standard: [V2AddOnChip] = [
-        V2AddOnChip(id: "runs", title: "Agent Runs", systemImage: "arrow.triangle.branch", addOnID: .runs),
-        V2AddOnChip(id: "recordings", title: "Recordings", systemImage: "waveform", addOnID: .recordings),
-        V2AddOnChip(id: "widgets", title: "Widgets", systemImage: "square.grid.2x2", addOnID: .widgets),
-    ]
 }
 
 // MARK: - Conversation row (shared by Pinned / Projects / Recents)
@@ -540,37 +819,32 @@ struct V2ConversationRow: View {
                 if indented {
                     Spacer().frame(width: Tokens.Spacing.l)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(conversation.title)
-                        .font(.subheadline)
-                        .fontWeight(isSelected ? .semibold : .regular)
-                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                        .lineLimit(1)
-                    if let preview = conversation.lastMessagePreview {
-                        Text(preview)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer()
+                Text(conversation.title)
+                    .font(Tokens.Typography.row)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundStyle(isSelected ? Tokens.Palette.textPrimary : Tokens.Palette.textBody)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
                 if conversation.pinned {
                     Image(systemName: "pin.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Tokens.Palette.textMuted)
                 }
             }
-            .padding(.horizontal, Tokens.Spacing.s)
-            .frame(minHeight: Tokens.Sidebar.rowHeight)
+            .padding(.horizontal, 12)
+            .frame(minHeight: Tokens.Layout.hitTarget)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        // Item 5 FIX: .swipeActions never fired here — the three sidebar
-        // sections render in a ScrollView+VStack, and .swipeActions is a
-        // List-only modifier. Replaced with a row drag that reveals the
-        // same red, non-full-swipe Delete (§8): confirm dialog → VM
-        // swipeDelete path unchanged. Child gestures beat the shell's
-        // plain .gesture (SlideOverSidebar), so panel-close is untouched.
+        .buttonStyle(V2RowButtonStyle(isSelected: isSelected))
+        // Long titles truncate visually but stay whole for VoiceOver (03).
+        .accessibilityLabel(conversation.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        // Item 5 FIX: .swipeActions never fired here — the sidebar sections
+        // render in a ScrollView+VStack, and .swipeActions is a List-only
+        // modifier. Replaced with a row drag that reveals the same red,
+        // non-full-swipe Delete (§8): confirm dialog → VM swipeDelete path
+        // unchanged. Child gestures beat the shell's plain .gesture
+        // (SlideOverSidebar), so panel-close is untouched.
         .offset(x: swipeOffset)
         .simultaneousGesture(
             DragGesture(minimumDistance: 24)
@@ -601,9 +875,11 @@ struct V2ConversationRow: View {
                 } label: {
                     Label("Delete", systemImage: "trash")
                         .labelStyle(.iconOnly)
-                        .foregroundStyle(.white)
-                        .frame(width: 88, height: Tokens.Sidebar.rowHeight)
-                        .background(Color.red, in: Rectangle())
+                        .foregroundStyle(Tokens.Palette.textPrimary)
+                        .frame(width: 88, height: Tokens.Layout.hitTarget)
+                        .background(
+                            RoundedRectangle(cornerRadius: Tokens.Radius.row, style: .continuous)
+                                .fill(Tokens.Palette.dangerFill))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
@@ -713,6 +989,8 @@ struct V2RenameSheet: View {
                         .accessibilityIdentifier("sidebar.rename.field")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Tokens.Palette.elevated)
             .navigationTitle("Rename")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -730,6 +1008,7 @@ struct V2RenameSheet: View {
             fieldFocused = true
         }
         .presentationDetents([.medium])
+        .presentationBackground(Tokens.Palette.elevated)
     }
 }
 
@@ -744,13 +1023,17 @@ struct V2RenameSheet: View {
 ///   • replays composer sends into the transcript so the user row +
 ///     streaming assistant block appear without a manual refresh;
 ///   • §3 stop: the composer's square button cancels upstream without
-///     losing committed text (engine stop, partial persists).
+///     losing committed text (engine stop, partial persists);
+///   • rich-block interactions (button labels, poll votes, form answers)
+///     ride the SAME user-row + delivery path as a typed message.
 struct V2ChatHost: View {
     let store: PersistenceStore?
     let conversationID: UUID
     /// Item 5: auto-title writes back into the sidebar's VM (shared store,
     /// one writer at a time — the shell owns exactly one).
     var sidebarVM: FeaturesChat.SidebarViewModel? = nil
+    /// Header export button (owned by the shell's header). nil = local.
+    var exportPresented: Binding<Bool>? = nil
     /// Item 9: the action row needs the same send path the composer uses.
     private let sendCoordinator: MessageSendCoordinator?
     /// Item 9: the regenerate send path as a directly-typed closure (built
@@ -775,7 +1058,7 @@ struct V2ChatHost: View {
     /// Item 9: action-row VM (copy/share are store-free; regenerate rides
     /// the same transport+outbox path as composer sends).
     @StateObject private var actionVM: MessageActionViewModel
-    /// Item 13: export-options sheet toggle (toolbar share button).
+    /// Item 13: export-options sheet toggle (fallback when no header binding).
     @State private var showsExportSheet = false
 
     /// StateObject needs a concrete holder: the transcript VM's conversation
@@ -805,10 +1088,12 @@ struct V2ChatHost: View {
     }
 
     init(store: PersistenceStore?, conversationID: UUID,
-         sidebarVM: FeaturesChat.SidebarViewModel? = nil) {
+         sidebarVM: FeaturesChat.SidebarViewModel? = nil,
+         exportPresented: Binding<Bool>? = nil) {
         self.store = store
         self.conversationID = conversationID
         self.sidebarVM = sidebarVM
+        self.exportPresented = exportPresented
         // Item 9: the real regenerate path — POST via the coordinator with
         // outbox replay on failure (offline sends are never lost). When the
         // server isn't configured there is NO send path, and the regenerate
@@ -868,27 +1153,39 @@ struct V2ChatHost: View {
         return { message in await coordinator.deliver(message) }
     }
 
+    /// Rich-block interaction → a real user message (same path as typing):
+    /// write the row, refresh the transcript (bubble appears, tail starts),
+    /// then deliver it to the server (outbox replay on failure).
+    private func sendFromRichBlock(_ text: String) {
+        guard let store else { return }
+        let row = StoredMessage(
+            conversationID: conversationID,
+            role: .user,
+            content: text,
+            status: .sending)
+        let coordinator = sendCoordinator
+        Task {
+            await store.upsert(row)
+            await holder.vm.userDidSend()
+            if let coordinator {
+                await coordinator.deliver(row)
+                await holder.vm.userDidSend()
+            }
+        }
+    }
+
     var body: some View {
         V2TranscriptView(
             vm: holder.vm,
             actionViewModel: actionVM,
-            regenerateSend: sendCoordinator == nil ? nil : regenerateSendPath)
-            // Item 13: export/share entry point for this conversation.
+            regenerateSend: sendCoordinator == nil ? nil : regenerateSendPath,
+            onSendText: store == nil ? nil : { text in sendFromRichBlock(text) })
+            // Item 13: export/share entry point for this conversation (the
+            // trigger lives in the shell header).
             .modifier(ChatExportSheet(
                 store: store,
                 conversationID: conversationID,
-                isPresented: $showsExportSheet))
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showsExportSheet = true
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    .accessibilityLabel("Export chat as PDF")
-                    .accessibilityIdentifier("chat.exportButton")
-                }
-            }
+                isPresented: exportPresented ?? $showsExportSheet))
             .onAppear {
                 Task { await holder.vm.loadInitial() }
                 // Item 12 (M2): call⇄chat binder rows land in THIS
@@ -1029,22 +1326,31 @@ struct V2ComposerHost: View {
     }
 }
 
-/// Empty state before any selection.
+/// Empty state before any selection: the static mark + one real action.
 struct V2EmptyStateView: View {
+    var onNewChat: (() -> Void)? = nil
+
     var body: some View {
-        VStack(spacing: Tokens.Spacing.m) {
-            Image(systemName: "sparkles")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text("New chat")
-                .font(.title3.weight(.medium))
-            Text("Open the sidebar to pick a conversation or start a new one.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+        VStack(spacing: 14) {
+            OrbitalCoreView(state: .idle, isStatic: true)
+                .frame(width: 72, height: 72)
+            Text("What can I help you with?")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(Tokens.Palette.textPrimary)
+            Text("Open the sidebar to pick a conversation, or start a new one.")
+                .font(.subheadline)
+                .foregroundStyle(Tokens.Palette.textSecondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, Tokens.Spacing.l)
+                .padding(.horizontal, Tokens.Spacing.xl)
+            if let onNewChat {
+                Button("New chat", action: onNewChat)
+                    .buttonStyle(JarvisButtonStyle(.primary))
+                    .padding(.top, 6)
+                    .accessibilityIdentifier("chat.emptyNewChat")
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Tokens.Palette.canvas)
     }
 }
 

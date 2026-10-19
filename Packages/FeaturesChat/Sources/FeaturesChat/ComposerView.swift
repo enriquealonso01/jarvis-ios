@@ -32,7 +32,9 @@ private func sysColor(_ name: String) -> Color {
 }
 #endif
 
-// MARK: - Item 4: Composer view (feature #3, P0) — UI Law §6, verbatim:
+// MARK: - Item 4: Composer view (feature #3, P0) — UI Law §6 + the UI
+// expansion prototype `.composer` (field on top, ＋ / voice / send row below,
+// rounded deep-surface container, cyan send). UI Law §6, verbatim:
 //   Rounded capsule docked above keyboard. Three controls: ＋ (left), text
 //   field, mic + waveform (right). ＋ opens bottom sheet: Photos, Camera,
 //   Files (+ Hermes workspace files). Tool toggles = blue labeled chips
@@ -51,6 +53,9 @@ public struct V2ComposerView: View {
     /// through the binding; this diff detects a paste jump (one edit that
     /// overshoots the threshold) and routes it through the chip path.
     @State private var lastObservedText = ""
+    /// Focus drives the container's accent hairline (02 "focused input:
+    /// crisp subtle accent border").
+    @FocusState private var fieldFocused: Bool
     /// One-off model chooser presentation (fired via the .showModelChooser
     /// intent the app target forwards back into this binding).
     @Binding public var isModelChooserPresented: Bool
@@ -71,22 +76,31 @@ public struct V2ComposerView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-            toolChips
-            attachmentChips
-            capsule
-        }
-        .sheet(isPresented: Binding(
-            get: { vm.isSheetPresented },
-            set: { present in
-                if present { vm.plusTapped() } else { vm.dismissSheet() }
+        capsule
+            .padding(.horizontal, Tokens.Layout.composerInset)
+            .padding(.top, Tokens.Spacing.s)
+            .padding(.bottom, Tokens.Spacing.s)
+            .background(
+                // The canvas fades in behind the dock so transcript text never
+                // shows through under the container (prototype composer-wrap).
+                LinearGradient(
+                    stops: [
+                        .init(color: Tokens.Palette.canvas.opacity(0), location: 0),
+                        .init(color: Tokens.Palette.canvas, location: 0.3),
+                    ],
+                    startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea(edges: .bottom))
+            .sheet(isPresented: Binding(
+                get: { vm.isSheetPresented },
+                set: { present in
+                    if present { vm.plusTapped() } else { vm.dismissSheet() }
+                }
+            )) {
+                V2ComposerPlusSheet(vm: vm)
             }
-        )) {
-            V2ComposerPlusSheet(vm: vm)
-        }
     }
 
-    // MARK: Tool chips (blue labeled chips with ×, never silent)
+    // MARK: Tool chips (labeled chips with ×, never silent)
 
     @ViewBuilder
     private var toolChips: some View {
@@ -103,13 +117,15 @@ public struct V2ComposerView: View {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.footnote)
                             }
+                            .buttonStyle(.plain)
                             .accessibilityLabel("Clear \(tool.label)")
                             .accessibilityIdentifier("composer.toolChip.clear.\(tool.id)")
                         }
                         .padding(.horizontal, Tokens.Spacing.m)
-                        .frame(minHeight: 28)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                        .foregroundStyle(.tint)
+                        .frame(minHeight: 30)
+                        .background(Capsule().fill(Tokens.Palette.accentSoft))
+                        .foregroundStyle(Tokens.Palette.accent)
+                        .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("composer.toolChip.\(tool.id)")
                     }
                 }
@@ -129,21 +145,31 @@ public struct V2ComposerView: View {
                         HStack(spacing: Tokens.Spacing.xs) {
                             Image(systemName: iconName(for: attachment.source))
                                 .font(.footnote)
+                                .foregroundStyle(Tokens.Palette.accent)
                             Text(attachment.displayName)
                                 .font(.footnote.weight(.medium))
+                                .foregroundStyle(Tokens.Palette.textPrimary)
                                 .lineLimit(1)
                             Button {
                                 vm.removeAttachment(id: attachment.id)
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.footnote)
+                                    .foregroundStyle(Tokens.Palette.textMuted)
                             }
+                            .buttonStyle(.plain)
                             .accessibilityLabel("Remove \(attachment.displayName)")
                             .accessibilityIdentifier("composer.attachmentChip.remove.\(attachment.id.uuidString)")
                         }
                         .padding(.horizontal, Tokens.Spacing.m)
-                        .frame(minHeight: 28)
-                        .background(Capsule().fill(sysColor("secondaryBg")))
+                        .frame(minHeight: 30)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Tokens.Palette.raised))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Tokens.Palette.border, lineWidth: 1))
+                        .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("composer.attachmentChip")
                     }
                 }
@@ -152,23 +178,38 @@ public struct V2ComposerView: View {
         }
     }
 
-    // MARK: The capsule (＋ left · text field · mic/waveform + send right)
+    // MARK: The container (prototype `.composer`): chips, field on top,
+    // then the ＋ · · · voice / send row below.
 
     private var capsule: some View {
-        HStack(alignment: .bottom, spacing: Tokens.Spacing.s) {
-            plusButton
+        VStack(alignment: .leading, spacing: 6) {
+            toolChips
+            attachmentChips
             textField
-            waveformButton
-            sendButton
+                .padding(.horizontal, 4)
+                .padding(.top, 4)
+            HStack(spacing: 2) {
+                plusButton
+                Spacer(minLength: 0)
+                waveformButton
+                sendButton
+            }
         }
-        .padding(.horizontal, Tokens.Spacing.m)
-        .padding(.vertical, Tokens.Spacing.s)
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .frame(maxWidth: 860)
         .background(
-            Capsule().fill(sysColor("secondaryBg"))
-        )
+            RoundedRectangle(cornerRadius: Tokens.Radius.composer, style: .continuous)
+                .fill(Tokens.Palette.elevated)
+                .shadow(color: Color.black.opacity(0.25), radius: 18, y: 8))
         .overlay(
-            Capsule().strokeBorder(sysColor("separator"), lineWidth: 0.5)
-        )
+            RoundedRectangle(cornerRadius: Tokens.Radius.composer, style: .continuous)
+                .strokeBorder(fieldFocused
+                              ? Tokens.Palette.accent.opacity(0.45)
+                              : Tokens.Palette.border,
+                              lineWidth: 1))
+        .frame(maxWidth: .infinity)
         // .contain keeps the children (text field, send, ＋, waveform) as
         // their own elements; without it the container id overwrote every
         // child id and composer.textField / composer.sendButton vanished
@@ -182,20 +223,22 @@ public struct V2ComposerView: View {
             vm.plusTapped()
         } label: {
             Image(systemName: "plus")
-                .font(.title3.weight(.medium))
-                .frame(width: 32, height: 32)
-                .background(Circle().fill(sysColor("tertiaryBg")))
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(Tokens.Palette.textSecondary)
+                .frame(width: Tokens.Layout.hitTarget, height: Tokens.Layout.hitTarget)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Add attachment")
         .accessibilityIdentifier("composer.plusButton")
     }
 
-    /// Text field. Grows line by line up to `ComposerViewModel.maxLines`
-    /// (inside the §6 5–6-line window), then `axis: .vertical` takes over
-    /// scrolling internally — the frame height comes from the VM's pure
-    /// `fieldHeight` so layout and logic can never disagree.
+    /// Text field. Grows line by line (1 → ~6 lines, 03 composer spec) and
+    /// then scrolls internally — `lineLimit` is the only height authority, so
+    /// a long wrapped paragraph grows the field instead of hiding behind one
+    /// clipped line.
     private var textField: some View {
-        TextField("Message", text: Binding(
+        TextField(text: Binding(
             get: { vm.text },
             set: { newValue in
                 // Paste detection: a single edit jumping past the threshold
@@ -209,24 +252,32 @@ public struct V2ComposerView: View {
                     lastObservedText = newValue
                 }
             }
-        ), axis: .vertical)
-        .font(.body)
-        .lineLimit(1...ComposerViewModel.maxLines)
-        .frame(minHeight: ComposerViewModel.lineHeight,
-               maxHeight: vm.fieldHeight, alignment: .leading)
+        ), prompt: Text("Message JARVIS").foregroundColor(Tokens.Palette.textMuted),
+                  axis: .vertical) {
+            Text("Message JARVIS")
+        }
+        .font(Tokens.Typography.body)
+        .foregroundStyle(Tokens.Palette.textPrimary)
+        .tint(Tokens.Palette.accent)
+        .lineLimit(1...Tokens.Composer.maxVisibleLines)
+        .frame(minHeight: 28, alignment: .leading)
+        .focused($fieldFocused)
         .accessibilityIdentifier("composer.textField")
     }
 
-    /// Waveform button — STARTS A CALL (UI Law §7), never a dictation mode.
-    /// The VM emits `.startCall`; the app target wires CallManager there.
+    /// Voice button — STARTS A VOICE CALL (UI Law §7), never a dictation
+    /// mode. The VM emits `.startCall`; the app target wires CallManager.
     private var waveformButton: some View {
         Button {
             vm.waveformTapped()
         } label: {
             Image(systemName: "waveform")
-                .font(.title3)
-                .foregroundStyle(.tint)
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(Tokens.Palette.textSecondary)
+                .frame(width: Tokens.Layout.hitTarget, height: Tokens.Layout.hitTarget)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Start voice call")
         .accessibilityIdentifier("composer.waveformButton")
     }
@@ -236,7 +287,8 @@ public struct V2ComposerView: View {
     /// model chooser — the persistent model context picker lives at the top
     /// of the conversation, never in the composer.
     private var sendButton: some View {
-        Button {
+        let active = vm.isStreaming || vm.canSend
+        return Button {
             Task {
                 if vm.isStreaming {
                     // UI Law §3: mid-stream the send button is a STOP —
@@ -247,22 +299,21 @@ public struct V2ComposerView: View {
                 } else if (try? await vm.send()) == true {
                     // Sent: ping the transcript so the user row appears
                     // immediately (Item 8; app target wires this).
+                    lastObservedText = ""
                     onDidSend?()
                 }
             }
         } label: {
             Image(systemName: vm.isStreaming ? "stop.fill" : "arrow.up")
-                .font(.body.weight(.semibold))
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle().fill(vm.canSend
-                        ? Color.accentColor
-                        : sysColor("tertiaryFill"))
-                )
-                .foregroundStyle(vm.canSend
-                    ? sysColor("sysBg")
-                    : sysColor("secondaryLabel"))
+                .font(.system(size: vm.isStreaming ? 13 : 17, weight: .bold))
+                .foregroundStyle(Tokens.Palette.onAccent)
+                .frame(width: Tokens.Layout.sendDiameter, height: Tokens.Layout.sendDiameter)
+                .background(Circle().fill(Tokens.Palette.accent))
+                .opacity(active ? 1 : 0.4)
+                .frame(width: Tokens.Layout.hitTarget, height: Tokens.Layout.hitTarget)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .disabled(vm.isStreaming ? false : !vm.canSend)
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.5).onEnded { _ in
@@ -313,7 +364,9 @@ struct V2ComposerPlusSheet: View {
 
             Spacer(minLength: Tokens.Spacing.l)
         }
+        .foregroundStyle(Tokens.Palette.textPrimary)
         .presentationDetents([.medium])
+        .presentationBackground(Tokens.Palette.elevated)
     }
 }
 
@@ -362,6 +415,8 @@ public struct V2ModelChooserSheet: View {
             }
             Spacer(minLength: Tokens.Spacing.l)
         }
+        .foregroundStyle(Tokens.Palette.textPrimary)
         .presentationDetents([.medium])
+        .presentationBackground(Tokens.Palette.elevated)
     }
 }
