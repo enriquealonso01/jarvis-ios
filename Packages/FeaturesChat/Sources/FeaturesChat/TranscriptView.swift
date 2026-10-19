@@ -455,6 +455,12 @@ public struct V2TranscriptView: View {
                 }
             }
         }
+        // Dragging the conversation puts the keyboard away (ChatGPT feel).
+        // Without it nothing could dismiss the keyboard once the composer
+        // had focus — it permanently covered half the transcript.
+        #if os(iOS)
+        .scrollDismissesKeyboard(.interactively)
+        #endif
         .accessibilityIdentifier("transcript.scrollView")
         .onAppear { vm.markBottomBufferNeeded() }
     }
