@@ -106,6 +106,21 @@ jobs:
           xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
           maestro --version
 
+      - name: Idle CPU + main-thread sample on the rich Breck chat
+        continue-on-error: true
+        run: |
+          UDID="${{ steps.env.outputs.udid }}"
+          xcrun simctl launch "$UDID" com.enriquecodes.jarvis || true
+          sleep 12
+          PID=$(pgrep -f "JarvisApp.app/JarvisApp" | head -1)
+          echo "pid=$PID"
+          for i in 1 2 3; do ps -o %cpu=,rss= -p "$PID" | awk '{print "idle cpu% " $1 "  rss_kb " $2}'; sleep 2; done
+          sample "$PID" 5 -file /tmp/sample.txt >/dev/null 2>&1 || true
+          echo "---- main thread (top of call graph) ----"
+          awk '/Thread_[0-9]+.*(main-thread|DispatchQueue_1)/{f=1} f{print} /^ *$/{if(f)exit}' /tmp/sample.txt | head -60
+          cp /tmp/sample.txt "$GITHUB_WORKSPACE/qa-out/idle-sample.txt" 2>/dev/null || true
+          xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
+
       - name: Dump UI hierarchy (ids + labels) of the launch screen
         continue-on-error: true
         env:
