@@ -148,6 +148,45 @@ public actor VoiceTranscriptWriter {
     }
 }
 
+// MARK: - Feel-review hooks (haptics/sounds on state transitions)
+
+/// A perceptible voice-layer transition. The feel layer (UI Law feel-review:
+/// the app must FEEL alive at state changes) receives exactly these — never
+/// raw events, so ignored/no-op events cannot buzz.
+public enum VoiceFeelTransition: String, Sendable, Equatable, CaseIterable {
+    /// Mic went live — light tap.
+    case listeningStarted
+    /// Agent is working — subtle.
+    case thinkingStarted
+    /// Response started — success-shaped.
+    case respondingStarted
+    /// Clean end.
+    case sessionEnded
+    /// Failure.
+    case sessionFailed
+}
+
+/// The feel seam. The app target implements it with the shared `Haptics`
+/// enum + a system sound; QA stubs record. Must be main-actor-friendly and
+/// cheap — called on the state-change path.
+public protocol VoiceFeelFeedback: AnyObject, Sendable {
+    func play(_ transition: VoiceFeelTransition)
+}
+
+/// The pinned doc-state → feel mapping (exhaustive; pure).
+public enum VoiceFeel {
+    public static func transition(forBecoming state: VoiceDocState) -> VoiceFeelTransition? {
+        switch state {
+        case .listening: return .listeningStarted
+        case .thinking: return .thinkingStarted
+        case .speaking: return .respondingStarted
+        case .ended: return .sessionEnded
+        case .failed: return .sessionFailed
+        case .idle, .requestingPermission, .connecting: return nil
+        }
+    }
+}
+
 // MARK: - The voice session (state machine + orbital mapping)
 
 /// Maps REAL events to state. Pure, exhaustive, unit-pinned.
@@ -255,6 +294,9 @@ public final class VoiceSessionViewModel: ObservableObject {
     public private(set) var intentLog: [String] = []
 
     public let transcriptWriter: VoiceTranscriptWriter?
+    /// Feel-review hook: fired exactly when the doc state perceptibly
+    /// changes (never on ignored events — the mapping returns nil).
+    public private(set) var feel: (any VoiceFeelFeedback)?
     private let transport: any VoiceTransporting
     private let audioSource: any VoiceAudioSourcing
     /// The active turn: one mic-open period; partials mutate it, a final
@@ -265,10 +307,12 @@ public final class VoiceSessionViewModel: ObservableObject {
 
     public init(transport: any VoiceTransporting,
                 audioSource: any VoiceAudioSourcing,
-                transcriptWriter: VoiceTranscriptWriter? = nil) {
+                transcriptWriter: VoiceTranscriptWriter? = nil,
+                feel: (any VoiceFeelFeedback)? = nil) {
         self.transport = transport
         self.audioSource = audioSource
         self.transcriptWriter = transcriptWriter
+        self.feel = feel
         transport.onEvent = { [weak self] event in
             await self?.handle(event)
         }
@@ -343,6 +387,9 @@ public final class VoiceSessionViewModel: ObservableObject {
         }
 
         docState = next
+        if let feelTransition = VoiceFeel.transition(forBecoming: next) {
+            feel?.play(feelTransition)
+        }
     }
 
     /// Mic frames ride the transport with sequence numbers + the live turn

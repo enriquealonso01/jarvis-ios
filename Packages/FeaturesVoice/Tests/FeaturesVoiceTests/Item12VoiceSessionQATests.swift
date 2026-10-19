@@ -326,6 +326,76 @@ final class Item12VoiceSessionQATests: XCTestCase {
         XCTAssertEqual(hits.count, 1, "FTS holds exactly the final — no phantom partial copies")
     }
 
+    // MARK: - Feel-review hooks: perceptible transitions only
+
+    private final class RecordingFeel: VoiceFeelFeedback, @unchecked Sendable {
+        private(set) var played: [VoiceFeelTransition] = []
+        func play(_ transition: VoiceFeelTransition) {
+            played.append(transition)
+        }
+    }
+
+    func testFeelHooksFireOnPerceptibleTransitionsOnly() async throws {
+        let store = try PersistenceStore(path: tempDBPath("feel"))
+        let transport = LoopbackTransport()
+        let audio = LoopbackAudioSource()
+        let feel = RecordingFeel()
+        let vm = VoiceSessionViewModel(
+            transport: transport, audioSource: audio,
+            transcriptWriter: nil, feel: feel)
+
+        // requesting_permission + connecting are silent (mapping nil).
+        await vm.start()
+        XCTAssertEqual(feel.played, [], "permission/connecting stages make no noise")
+
+        await transport.simulate(.sessionConnected)
+        XCTAssertEqual(feel.played, [.listeningStarted])
+
+        await transport.simulate(.partialTranscript(text: "x", turnID: UUID()))
+        XCTAssertEqual(feel.played.count, 1, "a no-op event never re-buzzes")
+
+        await transport.simulate(.finalTranscript(text: "x", turnID: UUID()))
+        await transport.simulate(.responseStarted)
+        XCTAssertEqual(feel.played, [.listeningStarted, .thinkingStarted, .respondingStarted])
+
+        await transport.simulate(.responseFinished)
+        XCTAssertEqual(feel.played.last, .listeningStarted)
+
+        await vm.end()
+        XCTAssertEqual(feel.played.last, .sessionEnded)
+        // Full walk produced exactly one buzz per perceptible transition.
+        XCTAssertEqual(feel.played.count, 6)
+    }
+
+    func testFeelFailureTransitionFiresOnRealFailureEvent() async throws {
+        let store = try PersistenceStore(path: tempDBPath("feelfail"))
+        let transport = LoopbackTransport()
+        let audio = LoopbackAudioSource()
+        let feel = RecordingFeel()
+        let vm = VoiceSessionViewModel(
+            transport: transport, audioSource: audio,
+            transcriptWriter: nil, feel: feel)
+
+        await vm.start()
+        await transport.simulate(.sessionConnected)
+        await transport.simulate(.failure(reason: "ws-dropped"))
+        XCTAssertEqual(feel.played.last, .sessionFailed, "failure is perceptible (UI must feel the break)")
+    }
+
+    func testFeelMappingIsExhaustiveAndSilentWherePinned() {
+        XCTAssertEqual(VoiceFeel.transition(forBecoming: .idle), nil)
+        XCTAssertEqual(VoiceFeel.transition(forBecoming: .requestingPermission), nil)
+        XCTAssertEqual(VoiceFeel.transition(forBecoming: .connecting), nil)
+        XCTAssertEqual(VoiceFeel.transition(forBecoming: .listening), .listeningStarted)
+        XCTAssertEqual(VoiceFeel.transition(forBecoming: .thinking), .thinkingStarted)
+        XCTAssertEqual(VoiceFeel.transition(forBecoming: .speaking), .respondingStarted)
+        XCTAssertEqual(VoiceFeel.transition(forBecoming: .ended), .sessionEnded)
+        XCTAssertEqual(VoiceFeel.transition(forBecoming: .failed), .sessionFailed)
+        // Every transition value is a real case (type-checked); the count pin
+        // keeps the enum from growing silently.
+        XCTAssertEqual(VoiceFeelTransition.allCases.count, 5)
+    }
+
     // MARK: - Restart after end: a fresh session is a fresh turn/recording
 
     func testRestartAfterEndStartsCleanAndMuteResets() async throws {
