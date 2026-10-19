@@ -1,5 +1,5 @@
 appId: com.enriquecodes.jarvis
-name: "04 composer: type, plus-menu, model chooser"
+name: "04 composer type plus-menu model chooser"
 ---
 - launchApp:
     stopApp: true

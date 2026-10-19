@@ -3,7 +3,7 @@ appId: com.enriquecodes.jarvis
 # the live server correctly answers 401 here. This journey proves the UI half:
 # the message sends, the bubble appears, and the app stays responsive. The real
 # reply path is verified server-side (jarvis-v2-chat E2E, 11/11).
-name: "07 new chat, send a message, bubble appears, app stays responsive"
+name: "07 new chat send a message bubble appears app stays responsive"
 ---
 - launchApp:
     stopApp: true

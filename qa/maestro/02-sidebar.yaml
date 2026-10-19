@@ -1,5 +1,5 @@
 appId: com.enriquecodes.jarvis
-name: "02 sidebar opens and lists chats, search, new chat"
+name: "02 sidebar opens and lists chats search new chat"
 ---
 - launchApp:
     stopApp: true

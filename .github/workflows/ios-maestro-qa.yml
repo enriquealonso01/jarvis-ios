@@ -150,7 +150,7 @@ jobs:
               b = a.get("bounds", "")
               try: y = int(b.split("][")[0].split(",")[1])
               except Exception: y = 0
-              if y > 600 and (rid or txt): print(f"[{rid}] '{txt}' {b} enabled={a.get('enabled','')}")
+              if y > 250 and (rid or txt) and not (len(txt) == 1 and not rid): print(f"[{rid}] '{txt}' {b} enabled={a.get('enabled','')}")
               for c in n.get("children", []): walk(c)
           walk(root)
           PY

@@ -1,5 +1,5 @@
 appId: com.enriquecodes.jarvis
-name: "01 launch lands on the v2 chat shell (not login, no crash)"
+name: "01 launch lands on the v2 chat shell not login no crash"
 ---
 - launchApp:
     stopApp: true
