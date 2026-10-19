@@ -1,0 +1,131 @@
+name: iOS v2 screenshots
+
+# Screenshot lane: builds the app on the macOS runner, boots it in a
+# simulator with the DEBUG-only -SCREENSHOT_SEED seed (demo conversations:
+# sidebar shell, transcript + composer, Item 11 rich blocks, voice pill),
+# and captures real app screenshots via simctl. Uploads them as workflow
+# artifacts. Runs ONLY on manual dispatch (workflow_dispatch) or on this
+# dedicated branch — never gates v2.
+
+on:
+  push:
+    branches:
+      - ci/screenshots
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26"
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: SPM cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ios/JarvisApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('ios/project.yml', 'Packages/**/Package.swift') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Generate project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build app (no signing)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project JarvisApp.xcodeproj \
+            -scheme JarvisApp \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -derivedDataPath /tmp/dd
+            # Simulator destination signs ad-hoc by default. Do NOT pass
+            # CODE_SIGNING_ALLOWED=NO here: unsigned apps fail Keychain
+            # SecItemAdd (-34018), which silently kills the auth-token seed
+            # (UserDefaults still works -> app lands on LoginView).
+            CODE_SIGN_IDENTITY=- | xcbeautify
+
+      - name: Find simulator + app bundle
+        id: env
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -m1 "iPhone" | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          APP=$(find /tmp/dd/Build/Products -name "JarvisApp.app" -path "*iphonesimulator*" | head -1)
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "Simulator: $UDID  App: $APP"
+
+      - name: Boot simulator + install
+        run: |
+          xcrun simctl boot "${{ steps.env.outputs.udid }}" || true
+          xcrun simctl bootstatus "${{ steps.env.outputs.udid }}" -b
+          xcrun simctl install "${{ steps.env.outputs.udid }}" "${{ steps.env.outputs.app }}"
+
+      - name: Launch + capture (sidebar closed — transcript surface)
+        run: |
+          BUNDLE=com.enriquecodes.jarvis
+          UDID="${{ steps.env.outputs.udid }}"
+          SHOTS="$GITHUB_WORKSPACE/shots"
+          mkdir -p "$SHOTS"
+          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED || true
+          sleep 8
+          xcrun simctl io "$UDID" screenshot "$SHOTS/01-chat-transcript.png" || true
+          xcrun simctl terminate "$UDID" "$BUNDLE" || true
+          sleep 1
+          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED -SCREENSHOT_SELECT D3EA0000-0000-0000-0000-000000000003 || true
+          sleep 8
+          xcrun simctl io "$UDID" screenshot "$SHOTS/02-chat-rich-blocks.png" || true
+          ls -la "$SHOTS"
+
+      - name: Launch + capture (sidebar open)
+        run: |
+          BUNDLE=com.enriquecodes.jarvis
+          UDID="${{ steps.env.outputs.udid }}"
+          SHOTS="$GITHUB_WORKSPACE/shots"
+          mkdir -p "$SHOTS"
+          xcrun simctl terminate "$UDID" "$BUNDLE" || true
+          sleep 1
+          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED -SCREENSHOT_SIDEBAR_OPEN || true
+          sleep 8
+          xcrun simctl io "$UDID" screenshot "$SHOTS/03-sidebar.png" || true
+          ls -la "$SHOTS"
+
+      - name: Diagnostics on failure
+        if: failure() || hashFiles('shots/*.png') == ''
+        run: |
+          UDID="${{ steps.env.outputs.udid }}"
+          xcrun simctl listapps "$UDID" | head -40 || true
+          BUNDLE=com.enriquecodes.jarvis
+          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED || true
+          sleep 5
+          mkdir -p "$GITHUB_WORKSPACE/shots"
+          xcrun simctl io "$UDID" screenshot "$GITHUB_WORKSPACE/shots/00-diagnostics.png" || true
+          ls -la "$GITHUB_WORKSPACE/shots" || true
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-v2-screenshots
+          path: shots/
+          if-no-files-found: error

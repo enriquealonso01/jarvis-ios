@@ -1,7 +1,27 @@
 import SwiftUI
 import UIKit
 
+/// Bootstrap entry point: the screenshot lane (DEBUG + -SCREENSHOT_SEED) must
+/// seed Keychain/UserDefaults BEFORE AuthStore.shared and ServerConfig.shared
+/// initialize (their @Published state snapshots those stores at init), so the
+/// seed runs ahead of the App struct's own synthesized main. Production path
+/// is untouched — this is a pure pass-through when the lane is inactive.
 @main
+struct JarvisAppMain {
+    // Main.main() runs on the main thread before any App state exists, so the
+    // @MainActor seed call is legal here via MainActor.assumeIsolated.
+    static func main() {
+        #if DEBUG
+        if ScreenshotSeed.isActive {
+            MainActor.assumeIsolated {
+                ScreenshotSeed.bootstrapIfNeeded()
+            }
+        }
+        #endif
+        JarvisApp.main()
+    }
+}
+
 struct JarvisApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var auth = AuthStore.shared
@@ -16,6 +36,17 @@ struct JarvisApp: App {
         if V2Flags.localStore {
             LocalStoreBootstrap.shared.warmUp()
         }
+        #if DEBUG
+        // Screenshot lane: fire the GRDB seed as this init's main-actor task.
+        // JarvisApp.init runs BEFORE the view hierarchy builds, so this task
+        // is enqueued ahead of V2SidebarShell's .task restore — the seeded
+        // sidebar state and selection therefore win the restore. Fire-and-
+        // forget: no main-thread blocking anywhere. Inert without
+        // -SCREENSHOT_SEED.
+        if ScreenshotSeed.isActive {
+            Task { await ScreenshotSeed.seedStore() }
+        }
+        #endif
     }
 
     var body: some Scene {
