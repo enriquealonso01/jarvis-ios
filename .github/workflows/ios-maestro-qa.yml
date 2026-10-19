@@ -1,0 +1,127 @@
+name: iOS v2 Maestro QA
+
+# Pre-Enrique QA lane: builds the v2 app for the simulator, seeds it with the
+# DEBUG-only -SCREENSHOT_SEED demo content (no real credentials anywhere),
+# then drives it like a user with Maestro (qa/maestro/*.yaml) — taps, typing,
+# sidebar, export, and a real send to the live backend. Uploads screenshots
+# + a JUnit report. Runs ONLY on the qa/maestro branch or manual dispatch —
+# never gates v2.
+
+on:
+  push:
+    branches:
+      - qa/maestro
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-maestro-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  maestro:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26"
+
+      - name: Java for Maestro
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install xcodegen + Maestro
+        run: |
+          brew install xcodegen
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: SPM cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ios/JarvisApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('ios/project.yml', 'Packages/**/Package.swift') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Generate project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build app (Debug, simulator, ad-hoc signed)
+        working-directory: ios
+        # Ad-hoc signing is required: unsigned simulator apps fail Keychain
+        # SecItemAdd (-34018) and the seed's token never lands.
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project JarvisApp.xcodeproj \
+            -scheme JarvisApp \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -derivedDataPath /tmp/dd \
+            CODE_SIGN_IDENTITY=- | xcbeautify
+
+      - name: Boot simulator, install, seed
+        id: env
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -m1 "iPhone" | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
+          APP=$(find /tmp/dd/Build/Products -name "JarvisApp.app" -path "*iphonesimulator*" | head -1)
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Simulator: $UDID  App: $APP"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          # Seed once; Keychain/UserDefaults/GRDB persist, so every Maestro
+          # cold launch afterwards sees the same signed-in demo state.
+          xcrun simctl launch "$UDID" com.enriquecodes.jarvis -SCREENSHOT_SEED
+          sleep 10
+          xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
+          maestro --version
+
+      - name: Run Maestro journeys
+        id: maestro
+        continue-on-error: true
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/qa-out"
+          cd "$GITHUB_WORKSPACE/qa-out"
+          maestro --device "${{ steps.env.outputs.udid }}" test \
+            --format junit --output "$GITHUB_WORKSPACE/qa-out/report.xml" \
+            --test-output-dir "$GITHUB_WORKSPACE/qa-out/maestro" \
+            "$GITHUB_WORKSPACE/qa/maestro"
+
+      - name: Collect app log + network evidence
+        if: always()
+        run: |
+          UDID="${{ steps.env.outputs.udid }}"
+          xcrun simctl spawn "$UDID" log show --last 15m --style compact \
+            --predicate 'process == "JarvisApp"' > "$GITHUB_WORKSPACE/qa-out/app.log" 2>&1 || true
+          cp -R ~/.maestro/tests "$GITHUB_WORKSPACE/qa-out/maestro-debug" 2>/dev/null || true
+          find "$GITHUB_WORKSPACE/qa-out" -name "*.png" | sort
+          echo "---- JUnit ----"
+          cat "$GITHUB_WORKSPACE/qa-out/report.xml" || true
+
+      - name: Upload QA output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-v2-maestro-qa
+          path: qa-out/
+          if-no-files-found: warn
+
+      - name: Fail if any journey failed
+        if: steps.maestro.outcome == 'failure'
+        run: exit 1

@@ -1,0 +1,13 @@
+appId: com.enriquecodes.jarvis
+name: "05 export chat as PDF opens the export sheet"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.exportButton"
+    timeout: 30000
+- tapOn:
+    id: "chat.exportButton"
+- waitForAnimationToEnd
+- takeScreenshot: 05-export-sheet

@@ -1,0 +1,33 @@
+appId: com.enriquecodes.jarvis
+name: "03 open each seeded chat from the sidebar and read it"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
+- tapOn:
+    id: "chat.menuButton"
+- tapOn: "Pedal trainer.*"
+- extendedWaitUntil:
+    visible: "How did the pedal trainer ads do yesterday.*"
+    timeout: 10000
+- takeScreenshot: 03-krendora-chat
+- tapOn:
+    id: "chat.menuButton"
+- tapOn: "Breck day 3.*"
+- extendedWaitUntil:
+    visible: "Plan day 3 at Breck.*"
+    timeout: 10000
+- assertVisible: "Day 3 — Breckenridge"
+- takeScreenshot: 03-breck-rich-blocks
+- scroll
+- takeScreenshot: 03-breck-scrolled
+- tapOn:
+    id: "chat.menuButton"
+- tapOn: "Call log — Jessica"
+- extendedWaitUntil:
+    visible: "Rang Jessica.*"
+    timeout: 10000
+- takeScreenshot: 03-call-log-chat

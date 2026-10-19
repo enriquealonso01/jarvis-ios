@@ -1,0 +1,13 @@
+# Maestro suite — "use it like Enrique would" pass over the v2 app.
+# Order matters: read-only journeys first, the send journey (mutates the
+# store) last.
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - 01-launch
+    - 02-sidebar
+    - 03-open-conversations
+    - 04-composer
+    - 05-export
+    - 06-projects
+    - 07-send-message

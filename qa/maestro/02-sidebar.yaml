@@ -1,0 +1,23 @@
+appId: com.enriquecodes.jarvis
+name: "02 sidebar opens and lists chats, search, new chat"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
+- tapOn:
+    id: "chat.menuButton"
+- extendedWaitUntil:
+    visible:
+      id: "sidebar.newChat"
+    timeout: 10000
+- assertVisible:
+    id: "sidebar.search"
+- assertVisible: "Breck day 3.*"
+- assertVisible: "Pedal trainer.*"
+- takeScreenshot: 02-sidebar-open
+- tapOn:
+    id: "sidebar.search"
+- takeScreenshot: 02-sidebar-search

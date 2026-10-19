@@ -1,0 +1,16 @@
+appId: com.enriquecodes.jarvis
+name: "06 projects section in the sidebar"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
+- tapOn:
+    id: "chat.menuButton"
+- tapOn:
+    id: "sidebar.projectsToggle"
+    optional: true
+- waitForAnimationToEnd
+- takeScreenshot: 06-projects
