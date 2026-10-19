@@ -74,15 +74,20 @@ struct V2SidebarShell: View {
 
     private func handle(_ selection: SidebarSelection) {
         switch selection {
+        // Picking a destination closes the slide-over (ChatGPT grammar):
+        // before this the panel stayed over the chat it had just opened,
+        // and since open-state persists, relaunches came back covered too.
         case .chat(let id):
             Task {
                 await vm.select(conversationID: id)
                 self.selection = .chat(id: id)
+                await vm.setOpen(false)
             }
         case .newChat:
             Task {
                 let conversation = await vm.newChat()
                 self.selection = .chat(id: conversation.id)
+                await vm.setOpen(false)
             }
         case .projectHome(let id):
             // Item 10: Project Home is the real destination (was a
@@ -90,6 +95,7 @@ struct V2SidebarShell: View {
             projectHomeChatTarget = nil
             // `self.` — the parameter shadows the @State property here.
             self.selection = .projectHome(id: id)
+            Task { await vm.setOpen(false) }
         case .search, .addOn:
             // Placeholders (Item 6 search, add-on screens).
             self.selection = selection
