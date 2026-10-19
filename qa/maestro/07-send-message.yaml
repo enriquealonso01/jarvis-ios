@@ -21,6 +21,13 @@ name: "07 new chat send a message bubble appears app stays responsive"
     id: "chat.menuButton"
 - tapOn:
     id: "sidebar.newChat"
+# The panel closes after the new chat row is written; wait for it to be gone
+# (otherwise a tap at the composer lands on the panel's profile row).
+- extendedWaitUntil:
+    notVisible:
+      id: "sidebar.newChat"
+    timeout: 10000
+- waitForAnimationToEnd
 - extendedWaitUntil:
     visible:
       id: "composer.textField"
