@@ -36,6 +36,9 @@ final class Item13ChatExportQATests: XCTestCase {
         for m in [m1, m2, m3, m4] {
             try await store.upsert(m)
         }
+        // QA-pin: tests select messages via ids[0] (the USER text row) and
+        // build selections from the message ids — the first element is the
+        // conversation id so selection tests can address the transcript.
         return (conversation.id, [m1.id, m2.id, m3.id, m4.id])
     }
 

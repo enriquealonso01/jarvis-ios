@@ -105,10 +105,19 @@ public enum ChatExportEngine {
             if let m = byID[id] { picked.append(m) } else { unknown.append(id.uuidString) }
         }
         if !unknown.isEmpty { throw ExportError.unknownMessageIDs(unknown) }
-        return try document(from: picked,
-                            title: conversation.title,
-                            createdAt: conversation.createdAt,
-                            options: options)
+        // Selection export preserves the caller's pick order verbatim — no
+        // date re-sort (the pick order IS the reading order the user chose).
+        let blocks = picked.map(messageBlock)
+        let hasContent = blocks.contains { block in
+            if case .omitted = block.kind { return false }
+            return true
+        }
+        guard hasContent || !blocks.isEmpty else { throw ExportError.noContent }
+        return ExportDocument(
+            title: conversation.title.isEmpty ? "Exported chat" : conversation.title,
+            createdAt: conversation.createdAt,
+            messageCount: picked.count,
+            blocks: blocks)
     }
 
     // MARK: - Core mapping (synchronous, fully unit-testable)
@@ -141,15 +150,17 @@ public enum ChatExportEngine {
                          title: String,
                          createdAt: Date,
                          options: Options) throws -> ExportDocument {
-        let ordered = messages.sorted { $0.createdAt < $1.createdAt }
-        let blocks = ordered.map(messageBlock)
-        let hasContent = blocks.contains { block in
-            switch block.kind {
-            case .text, .richBlocks: return true
-            case .omitted: return false
-            }
+        // Deterministic order: createdAt ascending, id ascending as the
+        // tie-break for same-timestamp messages (never insert-order roulette).
+        let ordered = messages.sorted { lhs, rhs in
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+            return lhs.id.uuidString < rhs.id.uuidString
         }
-        guard hasContent else { throw ExportError.noContent }
+        let blocks = ordered.map(messageBlock)
+        // never-blank law: throw only when there is truly nothing to print.
+        // An omitted line prints a visible role annotation, so an
+        // all-omitted selection is still a (thin) valid document.
+        guard !blocks.isEmpty else { throw ExportError.noContent }
         return ExportDocument(
             title: title.isEmpty ? "Exported chat" : title,
             createdAt: createdAt,

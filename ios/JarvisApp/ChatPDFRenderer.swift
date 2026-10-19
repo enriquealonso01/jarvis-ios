@@ -213,7 +213,7 @@ extension RichBlock {
     /// Charts/tables degrade to their accessible summary; everything else to
     /// fallbackDisplayText — never empty (Item 11 never-blank law).
     var displayTextForPrint: String {
-        if let f = fallbackDisplayText, !f.isEmpty { return f }
-        return "[\(type.rawValue) block]"
+        let f = fallbackDisplayText
+        return f.isEmpty ? "[\(type.rawValue) block]" : f
     }
 }
