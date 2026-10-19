@@ -72,6 +72,9 @@ public final class ComposerViewModel: ObservableObject {
     @Published public private(set) var lastSentRole: MessageRole?
     /// Verbatim content of the last sent row (auto-title source text).
     @Published public private(set) var lastSentText: String?
+    /// The exact user row the last send wrote — the host delivers THIS row
+    /// to the server (same id), so delivery never duplicates the bubble.
+    @Published public private(set) var lastSentMessage: StoredMessage?
 
     // MARK: Derived outputs (pinned contract)
 
@@ -318,6 +321,7 @@ public final class ComposerViewModel: ObservableObject {
         // see a stable, already-written row.
         lastSentRole = MessageRole.user
         lastSentText = content
+        lastSentMessage = row
         sentMessageCount += 1
         return true
     }

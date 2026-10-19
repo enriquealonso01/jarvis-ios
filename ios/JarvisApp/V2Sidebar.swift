@@ -6,6 +6,16 @@ import DesignSystem
 import FeaturesChat
 import FeaturesSidebar
 
+/// v2 chat auth: every v2 request (POST /v1/conversations/…/messages and
+/// the SSE /events tail) carries the same dashboard bearer the v1 screens
+/// use, refreshed when it is about to expire. Without it the gateway
+/// answers 302 → /login and v2 chat silently never reaches JARVIS.
+enum V2Auth {
+    static let bearer: JarvisKit.BearerProvider = { @MainActor in
+        try? await AuthStore.shared.validAccessToken()
+    }
+}
+
 // MARK: - Item 3: ChatGPT-grammar slide-over sidebar (feature #2, P0)
 //
 // UI Law §1 + research/11 §1, verbatim:
@@ -188,8 +198,11 @@ struct SidebarPanelView: View {
             Divider()
             profileRow
         }
+        // Until v2 has its own Settings, the profile row opens the full v1
+        // app (Sessions · Projects · Calls · More → Secrets, Settings with
+        // sign-out + Face ID) so nothing v1 could do is lost in v2.
         .sheet(isPresented: $settingsPresented) {
-            V2SettingsPlaceholderSheet()
+            RootTabView()
         }
     }
 
@@ -432,7 +445,7 @@ struct SidebarPanelView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("JARVIS")
                         .font(.headline)
-                    Text("Settings")
+                    Text("Calls · Projects · Secrets · Settings")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -775,7 +788,8 @@ struct V2ChatHost: View {
                 client = ChatStreamClient(
                     config: JarvisKit.ServerConfig(baseURL: baseURL),
                     conversationID: conversationID,
-                    store: store)
+                    store: store,
+                    bearerProvider: V2Auth.bearer)
             }
             vm = TranscriptViewModel(
                 conversationID: conversationID,
@@ -796,7 +810,8 @@ struct V2ChatHost: View {
         if ServerConfig.shared.configured,
            let baseURL = URL(string: ServerConfig.shared.config.baseURL) {
             self.sendCoordinator = MessageSendCoordinator(
-                api: JarvisKit.APIClient(config: JarvisKit.ServerConfig(baseURL: baseURL)),
+                api: JarvisKit.APIClient(config: JarvisKit.ServerConfig(baseURL: baseURL),
+                                         bearerProvider: V2Auth.bearer),
                 store: store ?? PersistenceStore())
         } else {
             self.sendCoordinator = nil
@@ -835,7 +850,16 @@ struct V2ChatHost: View {
             store: store, conversationID: conversationID, sidebarVM: sidebarVM,
             onDidSend: { Task { await holder.vm.userDidSend() } },
             onStreamStop: { await holder.vm.stopTapped() },
-            isStreaming: holder.vm.isStreaming)
+            isStreaming: holder.vm.isStreaming,
+            onDeliver: deliverPath)
+    }
+
+    /// Composer sends were store-only (the row never left the phone): the
+    /// composer host hands each freshly written user row here and the
+    /// coordinator POSTs it under its own id (outbox replay on failure).
+    private var deliverPath: ((StoredMessage) async -> Void)? {
+        guard let coordinator = sendCoordinator else { return nil }
+        return { message in await coordinator.deliver(message) }
     }
 
     var body: some View {
@@ -916,6 +940,9 @@ struct V2ComposerHost: View {
     /// stream state in here (it owns the truth); without it the composer's
     /// §3 send⇄stop swap was dead code — `isStreaming` was never mutated.
     var isStreaming: Bool = false
+    /// Delivers the user row a send just wrote to the server (nil = no
+    /// server configured: the chat stays local-only, nothing faked).
+    var onDeliver: ((StoredMessage) async -> Void)? = nil
 
     @StateObject private var holder: ComposerVMHolder
     @State private var isModelChooserPresented = false
@@ -939,13 +966,14 @@ struct V2ComposerHost: View {
 
     init(store: PersistenceStore?, conversationID: UUID, sidebarVM: FeaturesChat.SidebarViewModel? = nil,
          onDidSend: (() -> Void)? = nil, onStreamStop: (() async -> Void)? = nil,
-         isStreaming: Bool = false) {
+         isStreaming: Bool = false, onDeliver: ((StoredMessage) async -> Void)? = nil) {
         self.store = store
         self.conversationID = conversationID
         self.sidebarVM = sidebarVM
         self.onDidSend = onDidSend
         self.onStreamStop = onStreamStop
         self.isStreaming = isStreaming
+        self.onDeliver = onDeliver
         _holder = StateObject(wrappedValue: ComposerVMHolder(store: store))
     }
 
@@ -978,6 +1006,10 @@ struct V2ComposerHost: View {
                 // counter; each tick retitles via the pure rule (fires only
                 // while the row still carries its default title).
                 guard newCount > 0 else { return }
+                // Deliver the row this send wrote (same id → no duplicate).
+                if let onDeliver, let sent = holder.vm.lastSentMessage {
+                    Task { await onDeliver(sent) }
+                }
                 Task {
                     let role = holder.vm.lastSentRole ?? .user
                     let text = holder.vm.lastSentText ?? ""

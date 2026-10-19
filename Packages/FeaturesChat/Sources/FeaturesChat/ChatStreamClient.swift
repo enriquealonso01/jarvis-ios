@@ -18,17 +18,20 @@ public actor ChatStreamClient {
     private let conversationID: UUID
     private let store: PersistenceStore?
     private let session: URLSession
+    private let bearerProvider: BearerProvider?
     private var client: SSEClient?
     private var consumeTask: Task<Void, Never>?
     private(set) var pipeline: ChatStreamPipeline?
     public private(set) var phase: Phase = .idle
 
     public init(config: ServerConfig, conversationID: UUID,
-                store: PersistenceStore?, session: URLSession = .shared) {
+                store: PersistenceStore?, session: URLSession = .shared,
+                bearerProvider: BearerProvider? = nil) {
         self.config = config
         self.conversationID = conversationID
         self.store = store
         self.session = session
+        self.bearerProvider = bearerProvider
     }
 
     /// Cold-launch restore (task spec #3): every message still in
@@ -73,7 +76,7 @@ public actor ChatStreamClient {
     /// Last-Event-ID pointer; the server replays everything after it.
     public func start(resumeAfter: Int64? = nil) {
         consumeTask?.cancel()
-        let sse = SSEClient(config: config, session: session)
+        let sse = SSEClient(config: config, session: session, bearerProvider: bearerProvider)
         client = sse
         phase = .streaming
         consumeTask = Task { [weak self] in

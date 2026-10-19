@@ -64,6 +64,41 @@ public actor MessageSendCoordinator {
         return userMessage
     }
 
+    /// Deliver a user row the composer ALREADY wrote (no second row): POST it
+    /// under its own id, mark it sent, or enqueue it for replay + mark failed.
+    /// A successful delivery also drains anything queued earlier.
+    public func deliver(_ message: StoredMessage) async {
+        var row = message
+        do {
+            let result = try await api.postMessage(conversationID: row.conversationID,
+                                                   messageID: row.id,
+                                                   body: row.content,
+                                                   online: true)
+            if result.reply == nil {
+                await store.enqueue(OutboxEntry(payload: OutboxPayload(
+                    kind: result.payload.kind,
+                    conversationID: result.payload.conversationID,
+                    messageID: result.payload.messageID,
+                    body: result.payload.body
+                )))
+                row.status = .failed
+            } else {
+                row.status = .sent
+            }
+        } catch {
+            await store.enqueue(OutboxEntry(payload: OutboxPayload(
+                kind: OutboxPayload.sendKind,
+                conversationID: row.conversationID,
+                messageID: row.id,
+                body: row.content)))
+            row.status = .failed
+        }
+        await store.upsert(row)
+        if row.status == .sent {
+            _ = try? await outbox.drainOnce()
+        }
+    }
+
     /// Drain the outbox now (call on reconnect / app active).
     @discardableResult
     public func drainOutbox() async throws -> Int {
