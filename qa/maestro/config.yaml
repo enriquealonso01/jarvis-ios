@@ -10,4 +10,8 @@ executionOrder:
     - 04-composer
     - 05-export
     - 06-projects
+    - 08-search
+    - 09-rich-interactions
+    - 10-rich-actions
+    - 11-header-new-chat
     - 07-send-message

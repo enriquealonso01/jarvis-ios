@@ -15,8 +15,22 @@ name: "06 projects section in the sidebar"
     timeout: 30000
 - tapOn:
     id: "chat.menuButton"
+- extendedWaitUntil:
+    visible: "JARVIS UI"
+    timeout: 10000
+- takeScreenshot: 06-projects-expanded
 - tapOn:
     id: "sidebar.projectsToggle"
     optional: true
 - waitForAnimationToEnd
 - takeScreenshot: 06-projects
+# Restore the expanded state (it persists) so later journeys start clean.
+- tapOn:
+    id: "sidebar.projectsToggle"
+    optional: true
+- waitForAnimationToEnd
+# The project row opens Project Home in the chat surface.
+- tapOn:
+    id: "sidebar.project.D3EA0000-0000-0000-0000-0000000000A1"
+- waitForAnimationToEnd
+- takeScreenshot: 06-project-home

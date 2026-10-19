@@ -1,0 +1,43 @@
+appId: com.enriquecodes.jarvis
+# Sidebar search is a real destination: titles filter live, and message
+# CONTENT is searched too (FTS) - "avocado" only appears inside the call log
+# transcript, never in a title or preview.
+name: "08 sidebar search finds chats by title and by message content"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
+    optional: true
+- runFlow: common/close-sidebar.yaml
+- tapOn:
+    id: "chat.menuButton"
+- extendedWaitUntil:
+    visible:
+      id: "sidebar.search"
+    timeout: 10000
+- tapOn:
+    id: "sidebar.search"
+- inputText: "Pedal"
+- extendedWaitUntil:
+    visible: "Pedal trainer.*"
+    timeout: 10000
+- assertNotVisible: "Breck day 3.*"
+- takeScreenshot: 08-search-title
+- tapOn:
+    id: "sidebar.searchClear"
+- tapOn:
+    id: "sidebar.search"
+- inputText: "avocado"
+- extendedWaitUntil:
+    visible: "IN MESSAGES"
+    timeout: 10000
+- assertVisible: "Call log — Jessica"
+- takeScreenshot: 08-search-content
+- tapOn: "Call log — Jessica"
+- extendedWaitUntil:
+    visible: "Rang Jessica.*"
+    timeout: 10000
+- takeScreenshot: 08-search-opened

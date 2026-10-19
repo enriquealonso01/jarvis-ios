@@ -1,0 +1,21 @@
+appId: com.enriquecodes.jarvis
+# The header's new-chat action (top right) opens a fresh chat with the
+# minimal welcome state and a focused-ready composer.
+name: "11 header new chat shows the welcome state"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
+    optional: true
+- runFlow: common/close-sidebar.yaml
+- tapOn:
+    id: "chat.newChatButton"
+- extendedWaitUntil:
+    visible: "What can I help you with?"
+    timeout: 10000
+- assertVisible:
+    id: "composer.textField"
+- takeScreenshot: 11-new-chat-welcome

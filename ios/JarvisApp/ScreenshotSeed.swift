@@ -38,6 +38,10 @@ enum ScreenshotSeed {
     private static let breckConversation = UUID(uuidString: "D3EA0000-0000-0000-0000-000000000001")!
     private static let krendoraConversation = UUID(uuidString: "D3EA0000-0000-0000-0000-000000000002")!
     private static let voiceConversation = UUID(uuidString: "D3EA0000-0000-0000-0000-000000000003")!
+    /// Mirrors the UI-expansion reference screen (reference/mobile-chat.png):
+    /// poll + chart + actions inside the "JARVIS UI" project.
+    private static let richPreviewConversation = UUID(uuidString: "D3EA0000-0000-0000-0000-000000000004")!
+    private static let uiProject = UUID(uuidString: "D3EA0000-0000-0000-0000-0000000000A1")!
 
     /// Synchronous half of the seed (Keychain + UserDefaults server config).
     /// Runs before the App struct initializes — see JarvisAppMain.main().
@@ -71,11 +75,13 @@ enum ScreenshotSeed {
         await seedBreckenridge(store)
         await seedKrendora(store)
         await seedVoice(store)
+        await seedRichPreview(store)
 
         await store.setAppState(sidebarOpen, key: Tokens.Sidebar.Keys.sidebarOpen)
-        // Default to the Breck transcript; -SCREENSHOT_SELECT <uuid> overrides.
+        // Default to the reference-mirroring rich preview (the screen the
+        // UI package specifies); -SCREENSHOT_SELECT <uuid> overrides.
         let selected = args.firstIndex(of: selectArg).flatMap({ args[args.index(after: $0)] })
-            ?? breckConversation.uuidString
+            ?? richPreviewConversation.uuidString
         if let id = UUID(uuidString: selected), await store.get(id: id) != nil {
             await store.setAppState(id.uuidString, key: Tokens.Sidebar.Keys.lastSelection)
         }
@@ -125,8 +131,10 @@ enum ScreenshotSeed {
                     text: "Wind holds are possible on Peak 6 tomorrow — this plan stays on Peak 7/8 terrain."),
                           fallbackText: "Wind hold warning for Peak 6"),
                 RichBlock(content: .buttonGroup(buttons: [
+                    // No URL → the label goes to JARVIS as the next message.
                     RichBlockAction(id: "breck-lift", label: "Buy lift tickets", kind: .openUrl),
-                    RichBlockAction(id: "breck-map", label: "Open trail map", kind: .openUrl),
+                    RichBlockAction(id: "breck-map", label: "Open trail map", kind: .openUrl,
+                                    url: "https://www.breckenridge.com/the-mountain/mountain-info/trail-and-lift-status.aspx"),
                 ]),
                           fallbackText: "Buy lift tickets, Open trail map"),
                 RichBlock(content: .chart(
@@ -241,6 +249,72 @@ enum ScreenshotSeed {
             role: .assistant,
             content: "Building the week-to-date report now — spend so far is $41.20 and orders are pacing",
             status: .streaming))
+    }
+
+    private static func seedRichPreview(_ store: PersistenceStore) async {
+        await store.upsert(StoredProject(
+            id: uiProject,
+            name: "JARVIS UI",
+            instructions: "Refine the JARVIS interface."))
+        await store.upsert(StoredConversation(
+            id: richPreviewConversation,
+            projectID: uiProject,
+            title: "Rich responses preview",
+            updatedAt: Date().addingTimeInterval(-60),
+            lastMessagePreview: "A response can combine text, charts, polls and forms."))
+
+        await store.upsert(StoredMessage(
+            conversationID: richPreviewConversation,
+            role: .user,
+            content: "Show me the kind of interactive responses JARVIS can render.",
+            status: .sent))
+
+        let preview = RichBlocksEnvelope(
+            messageId: "demo-rich-preview-1",
+            conversationId: richPreviewConversation.uuidString,
+            blocks: [
+                RichBlock(content: .text(
+                    "A response can combine text, charts, polls, forms and visual explanations directly in the conversation."),
+                          fallbackText: "A response can combine text, charts, polls, forms and visual explanations."),
+                RichBlock(id: "preview-poll",
+                          content: .poll(
+                    question: "Which experience should we prioritize?",
+                    options: ["Chat polish", "Voice interaction", "Rich responses"]),
+                          fallbackText: "Poll: which experience should we prioritize?"),
+                RichBlock(id: "preview-chart",
+                          content: .chart(
+                    kind: .bar,
+                    title: "Illustrative engineering throughput",
+                    points: [
+                        RichChartPoint(label: "Mon", value: 3),
+                        RichChartPoint(label: "Tue", value: 5),
+                        RichChartPoint(label: "Wed", value: 4),
+                        RichChartPoint(label: "Thu", value: 7),
+                        RichChartPoint(label: "Fri", value: 9),
+                    ]),
+                          fallbackText: "Completed tasks per day: Mon 3, Tue 5, Wed 4, Thu 7, Fri 9"),
+                RichBlock(id: "preview-actions",
+                          content: .buttonGroup(buttons: [
+                    RichBlockAction(id: "plan", label: "Draft the sprint plan", kind: .serverAction),
+                    RichBlockAction(id: "spec", label: "Open the design spec", kind: .openUrl,
+                                    url: "https://github.com/enriquealonso01/jarvis-ios"),
+                ]),
+                          fallbackText: "Draft the sprint plan, Open the design spec"),
+                RichBlock(id: "preview-form",
+                          content: .form(
+                    fields: [
+                        RichFormField(id: "cr-title", kind: .text, label: "Change request title", required: true),
+                    ],
+                    submitLabel: "Send request"),
+                          fallbackText: "Change request form"),
+            ])
+        if let body = try? preview.encodedData(), let json = String(data: body, encoding: .utf8) {
+            await store.upsert(StoredMessage(
+                conversationID: richPreviewConversation,
+                role: .assistant,
+                content: "```jarvis-rich\n" + json + "\n```",
+                status: .sent))
+        }
     }
 
     private static func seedVoice(_ store: PersistenceStore) async {

@@ -1,0 +1,67 @@
+appId: com.enriquecodes.jarvis
+# Button groups and forms DO something: a send-type button posts its label as
+# the user's next message and locks (one-shot); a form submit sends the
+# answers and shows the confirmed state. Never "Unsupported content".
+name: "10 rich buttons and form submit send real messages"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
+    optional: true
+- runFlow: common/close-sidebar.yaml
+- tapOn:
+    id: "chat.menuButton"
+- tapOn:
+    id: "sidebar.conversation.D3EA0000-0000-0000-0000-000000000004"
+- extendedWaitUntil:
+    notVisible:
+      id: "sidebar.newChat"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "rich.button.preview-actions.plan"
+    direction: DOWN
+    timeout: 20000
+- assertNotVisible: "Unsupported content"
+- takeScreenshot: 10-actions-before
+- tapOn:
+    id: "rich.button.preview-actions.plan"
+- extendedWaitUntil:
+    visible:
+      id: "rich.button.preview-actions.plan"
+      enabled: false
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "rich.form.preview-form.field.cr-title"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "rich.form.preview-form.field.cr-title"
+- inputText: "Compact cards"
+- pressKey: Enter
+- waitForAnimationToEnd
+- tapOn:
+    id: "rich.form.preview-form.submit"
+- extendedWaitUntil:
+    visible:
+      id: "rich.form.preview-form.submitted"
+    timeout: 10000
+- takeScreenshot: 10-form-submitted
+- scrollUntilVisible:
+    element: ".*Change request title: Compact cards.*"
+    direction: DOWN
+    timeout: 20000
+- takeScreenshot: 10-messages-sent
+# The Breck chat: a button with no URL asks JARVIS instead of dead-ending.
+- tapOn:
+    id: "chat.menuButton"
+- tapOn: "Breck day 3.*"
+- scrollUntilVisible:
+    element: "Buy lift tickets"
+    direction: DOWN
+    timeout: 20000
+- takeScreenshot: 10-breck-buttons

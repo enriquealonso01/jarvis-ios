@@ -1,0 +1,62 @@
+appId: com.enriquecodes.jarvis
+# The reference rich screen (seeded default chat): pick a poll option, submit
+# the vote (results show only YOUR vote, and the vote reaches the chat as a
+# message), flip the chart to its data table and back, inspect a bar.
+name: "09 rich poll vote and chart data table toggle"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
+    optional: true
+- runFlow: common/close-sidebar.yaml
+- tapOn:
+    id: "chat.menuButton"
+- tapOn:
+    id: "sidebar.conversation.D3EA0000-0000-0000-0000-000000000004"
+- extendedWaitUntil:
+    notVisible:
+      id: "sidebar.newChat"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: "rich.poll.preview-poll.option.2"
+    direction: DOWN
+    timeout: 20000
+- takeScreenshot: 09-poll-before
+- tapOn:
+    id: "rich.poll.preview-poll.option.2"
+- tapOn:
+    id: "rich.poll.preview-poll.submit"
+- extendedWaitUntil:
+    visible: "Rich responses · Your choice"
+    timeout: 10000
+- takeScreenshot: 09-poll-results
+- scrollUntilVisible:
+    element:
+      id: "rich.chart.preview-chart.tab.table"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "rich.chart.preview-chart.bar.4"
+- assertVisible: "Fri: 9"
+- takeScreenshot: 09-chart
+- tapOn:
+    id: "rich.chart.preview-chart.tab.table"
+- extendedWaitUntil:
+    visible:
+      id: "rich.chart.preview-chart.table"
+    timeout: 5000
+- assertVisible: "Thu"
+- takeScreenshot: 09-chart-table
+- tapOn:
+    id: "rich.chart.preview-chart.tab.chart"
+- assertNotVisible:
+    id: "rich.chart.preview-chart.table"
+- scrollUntilVisible:
+    element: "Vote: Rich responses.*"
+    direction: DOWN
+    timeout: 20000
+- takeScreenshot: 09-vote-sent
