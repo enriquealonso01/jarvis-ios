@@ -82,22 +82,38 @@ jobs:
         run: |
           BUNDLE=com.enriquecodes.jarvis
           UDID="${{ steps.env.outputs.udid }}"
-          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED
-          sleep 6
-          xcrun simctl io "$UDID" screenshot shots/01-chat-transcript.png
-          # Rich-blocks demo conversation is mid-scroll in shot 1; capture the
-          # same conversation scrolled to the envelope.
-          xcrun simctl io "$UDID" screenshot shots/02-chat-rich-blocks.png
+          SHOTS="$GITHUB_WORKSPACE/shots"
+          mkdir -p "$SHOTS"
+          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED || true
+          sleep 8
+          xcrun simctl io "$UDID" screenshot "$SHOTS/01-chat-transcript.png" || true
+          xcrun simctl io "$UDID" screenshot "$SHOTS/02-chat-rich-blocks.png" || true
+          ls -la "$SHOTS"
 
       - name: Launch + capture (sidebar open)
         run: |
           BUNDLE=com.enriquecodes.jarvis
           UDID="${{ steps.env.outputs.udid }}"
+          SHOTS="$GITHUB_WORKSPACE/shots"
+          mkdir -p "$SHOTS"
           xcrun simctl terminate "$UDID" "$BUNDLE" || true
           sleep 1
-          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED -SCREENSHOT_SIDEBAR_OPEN
-          sleep 6
-          xcrun simctl io "$UDID" screenshot shots/03-sidebar.png
+          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED -SCREENSHOT_SIDEBAR_OPEN || true
+          sleep 8
+          xcrun simctl io "$UDID" screenshot "$SHOTS/03-sidebar.png" || true
+          ls -la "$SHOTS"
+
+      - name: Diagnostics on failure
+        if: failure() || hashFiles('shots/*.png') == ''
+        run: |
+          UDID="${{ steps.env.outputs.udid }}"
+          xcrun simctl listapps "$UDID" | head -40 || true
+          BUNDLE=com.enriquecodes.jarvis
+          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED || true
+          sleep 5
+          mkdir -p "$GITHUB_WORKSPACE/shots"
+          xcrun simctl io "$UDID" screenshot "$GITHUB_WORKSPACE/shots/00-diagnostics.png" || true
+          ls -la "$GITHUB_WORKSPACE/shots" || true
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4
