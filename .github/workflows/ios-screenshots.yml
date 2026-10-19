@@ -91,6 +91,10 @@ jobs:
           xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED || true
           sleep 8
           xcrun simctl io "$UDID" screenshot "$SHOTS/01-chat-transcript.png" || true
+          xcrun simctl terminate "$UDID" "$BUNDLE" || true
+          sleep 1
+          xcrun simctl launch "$UDID" "$BUNDLE" -SCREENSHOT_SEED -SCREENSHOT_SELECT D3EA0000-0000-0000-0000-000000000003 || true
+          sleep 8
           xcrun simctl io "$UDID" screenshot "$SHOTS/02-chat-rich-blocks.png" || true
           ls -la "$SHOTS"
 

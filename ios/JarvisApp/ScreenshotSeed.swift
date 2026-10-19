@@ -60,19 +60,25 @@ enum ScreenshotSeed {
         guard isActive else { return }
 
         // Sidebar restoration state — which surface greets the screenshot.
+        // Content MUST be inserted before the selection write: the guard
+        // verifies the row exists, and restoreState nils a selection whose
+        // row is missing.
         let args = ProcessInfo.processInfo.arguments
         let sidebarOpen = args.contains(sidebarOpenArg)
         guard let store = LocalStoreBootstrap.shared.store else { return }
-        await store.setAppState(sidebarOpen, key: Tokens.Sidebar.Keys.sidebarOpen)
-        if let raw = args.firstIndex(of: selectArg).flatMap({ args[args.index(after: $0)] }),
-           let id = UUID(uuidString: raw), await store.get(id: id) != nil {
-            await store.setAppState(id.uuidString, key: Tokens.Sidebar.Keys.lastSelection)
-        }
 
         // Demo content (idempotent: fixed ids upsert over themselves).
         await seedBreckenridge(store)
         await seedKrendora(store)
         await seedVoice(store)
+
+        await store.setAppState(sidebarOpen, key: Tokens.Sidebar.Keys.sidebarOpen)
+        // Default to the Breck transcript; -SCREENSHOT_SELECT <uuid> overrides.
+        let selected = args.firstIndex(of: selectArg).flatMap({ args[args.index(after: $0)] })
+            ?? breckConversation.uuidString
+        if let id = UUID(uuidString: selected), await store.get(id: id) != nil {
+            await store.setAppState(id.uuidString, key: Tokens.Sidebar.Keys.lastSelection)
+        }
     }
 
     // MARK: - Conversations
