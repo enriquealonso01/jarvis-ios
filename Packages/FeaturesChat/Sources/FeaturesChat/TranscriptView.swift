@@ -455,6 +455,12 @@ public struct V2TranscriptView: View {
                 }
             }
         }
+        // Dragging the conversation puts the keyboard away (ChatGPT feel).
+        // Without it nothing could dismiss the keyboard once the composer
+        // had focus — it permanently covered half the transcript.
+        #if os(iOS)
+        .scrollDismissesKeyboard(.interactively)
+        #endif
         .accessibilityIdentifier("transcript.scrollView")
         .onAppear { vm.markBottomBufferNeeded() }
     }
@@ -574,13 +580,15 @@ struct TranscriptRowView: View {
         VStack(alignment: .leading, spacing: 4) {
             // Full-width, no bubble (§2). Fixed vertical growth so streaming
             // text reflows without horizontal truncation.
-            Text(row.text.isEmpty ? " " : row.text)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            // Item 11: typed blocks render BELOW the plain text (the raw
-            // envelope stays selectable/copyable — never hidden, so the
-            // action row's copy still copies the verbatim content). Rows
-            // without an envelope render exactly as before (additive).
+            // A rich row renders its blocks INSTEAD of the raw envelope:
+            // printing the text too put the ```jarvis-rich JSON source above
+            // every card (seen in QA screenshots). The action row's copy
+            // still copies the verbatim row text — it never read this view.
+            if richContent == nil {
+                Text(row.text.isEmpty ? " " : row.text)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let blocks = richContent,
                let interactions = richInteractions {
                 RichBlocksView(

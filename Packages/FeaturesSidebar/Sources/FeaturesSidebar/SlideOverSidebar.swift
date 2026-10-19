@@ -62,11 +62,14 @@ public struct SlideOverSidebar<Panel: View, Under: View>: View {
                 }
 
                 // The panel itself.
+                // Only the panel's BACKGROUND runs edge to edge. Ignoring the
+                // safe area on the content put "New chat" under the status
+                // bar (iOS eats taps there) and the profile row under the
+                // home indicator — found by the QA lane.
                 panel()
                     .frame(width: width)
                     .frame(maxHeight: .infinity)
-                    .background(sysBackground())
-                    .ignoresSafeArea(.container, edges: [.top, .bottom])
+                    .background(sysBackground().ignoresSafeArea(.container, edges: [.top, .bottom]))
                     .gesture(
                         DragGesture(minimumDistance: 12)
                             .updating($dragOffset) { value, state, _ in
