@@ -21,16 +21,6 @@ final class ServerConfig: ObservableObject {
     }
 
     init() {
-        #if DEBUG
-        // Screenshot lane (inert without -SCREENSHOT_SEED): seed demo content
-        // synchronously on a non-main queue BEFORE the first frame reads
-        // AuthStore/ServerConfig. MainActor state writes (ServerConfig) hop
-        // to main via the boot gate in JarvisApp.swift — AuthStore/Keychain
-        // are nonisolated statics and safe off-main here.
-        if ScreenshotSeed.isActive {
-            ScreenshotSeed.seedKeychain()
-        }
-        #endif
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let decoded = try? JSONDecoder().decode(ServerConfigValues.self, from: data) {
             config = decoded

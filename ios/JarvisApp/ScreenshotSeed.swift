@@ -32,6 +32,11 @@ enum ScreenshotSeed {
         ProcessInfo.processInfo.arguments.contains(seedArg)
     }
 
+    /// Deterministic conversation ids — the screenshot lane asserts on these.
+    private static let breckConversation = UUID(uuidString: "DEMO0000-0000-0000-0000-000000000001")!
+    private static let krendoraConversation = UUID(uuidString: "DEMO0000-0000-0000-0000-000000000002")!
+    private static let voiceConversation = UUID(uuidString: "DEMO0000-0000-0000-0000-000000000003")!
+
     /// Synchronous half of the seed (Keychain + UserDefaults server config).
     /// Runs before the App struct initializes — see JarvisAppMain.main().
     static func bootstrapIfNeeded() {
