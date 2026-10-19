@@ -110,11 +110,22 @@ extension PersistenceStore {
     }
 
     /// Append one transcript segment (FTS5 trigger keeps the index in sync).
+    /// UPSERT-BY-ID (Item 12 / plan feature #18, two-tier partials→finals):
+    /// re-inserting an existing id OVERWRITES the row (GRDB `save` =
+    /// insert-or-update; `id` is the table PRIMARY KEY so same-id writes
+    /// take the UPDATE branch), so a finalized utterance replaces its
+    /// partial — the same id must never leave two rows. FTS follows the
+    /// row: GRDB's synchronize(withTable:) installs AFTER INSERT/DELETE/
+    /// UPDATE triggers (_ai/_ad/_au; verified against GRDB v7.7.0 source,
+    /// FTS/FTS5.swift), and _au re-indexes on UPDATE (deletes the old
+    /// tokens, inserts the new) — no phantom partial copy can survive.
+    /// The voice layer pins this contract; Item12VoicePersistenceQATests
+    /// asserts the same-id finalize replaces + FTS finds only the final.
     @discardableResult
     public func addTranscriptSegment(_ segment: StoredTranscriptSegment) async -> StoredTranscriptSegment? {
         try? await dbWriter.write { db in
             var row = segment
-            try row.insert(db)
+            try row.save(db)
             return row
         }
     }
