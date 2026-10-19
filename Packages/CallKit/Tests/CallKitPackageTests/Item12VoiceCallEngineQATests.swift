@@ -227,7 +227,7 @@ final class Item12VoiceCallEngineQATests: XCTestCase {
     }
 
     private func walk(_ engine: VoiceCallEngine, _ provider: LoopbackVoiceCallProvider,
-                      _ steps: [(CallPhase, VoiceCallPhase)]) async throws {
+                      _ steps: [(CallPhase, VoiceCallPhase)]) async {
         var index = 0
         func check() async {
             guard index < steps.count else { return }
