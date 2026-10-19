@@ -184,7 +184,6 @@ final class Item12CallStateQATests: XCTestCase {
             XCTAssertEqual(s.callUUID, uuid)
         }
     }
-}
 
     // MARK: - Composer .startCall reaches the real call machine (Item 4 left
     // the seam; §5.4 is entered through it — Item 12 acceptance criterion 4)
@@ -213,3 +212,46 @@ final class Item12CallStateQATests: XCTestCase {
                        "re-firing startCall mid-call must be rejected, not restart ringing")
         XCTAssertEqual(machine.phase, .reported)
     }
+
+    // MARK: - Hold / unhold: §5.4 step 8 re-activate RESTART contract
+
+    /// Hold = didDeactivate (audio off); unhold = re-activate. §5.4 step 8:
+    /// "on re-activate force-restart the WebRTC audio unit" — the machine's
+    /// re-open of the .deactivated → .activated edge is the seam the
+    /// production restart hook must hang on; this pins it as the ONLY path
+    /// back to audio-on from a live call.
+    func testHoldUnholdCycleIsExactlyDeactivatedReactivated() {
+        var s = state(.activated)
+        XCTAssertTrue(s.transition(to: .deactivated), "hold → didDeactivate")
+        // While held, audio work is illegal: no shortcut back to anything but
+        // re-activation, end, or failure.
+        XCTAssertFalse(s.transition(to: .answered), "unhold is NOT re-answer")
+        XCTAssertFalse(s.transition(to: .reported), "hold must not re-ring")
+        XCTAssertTrue(s.transition(to: .activated), "unhold → re-activate (audio unit restart)")
+        XCTAssertEqual(s.phase, .activated)
+    }
+
+    /// Rapid hold/unhold churn must be idempotent at the machine level —
+    /// every cycle takes exactly the same two edges, no drift.
+    func testRepeatedHoldUnholdCyclesStayOnTheTwoEdges() {
+        var s = state(.activated)
+        for cycle in 1...5 {
+            XCTAssertTrue(s.transition(to: .deactivated), "cycle \(cycle): hold")
+            XCTAssertTrue(s.transition(to: .activated), "cycle \(cycle): unhold")
+        }
+        XCTAssertEqual(s.phase, .activated)
+        // …and the machine still ends cleanly afterwards (route-change churn
+        // must not wedge the call).
+        XCTAssertTrue(s.transition(to: .ended))
+    }
+
+    /// An ended call must NOT resurrect into a hold-resume: the
+    /// .deactivated → .activated edge exists only while the call is live.
+    func testUnholdAfterEndIsRejected() {
+        var s = state(.deactivated)
+        XCTAssertTrue(s.transition(to: .ended))
+        XCTAssertFalse(s.transition(to: .activated),
+                       "a deactivated-then-ended call cannot be revived via the hold edge")
+        XCTAssertEqual(s.phase, .ended)
+    }
+}
