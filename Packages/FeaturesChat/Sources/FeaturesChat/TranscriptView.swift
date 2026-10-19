@@ -381,6 +381,11 @@ public final class TranscriptViewModel: ObservableObject {
 }
 
 // MARK: - The transcript view (UI Law §2/§3/§5)
+//
+// Look: UI-expansion 03_SCREEN_SPECS + prototype. Obsidian canvas, assistant
+// answers float full-width directly on the canvas (never bubbled), user turns
+// are deep-surface bubbles with a tail corner, 16pt gutters, readable column
+// capped on wide layouts.
 
 public struct V2TranscriptView: View {
     @ObservedObject public var vm: TranscriptViewModel
@@ -390,28 +395,37 @@ public struct V2TranscriptView: View {
     /// Real regenerate send path (app wires the coordinator); `nil` omits
     /// the regenerate control entirely (no fake buttons).
     public var regenerateSend: MessageActionViewModel.PerformSend? = nil
+    /// The chat's send path for rich-block interactions (button labels, poll
+    /// votes, form submissions). `nil` = those controls stay local / hidden.
+    public var onSendText: ((String) -> Void)? = nil
 
     public init(vm: TranscriptViewModel,
                 actionViewModel: MessageActionViewModel? = nil,
-                regenerateSend: MessageActionViewModel.PerformSend? = nil) {
+                regenerateSend: MessageActionViewModel.PerformSend? = nil,
+                onSendText: ((String) -> Void)? = nil) {
         self.vm = vm
         self.actionViewModel = actionViewModel
         self.regenerateSend = regenerateSend
+        self.onSendText = onSendText
     }
 
     public var body: some View {
         GeometryReader { geo in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: Tokens.Spacing.m) {
-                        conversationHead
+                    LazyVStack(alignment: .leading, spacing: Tokens.Layout.messageSpacing) {
+                        if vm.displayRows.isEmpty {
+                            welcome(minHeight: geo.size.height * 0.72)
+                        } else {
+                            conversationHead
+                        }
                         ForEach(vm.displayRows) { row in
                             let rowIndex = vm.displayRows.firstIndex(where: { $0.id == row.id })
                             let isLast = rowIndex == vm.displayRows.count - 1
                             let rowRegenPrompt: String? = (rowIndex != nil && isLast && !row.isUser)
                                 ? lastUserPrompt(rows: vm.displayRows, upTo: rowIndex!)
                                 : nil
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: row.isUser ? .trailing : .leading, spacing: 4) {
                                 TranscriptRowView(
                                     row: row,
                                     availableWidth: geo.size.width,
@@ -419,7 +433,8 @@ public struct V2TranscriptView: View {
                                         ? { Task { await vm.retryTapped() } }
                                         : nil,
                                     richBlocks: vm.richBlocks(for: row),
-                                    richInteractions: vm.richInteractions)
+                                    richInteractions: vm.richInteractions,
+                                    onSendText: onSendText)
                                 if let actionVM = actionViewModel {
                                     MessageActionRowView(
                                         row: row,
@@ -433,6 +448,7 @@ public struct V2TranscriptView: View {
                                             : nil)
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: row.isUser ? .trailing : .leading)
                         }
                         workingIndicator
                         Color.clear
@@ -441,8 +457,10 @@ public struct V2TranscriptView: View {
                             .onAppear { vm.isAtBottom = true }
                             .onDisappear { vm.isAtBottom = false }
                     }
-                    .padding(.horizontal, Tokens.Spacing.l)
-                    .padding(.top, Tokens.Spacing.s)
+                    .frame(maxWidth: Tokens.Layout.transcriptMaxWidth)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, Tokens.Layout.gutter)
+                    .padding(.top, Tokens.Spacing.m)
                 }
                 .onChange(of: vm.displayRows) { _, _ in
                     // §5: auto-scroll ONLY when already at bottom — never
@@ -455,6 +473,7 @@ public struct V2TranscriptView: View {
                 }
             }
         }
+        .background(Tokens.Palette.canvas)
         // Dragging the conversation puts the keyboard away (ChatGPT feel).
         // Without it nothing could dismiss the keyboard once the composer
         // had focus — it permanently covered half the transcript.
@@ -465,20 +484,39 @@ public struct V2TranscriptView: View {
         .onAppear { vm.markBottomBufferNeeded() }
     }
 
-    /// §2: avatar/label at the conversation head (assistant never bubbles).
+    /// §2: brand label at the conversation head (assistant never bubbles).
+    /// Static mark — passive surfaces never animate (brand kit).
     private var conversationHead: some View {
         HStack(spacing: Tokens.Spacing.s) {
-            Image(systemName: "sparkles")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(Color.accentColor))
+            OrbitalCoreView(state: .idle, isStatic: true)
+                .frame(width: 22, height: 22)
             Text("JARVIS")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.caption2.weight(.heavy))
+                .tracking(1.6)
+                .foregroundStyle(Tokens.Palette.textMuted)
             Spacer()
         }
+        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("transcript.conversationHead")
+    }
+
+    /// Empty conversation: minimal welcome (03 "new chat suggestion text
+    /// minimal"), the static Orbital Core mark, no extra feature pages.
+    private func welcome(minHeight: CGFloat) -> some View {
+        VStack(spacing: 14) {
+            OrbitalCoreView(state: .idle, isStatic: true)
+                .frame(width: 72, height: 72)
+            Text("What can I help you with?")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(Tokens.Palette.textPrimary)
+                .multilineTextAlignment(.center)
+            Text("JARVIS, ready when you are.")
+                .font(.subheadline)
+                .foregroundStyle(Tokens.Palette.textSecondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: minHeight)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("transcript.welcome")
     }
 
     /// Item 9: the last USER prompt above `upTo` — the regenerate replay
@@ -491,26 +529,29 @@ public struct V2TranscriptView: View {
         return nil
     }
 
-    /// §3 working indicator while the tail is open but has no text yet.
+    /// §3 working indicator while the tail is open but has no text yet —
+    /// the Orbital Core in its real `thinking` state (driven by isStreaming).
     @ViewBuilder
     private var workingIndicator: some View {
         if vm.isStreaming,
            vm.displayRows.last?.text.isEmpty ?? false {
-            HStack(spacing: Tokens.Spacing.s) {
-                ProgressView()
+            HStack(spacing: 10) {
+                OrbitalCoreView(state: .thinking)
+                    .frame(width: 26, height: 26)
                 Text("JARVIS is working…")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Tokens.Palette.textMuted)
             }
+            .accessibilityElement(children: .combine)
             .accessibilityIdentifier("transcript.workingIndicator")
         }
     }
 }
 
-/// One row: user = right-aligned tinted bubble ≤85% width; assistant =
+/// One row: user = right-aligned deep-surface bubble ≤85% width; assistant =
 /// full-width, no bubble (UI Law §2 — never bubble the assistant).
 /// Item 11: an assistant row whose content carries a rich envelope renders
-/// its typed blocks below the plain text (additive; plain rows are untouched).
+/// its typed blocks (additive; plain rows are untouched).
 struct TranscriptRowView: View {
     let row: TranscriptRow
     let availableWidth: CGFloat
@@ -519,15 +560,19 @@ struct TranscriptRowView: View {
     /// store + handlers); nil = plain-text row exactly as Item 8 shipped.
     var richBlocks: [RichBlock]? = nil
     var richInteractions: RichInteractionStore? = nil
+    /// The chat's send path for rich interactions (nil = local only).
+    var onSendText: ((String) -> Void)? = nil
 
     init(row: TranscriptRow, availableWidth: CGFloat, onRetry: (() -> Void)? = nil,
          richBlocks: [RichBlock]? = nil,
-         richInteractions: RichInteractionStore? = nil) {
+         richInteractions: RichInteractionStore? = nil,
+         onSendText: ((String) -> Void)? = nil) {
         self.row = row
         self.availableWidth = availableWidth
         self.onRetry = onRetry
         self.richBlocks = richBlocks
         self.richInteractions = richInteractions
+        self.onSendText = onSendText
     }
 
     /// The row's rich payload: the VM-extracted map (parsed once per refresh,
@@ -547,71 +592,90 @@ struct TranscriptRowView: View {
         }
     }
 
+    private var bubbleShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: Tokens.Radius.bubble,
+            bottomLeadingRadius: Tokens.Radius.bubble,
+            bottomTrailingRadius: Tokens.Radius.bubbleTail,
+            topTrailingRadius: Tokens.Radius.bubble,
+            style: .continuous)
+    }
+
     private var userBubble: some View {
         HStack(alignment: .bottom) {
             Spacer(minLength: 0)
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(row.text)
+                    .font(Tokens.Typography.body)
+                    .foregroundStyle(Tokens.Palette.textPrimary)
+                    .lineSpacing(3)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(bubbleShape.fill(Tokens.Palette.raised))
+                    .overlay(bubbleShape.stroke(Tokens.Palette.border.opacity(0.6), lineWidth: 0.5))
                 if row.status == .sending {
                     Text("Sending…")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Tokens.Palette.textMuted)
                 }
                 if row.status == .failed {
                     Text("Not delivered")
                         .font(.caption2)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Tokens.Palette.danger)
                 }
             }
-            .padding(.horizontal, Tokens.Spacing.m)
-            .padding(.vertical, Tokens.Spacing.s)
-            .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color.accentColor.opacity(0.18))
-            )
             .frame(maxWidth: availableWidth * Tokens.Bubble.maxWidthFraction,
                    alignment: .trailing)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("transcript.message.\(row.id)")
     }
 
     private var assistantBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Full-width, no bubble (§2). Fixed vertical growth so streaming
-            // text reflows without horizontal truncation.
-            // A rich row renders its blocks INSTEAD of the raw envelope:
-            // printing the text too put the ```jarvis-rich JSON source above
-            // every card (seen in QA screenshots). The action row's copy
-            // still copies the verbatim row text — it never read this view.
+        VStack(alignment: .leading, spacing: 12) {
+            // Full-width, no bubble (§2). A rich row renders its blocks
+            // INSTEAD of the raw envelope: printing the text too put the
+            // ```jarvis-rich JSON source above every card (QA screenshots).
+            // The action row's copy still copies the verbatim row text.
             if richContent == nil {
-                Text(row.text.isEmpty ? " " : row.text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                if row.text.isEmpty {
+                    Text(" ")
+                        .font(Tokens.Typography.body)
+                } else {
+                    MarkdownText(row.text)
+                }
             }
             if let blocks = richContent,
                let interactions = richInteractions {
                 RichBlocksView(
                     blocks: blocks,
                     messageID: row.id,
-                    interactions: interactions)
+                    interactions: interactions,
+                    onSend: onSendText)
             }
             if row.status == .failed {
                 HStack(spacing: Tokens.Spacing.s) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.caption)
                     Text("Failed")
                         .font(.caption)
-                        .foregroundStyle(.red)
                     if row.retryAvailable {
                         Button("Retry") {
                             Task { await retry() }
                         }
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(Tokens.Palette.accent)
+                        .frame(minHeight: Tokens.Layout.hitTarget)
                         .accessibilityIdentifier("transcript.retry")
                     }
                 }
+                .foregroundStyle(Tokens.Palette.danger)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("transcript.message.\(row.id)")
     }
 
