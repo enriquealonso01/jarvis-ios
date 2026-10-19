@@ -756,6 +756,8 @@ struct V2ChatHost: View {
     /// Item 9: action-row VM (copy/share are store-free; regenerate rides
     /// the same transport+outbox path as composer sends).
     @StateObject private var actionVM: MessageActionViewModel
+    /// Item 13: export-options sheet toggle (toolbar share button).
+    @State private var showsExportSheet = false
 
     /// StateObject needs a concrete holder: the transcript VM's conversation
     /// target is fixed at shell-selection time, but its stream client needs
@@ -841,6 +843,22 @@ struct V2ChatHost: View {
             vm: holder.vm,
             actionViewModel: actionVM,
             regenerateSend: sendCoordinator == nil ? nil : regenerateSendPath)
+            // Item 13: export/share entry point for this conversation.
+            .modifier(ChatExportSheet(
+                store: store,
+                conversationID: conversationID,
+                isPresented: $showsExportSheet))
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showsExportSheet = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("Export chat as PDF")
+                    .accessibilityIdentifier("chat.exportButton")
+                }
+            }
             .onAppear {
                 Task { await holder.vm.loadInitial() }
                 // Item 12 (M2): call⇄chat binder rows land in THIS
