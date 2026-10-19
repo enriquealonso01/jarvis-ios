@@ -106,6 +106,32 @@ jobs:
           xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
           maestro --version
 
+      - name: Dump UI hierarchy (ids + labels) of the launch screen
+        continue-on-error: true
+        env:
+          MAESTRO_CLI_NO_ANALYTICS: "1"
+        run: |
+          UDID="${{ steps.env.outputs.udid }}"
+          xcrun simctl launch "$UDID" com.enriquecodes.jarvis || true
+          sleep 8
+          maestro --device "$UDID" hierarchy > /tmp/h.json 2>/dev/null || true
+          python3 - <<'PY'
+          import json
+          try:
+              root = json.load(open("/tmp/h.json"))
+          except Exception as e:
+              print("no hierarchy:", e); raise SystemExit
+          def walk(n, d=0):
+              a = n.get("attributes", {})
+              rid = a.get("resource-id") or a.get("identifier") or ""
+              txt = (a.get("text") or a.get("accessibilityText") or a.get("label") or "")[:60]
+              if rid or txt:
+                  print("  " * min(d, 12) + f"[{rid}] '{txt}' {a.get('bounds','')} enabled={a.get('enabled','')}")
+              for c in n.get("children", []): walk(c, d + 1)
+          walk(root)
+          PY
+          xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
+
       - name: Run Maestro journeys
         id: maestro
         continue-on-error: true
