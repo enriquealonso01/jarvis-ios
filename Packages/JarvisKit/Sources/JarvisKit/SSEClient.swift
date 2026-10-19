@@ -168,10 +168,14 @@ public actor SSEClient {
     private var parser = SSEParser()
     private var active: AsyncThrowingStream<AgentEvent, Error>.Continuation?
 
-    public init(config: ServerConfig, session: URLSession = .shared, options: SSEOptions = SSEOptions()) {
+    private let bearerProvider: BearerProvider?
+
+    public init(config: ServerConfig, session: URLSession = .shared, options: SSEOptions = SSEOptions(),
+                bearerProvider: BearerProvider? = nil) {
         self.config = config
         self.session = session
         self.options = options
+        self.bearerProvider = bearerProvider
     }
 
     /// GET stream endpoint for a conversation (fixture contract, see
@@ -344,6 +348,7 @@ public actor SSEClient {
         let epoch = attemptEpoch
         let session = self.session
         let heartbeat = options.heartbeatTimeout
+        let bearerProvider = self.bearerProvider
 
         let conn = Task<Void, Never> { [weak self] in
             guard let self else { return }
@@ -352,6 +357,9 @@ public actor SSEClient {
             request.timeoutInterval = 300
             if let resumeHeader {
                 request.setValue(resumeHeader, forHTTPHeaderField: "Last-Event-ID")
+            }
+            if let bearerProvider, let bearer = await bearerProvider() {
+                request.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization")
             }
             do {
                 let (bytes, response) = try await session.bytes(for: request)
