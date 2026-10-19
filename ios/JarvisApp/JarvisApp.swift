@@ -8,9 +8,17 @@ import UIKit
 /// is untouched — this is a pure pass-through when the lane is inactive.
 @main
 struct JarvisAppMain {
+    // Synchronous static main: Main.main() is documented to run on the main
+    // thread, so the @MainActor seed call below is legal in this nonisolated
+    // context via MainActor.assumeIsolated (thread is main, runtime not yet
+    // pumping the actor — the seed only touches Keychain/UserDefaults).
     static func main() {
         #if DEBUG
-        ScreenshotSeed.bootstrapIfNeeded()
+        if ScreenshotSeed.isActive {
+            MainActor.assumeIsolated {
+                ScreenshotSeed.seedKeychain()
+            }
+        }
         #endif
         JarvisApp.main()
     }

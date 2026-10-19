@@ -31,10 +31,11 @@ enum ScreenshotSeed {
         ProcessInfo.processInfo.arguments.contains(seedArg)
     }
 
-    /// Keychain half of the seed — nonisolated statics, safe from any queue.
-    /// Runs synchronously inside ServerConfig.init (before first frame);
-    /// the async store half runs from the app boot gate below.
-    nonisolated static func seedKeychain() {
+    /// Keychain half of the seed. AuthStore is @MainActor, so this must run
+    /// on the main actor — JarvisAppMain.main() calls it on the main thread
+    /// before any App state initializes.
+    @MainActor
+    static func seedKeychain() {
         AuthStore.saveString("jarvis.auth.access", "screenshot-demo-token")
         AuthStore.saveString("jarvis.auth.refresh", "screenshot-demo-refresh")
         AuthStore.saveString("jarvis.auth.expires",
