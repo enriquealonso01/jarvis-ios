@@ -39,6 +39,8 @@ struct V2SidebarShell: View {
     @State private var selection: SidebarSelection?
     /// Header export button → the conversation's PDF export sheet.
     @State private var exportPresented = false
+    /// Voice overlay presenter (composer voice button / in-chat pill).
+    @ObservedObject private var voice = V2VoiceOverlay.shared
     private let store: PersistenceStore?
 
     init(store: PersistenceStore?) {
@@ -60,6 +62,9 @@ struct V2SidebarShell: View {
             chatSurface
         }
         .background(Tokens.Palette.canvas.ignoresSafeArea())
+        .fullScreenCover(isPresented: $voice.isPresented) {
+            V2VoiceScreen()
+        }
         .task {
             await vm.restoreState()
             await vm.reload()
@@ -1262,7 +1267,9 @@ struct V2ComposerHost: View {
         init(store: PersistenceStore?) {
             vm = ComposerViewModel(store: store, events: { event in
                 guard event == .startCall else { return }
-                Task { await CallManager.shared.placeDirectCall() }
+                // The voice button opens the voice screen in its honest
+                // READY state; the session starts from its Start control.
+                Task { @MainActor in V2VoiceOverlay.shared.present() }
             })
         }
     }
