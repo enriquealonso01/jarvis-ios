@@ -309,6 +309,19 @@ final class Item4ComposerQATests: XCTestCase {
         XCTAssertFalse(vm.isSheetPresented, "waveform ≠ ＋ sheet")
     }
 
+    /// Item 12 (M2): the intent ALSO advances the monotonic app-target
+    /// counter (the deterministic CallKit hookup seam). One intent ⇔ one
+    /// count — the counter never desyncs from the event channel.
+    func testWaveformCounterMatchesTheIntentChannel() {
+        let vm = makeVM()
+        XCTAssertEqual(vm.startCallRequestCount, 0)
+        vm.waveformTapped()
+        XCTAssertEqual(vm.startCallRequestCount, 1, "one tap → exactly one call request")
+        vm.waveformTapped()
+        vm.waveformTapped()
+        XCTAssertEqual(vm.startCallRequestCount, 3, "monotonic, no resets")
+    }
+
     // MARK: (g) ＋ sheet exposes exactly Photos/Camera/Files/Hermes rows
 
     func testPlusSheetExposesExactlyTheFourRequiredRows() {

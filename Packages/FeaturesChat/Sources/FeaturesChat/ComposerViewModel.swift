@@ -169,9 +169,15 @@ public final class ComposerViewModel: ObservableObject {
         events?(.showModelChooser)
     }
 
+    /// Item 12 (M2): monotonic counter of waveform→startCall intents — the
+    /// app target observes this to place the real CallKit call (onChange;
+    /// the closure `events` channel stays for package-level QA).
+    @Published public private(set) var startCallRequestCount = 0
+
     /// Waveform button: START A CALL (UI Law §7) — never a dictation mode.
     /// Writes nothing, consumes no draft.
     public func waveformTapped() {
+        startCallRequestCount += 1
         events?(.startCall)
     }
 

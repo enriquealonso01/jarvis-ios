@@ -841,12 +841,28 @@ struct V2ChatHost: View {
             vm: holder.vm,
             actionViewModel: actionVM,
             regenerateSend: sendCoordinator == nil ? nil : regenerateSendPath)
-            .onAppear { Task { await holder.vm.loadInitial() } }
-            .onDisappear { holder.vm.cancelTail() }
+            .onAppear {
+                Task { await holder.vm.loadInitial() }
+                // Item 12 (M2): call⇄chat binder rows land in THIS
+                // conversation through the shell's shared store.
+                M2CallTranscriptBinder.shared.visibleConversationID = conversationID
+                M2CallTranscriptBinder.shared.store = store
+            }
+            .onDisappear {
+                holder.vm.cancelTail()
+                if M2CallTranscriptBinder.shared.visibleConversationID == conversationID {
+                    M2CallTranscriptBinder.shared.visibleConversationID = nil
+                }
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 // The composer host below mirrors this host's live
                 // `isStreaming` (Item 8 QA fix — see `composerHost`).
                 composerHost
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                // Item 12 (M2): the in-chat voice pill while a call is
+                // live — chat stays visible; user can type back mid-call.
+                V2InChatVoiceBar()
             }
             .sheet(isPresented: Binding(
                 get: { actionVM.shareText != nil },
@@ -889,11 +905,17 @@ struct V2ComposerHost: View {
 
     /// StateObject needs a concrete holder: the composer VM's conversation
     /// target is set after init (conversation becomes known on selection).
+    /// Item 12 (M2): the waveform intent rides the VM's `events` channel —
+    /// wired here at VM creation (deterministic; no view-body observation)
+    /// → the REAL CallKit/WebRTC call engine (UI Law §7).
     @MainActor
     final class ComposerVMHolder: ObservableObject {
         let vm: ComposerViewModel
         init(store: PersistenceStore?) {
-            vm = ComposerViewModel(store: store)
+            vm = ComposerViewModel(store: store, events: { event in
+                guard event == .startCall else { return }
+                Task { await CallManager.shared.placeDirectCall() }
+            })
         }
     }
 

@@ -253,6 +253,27 @@ final class CallManager: NSObject, ObservableObject {
         }
     }
 
+    /// Item 12 (M2): the in-chat pill's mute control rides the same live
+    /// mute path as the native call screen (CXSetMutedCallAction) so
+    /// CallKit UI, WebRTC mic, and the pill never disagree.
+    func toggleMuteFromInChat() {
+        guard activeCallUUID != nil,
+              let uuid = activeCallUUID,
+              let callController else { return }
+        isCallMuted.toggle()
+        let action = CXSetMutedCallAction(call: uuid, muted: isCallMuted)
+        let transaction = CXTransaction(action: action)
+        callController.request(transaction) { [weak self] error in
+            Task { @MainActor in
+                if error != nil {
+                    // Roll back the optimistic toggle — the provider owns
+                    // the truth (UI Law: no lying UI).
+                    self?.isCallMuted.toggle()
+                }
+            }
+        }
+    }
+
     /// Shared CallKit UI setup (provider + controller) for both directions.
     private func setupCallUI() {
         guard provider == nil else { return }
