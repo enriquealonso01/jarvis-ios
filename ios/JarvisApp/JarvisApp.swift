@@ -8,15 +8,13 @@ import UIKit
 /// is untouched — this is a pure pass-through when the lane is inactive.
 @main
 struct JarvisAppMain {
-    // Synchronous static main: Main.main() is documented to run on the main
-    // thread, so the @MainActor seed call below is legal in this nonisolated
-    // context via MainActor.assumeIsolated (thread is main, runtime not yet
-    // pumping the actor — the seed only touches Keychain/UserDefaults).
+    // Main.main() runs on the main thread before any App state exists, so the
+    // @MainActor seed call is legal here via MainActor.assumeIsolated.
     static func main() {
         #if DEBUG
         if ScreenshotSeed.isActive {
             MainActor.assumeIsolated {
-                ScreenshotSeed.seedKeychain()
+                ScreenshotSeed.bootstrapIfNeeded()
             }
         }
         #endif
@@ -39,17 +37,14 @@ struct JarvisApp: App {
             LocalStoreBootstrap.shared.warmUp()
         }
         #if DEBUG
-        // Screenshot lane: the async GRDB half (demo conversations/messages/
-        // sidebar KV) runs frame-synchronously after the store is warm. The
-        // seed enum is nonisolated and touches no MainActor state, so the
-        // brief main-thread wait cannot deadlock. Inert without -SCREENSHOT_SEED.
+        // Screenshot lane: fire the GRDB seed as this init's main-actor task.
+        // JarvisApp.init runs BEFORE the view hierarchy builds, so this task
+        // is enqueued ahead of V2SidebarShell's .task restore — the seeded
+        // sidebar state and selection therefore win the restore. Fire-and-
+        // forget: no main-thread blocking anywhere. Inert without
+        // -SCREENSHOT_SEED.
         if ScreenshotSeed.isActive {
-            let semaphore = DispatchSemaphore(value: 0)
-            Task.detached(priority: .userInitiated) {
-                await ScreenshotSeed.seedStore()
-                semaphore.signal()
-            }
-            semaphore.wait()
+            Task { await ScreenshotSeed.seedStore() }
         }
         #endif
     }

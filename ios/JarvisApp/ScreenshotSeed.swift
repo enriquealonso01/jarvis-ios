@@ -11,55 +11,58 @@ import DesignSystem
 /// Compiled in DEBUG only and INERT unless the process is launched with
 /// `-SCREENSHOT_SEED` (simctl launch args). Normal installs never execute any
 /// of this — the launch-argument gate is checked before anything is touched.
+///
+/// The app target compiles with default-MainActor isolation, so the whole
+/// enum is explicitly @MainActor and every entry point respects that:
+/// `bootstrapIfNeeded` runs inside MainActor.assumeIsolated from
+/// JarvisAppMain.main (synchronously, BEFORE AuthStore/ServerConfig snapshot
+/// Keychain/UserDefaults), and `seedStore` runs as the app's first main-actor
+/// Task from JarvisApp.init — strictly before V2SidebarShell's own .task
+/// restores state (FIFO on the main actor), so the seeded sidebar-open flag
+/// and selected conversation win the restore.
 @MainActor
 enum ScreenshotSeed {
 
     private static let seedArg = "-SCREENSHOT_SEED"
     private static let sidebarOpenArg = "-SCREENSHOT_SIDEBAR_OPEN"
+    /// Optional UUID string: which seeded conversation to select on restore.
+    private static let selectArg = "-SCREENSHOT_SELECT"
 
-    /// UserDefaults half of the seed (server config). Runs synchronously
-    /// before the App struct initializes — see JarvisAppMain.main().
-    nonisolated static func bootstrapIfNeeded() {
+    static var isActive: Bool {
+        ProcessInfo.processInfo.arguments.contains(seedArg)
+    }
+
+    /// Synchronous half of the seed (Keychain + UserDefaults server config).
+    /// Runs before the App struct initializes — see JarvisAppMain.main().
+    static func bootstrapIfNeeded() {
         guard isActive else { return }
+        AuthStore.saveString("jarvis.auth.access", "screenshot-demo-token")
+        AuthStore.saveString("jarvis.auth.refresh", "screenshot-demo-refresh")
+        AuthStore.saveString("jarvis.auth.expires",
+                             String(Int(Date().timeIntervalSince1970) + 7 * 24 * 3600))
         let cfg = ServerConfigValues(baseURL: "https://jarvis.enriquecodes.com")
         if let data = try? JSONEncoder().encode(cfg) {
             UserDefaults.standard.set(data, forKey: "jarvis.server.config.v1")
         }
     }
 
-    static var isActive: Bool {
-        ProcessInfo.processInfo.arguments.contains(seedArg)
-    }
-
-    /// Keychain half of the seed. AuthStore is @MainActor, so this must run
-    /// on the main actor — JarvisAppMain.main() calls it on the main thread
-    /// before any App state initializes.
-    @MainActor
-    static func seedKeychain() {
-        AuthStore.saveString("jarvis.auth.access", "screenshot-demo-token")
-        AuthStore.saveString("jarvis.auth.refresh", "screenshot-demo-refresh")
-        AuthStore.saveString("jarvis.auth.expires",
-                             String(Int(Date().timeIntervalSince1970) + 7 * 24 * 3600))
-    }
-
-    /// Deterministic conversation ids — the screenshot lane asserts on these.
-    private static let breckConversation = UUID(uuidString: "DEMO0000-0000-0000-0000-000000000001")!
-    private static let krendoraConversation = UUID(uuidString: "DEMO0000-0000-0000-0000-000000000002")!
-    private static let voiceConversation = UUID(uuidString: "DEMO0000-0000-0000-0000-000000000003")!
-
     /// Async GRDB half of the seed: demo conversations/messages + sidebar KV.
-    /// Called from JarvisApp.init (already past the keychain/UserDefaults
-    /// half) and awaited frame-synchronously there.
+    /// Fired as JarvisApp.init's first Task — the sidebar shell's restore
+    /// task is created later, so this always lands first.
     static func seedStore() async {
         guard isActive else { return }
 
         // Sidebar restoration state — which surface greets the screenshot.
-        let sidebarOpen = ProcessInfo.processInfo.arguments.contains(sidebarOpenArg)
-        await LocalStoreBootstrap.shared.store?.setAppState(
-            sidebarOpen, key: Tokens.Sidebar.Keys.sidebarOpen)
+        let args = ProcessInfo.processInfo.arguments
+        let sidebarOpen = args.contains(sidebarOpenArg)
+        guard let store = LocalStoreBootstrap.shared.store else { return }
+        await store.setAppState(sidebarOpen, key: Tokens.Sidebar.Keys.sidebarOpen)
+        if let raw = args.firstIndex(of: selectArg).flatMap({ args[args.index(after: $0)] }),
+           let id = UUID(uuidString: raw), await store.get(id: id) != nil {
+            await store.setAppState(id.uuidString, key: Tokens.Sidebar.Keys.lastSelection)
+        }
 
         // Demo content (idempotent: fixed ids upsert over themselves).
-        guard let store = LocalStoreBootstrap.shared.store else { return }
         await seedBreckenridge(store)
         await seedKrendora(store)
         await seedVoice(store)
@@ -135,12 +138,13 @@ enum ScreenshotSeed {
                     url: RichBlocks.safeURL("https://www.breckenridge.com/the-trail/the-terrain/")!),
                           fallbackText: "Breckenridge trail status"),
             ])
-        let fenced = "```jarvis-rich\n" + (try? String(data: rich.encodedData(), encoding: .utf8))! + "\n```"
-        await store.upsert(StoredMessage(
-            conversationID: breckConversation,
-            role: .assistant,
-            content: fenced,
-            status: .sent))
+        if let body = try? rich.encodedData(), let json = String(data: body, encoding: .utf8) {
+            await store.upsert(StoredMessage(
+                conversationID: breckConversation,
+                role: .assistant,
+                content: "```jarvis-rich\n" + json + "\n```",
+                status: .sent))
+        }
 
         await store.upsert(StoredMessage(
             conversationID: breckConversation,
@@ -167,8 +171,8 @@ enum ScreenshotSeed {
             content: "How did the pedal trainer ads do yesterday?",
             status: .sent))
 
-        // Markdown + code in one row, poll in another: exercises the native
-        // markdown path and the interactive poll renderer.
+        // Markdown + code in one row, poll/form in another: exercises the
+        // native markdown path and the interactive renderers.
         let md = RichBlocksEnvelope(
             messageId: "demo-kr-md-1",
             conversationId: krendoraConversation.uuidString,
@@ -186,12 +190,13 @@ enum ScreenshotSeed {
                     language: "sql"),
                           fallbackText: "SQL: yesterday's meta-ads orders"),
             ])
-        let fencedMD = "```jarvis-rich\n" + (try? String(data: md.encodedData(), encoding: .utf8))! + "\n```"
-        await store.upsert(StoredMessage(
-            conversationID: krendoraConversation,
-            role: .assistant,
-            content: fencedMD,
-            status: .sent))
+        if let body = try? md.encodedData(), let json = String(data: body, encoding: .utf8) {
+            await store.upsert(StoredMessage(
+                conversationID: krendoraConversation,
+                role: .assistant,
+                content: "```jarvis-rich\n" + json + "\n```",
+                status: .sent))
+        }
 
         let poll = RichBlocksEnvelope(
             messageId: "demo-kr-poll-1",
@@ -209,12 +214,13 @@ enum ScreenshotSeed {
                     submitLabel: "Apply changes"),
                           fallbackText: "Budget cap field + pause checkbox"),
             ])
-        let fencedPoll = "```jarvis-rich\n" + (try? String(data: poll.encodedData(), encoding: .utf8))! + "\n```"
-        await store.upsert(StoredMessage(
-            conversationID: krendoraConversation,
-            role: .assistant,
-            content: fencedPoll,
-            status: .sent))
+        if let body = try? poll.encodedData(), let json = String(data: body, encoding: .utf8) {
+            await store.upsert(StoredMessage(
+                conversationID: krendoraConversation,
+                role: .assistant,
+                content: "```jarvis-rich\n" + json + "\n```",
+                status: .sent))
+        }
 
         // A live-streaming row (UI Law §3): partial text with .streaming status.
         await store.upsert(StoredMessage(
