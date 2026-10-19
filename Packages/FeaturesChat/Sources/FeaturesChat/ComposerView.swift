@@ -169,6 +169,11 @@ public struct V2ComposerView: View {
         .overlay(
             Capsule().strokeBorder(sysColor("separator"), lineWidth: 0.5)
         )
+        // .contain keeps the children (text field, send, ＋, waveform) as
+        // their own elements; without it the container id overwrote every
+        // child id and composer.textField / composer.sendButton vanished
+        // from the accessibility tree (UI tests + VoiceOver targeting).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("composer.capsule")
     }
 
