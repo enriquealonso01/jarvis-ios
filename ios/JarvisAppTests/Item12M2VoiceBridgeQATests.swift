@@ -56,9 +56,17 @@ final class Item12M2VoiceBridgeQATests: XCTestCase {
         return try PersistenceStore(path: dir.appendingPathComponent("store.sqlite").path)
     }
 
+    /// `messages.conversation_id` carries an FK to `conversations` (Item 8
+    /// forensics) — every QA conversation must exist before a transcript
+    /// row can land.
+    private func seedConversation(_ id: UUID, in store: PersistenceStore) async throws {
+        await store.upsert(StoredConversation(id: id, title: "M2 QA"))
+    }
+
     func testCoordinatorUpsertsSingleAssistantRowThroughRealStore() async throws {
         let store = try tempStore("coord")
         let convo = UUID()
+        try await seedConversation(convo, in: store)
         let coordinator = M2TranscriptCoordinator()
 
         XCTAssertTrue(coordinator.beginCall(conversationID: convo), "first begin opens the scope")
@@ -89,6 +97,7 @@ final class Item12M2VoiceBridgeQATests: XCTestCase {
     func testCoordinatorBeginIsIdempotentWithinACall() async throws {
         let store = try tempStore("idem")
         let convo = UUID()
+        try await seedConversation(convo, in: store)
         let coordinator = M2TranscriptCoordinator()
         XCTAssertTrue(coordinator.beginCall(conversationID: convo))
         XCTAssertFalse(coordinator.beginCall(conversationID: convo),
@@ -103,6 +112,7 @@ final class Item12M2VoiceBridgeQATests: XCTestCase {
     func testBinderPipelineWritesRowsFromRealCallManagerEvents() async throws {
         let store = try tempStore("binder")
         let convo = UUID()
+        try await seedConversation(convo, in: store)
         let binder = M2CallTranscriptBinder.shared
         binder.visibleConversationID = convo
         binder.store = store
