@@ -314,3 +314,45 @@ public struct OrbitalCoreView: View {
         return path.applying(transform)
     }
 }
+
+// MARK: - Item 12: voice status surface tokens
+
+extension Tokens {
+    /// Voice layer status metrics (UI Law §7 in-chat pill; design law: all
+    /// constants live in DesignSystem, never magic numbers in views).
+    public enum Voice {
+        /// In-chat voice pill corner radius.
+        public static let pillCornerRadius: CGFloat = 20
+        /// Pill height (44pt a11y minimum target).
+        public static let pillHeight: CGFloat = 44
+        /// Orbital status surface diameter in the in-chat layer.
+        public static let statusOrbitalSize: CGFloat = 96
+        /// Horizontal inset of the pill from the chat edge.
+        public static let pillHorizontalInset: CGFloat = 16
+    }
+}
+
+// MARK: - Real-event-driven orbital status surface
+//
+// The kit's OrbitalCoreView renders FROM an OrbitalState; this wrapper is
+// the Item 12 contract binding it to the voice layer's REAL events: the
+// state arrives as a value from the voice session (a pure function of real
+// engine events — no timer inside this view can fabricate one), and Reduce
+// Motion collapses to the static mark inside OrbitalCoreView itself.
+
+public struct VoiceOrbitalStatusView: View {
+    /// Driven by the voice session's `orbitalState`.
+    public let state: OrbitalState
+
+    public init(state: OrbitalState) {
+        self.state = state
+    }
+
+    public var body: some View {
+        OrbitalCoreView(state: state)
+            .frame(width: Tokens.Voice.statusOrbitalSize,
+                   height: Tokens.Voice.statusOrbitalSize)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Voice status")
+    }
+}
