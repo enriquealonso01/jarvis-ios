@@ -60,8 +60,12 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation \
             -skipMacroValidation \
-            -derivedDataPath /tmp/dd \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | xcbeautify
+            -derivedDataPath /tmp/dd
+            # Simulator destination signs ad-hoc by default. Do NOT pass
+            # CODE_SIGNING_ALLOWED=NO here: unsigned apps fail Keychain
+            # SecItemAdd (-34018), which silently kills the auth-token seed
+            # (UserDefaults still works -> app lands on LoginView).
+            CODE_SIGN_IDENTITY=- | xcbeautify
 
       - name: Find simulator + app bundle
         id: env
