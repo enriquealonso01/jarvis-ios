@@ -103,12 +103,12 @@ public final class M2TranscriptCoordinator: ObservableObject {
                                           store: PersistenceStore) async {
         guard let id = callMessageID, let conversationID = callConversationID else { return }
         await store.upsert(StoredMessage(
+            id: id,
             conversationID: conversationID,
             role: .assistant,
             content: text,
             status: .sent,
-            pendingSync: false,
-            id: id))
+            pendingSync: false))
     }
 
     /// Call over: release the capture scope (next call gets a fresh row).
