@@ -200,16 +200,20 @@ final class Item12VoiceCallEngineQATests: XCTestCase {
 
         // Engine still in idle: asking for activation is an engine bug by
         // construction (no such public path exists), so drive the adapter
-        // directly to prove the loopback VALIDATES sequence order.
+        // directly to prove the loopback REFUSES out-of-contract requests:
+        // an unreported call is stale (currentCallID == nil), so the
+        // activation is recorded as an adapter violation and never
+        // forwarded — the engine's machine sees nothing.
         let fakeID = await engine.snapshot().callUUID
         await provider.activateAudio(callID: fakeID)
-        XCTAssertEqual(provider.violations.count, 0,
-                       "loopback forwards to delegate; the ENGINE's machine is the §5.4 gate")
+        XCTAssertEqual(provider.violations.count, 1,
+                       "activation for an unreported call is an adapter violation, not a silent forward")
         let snap = await engine.snapshot()
         XCTAssertEqual(snap.machinePhase, .idle,
-                       "providerAudioActivated from idle is DROPPED by the machine (illegal transition)")
-        XCTAssertEqual(snap.rejectedEventCount, 1)
-        XCTAssertEqual(snap.lastRejectedPhase, .activated)
+                       "the engine never saw the refused request — no machine move")
+        XCTAssertEqual(snap.rejectedEventCount, 0,
+                       "the ADAPTER gated the illegal request; the engine's machine stays untouched")
+        XCTAssertNil(snap.lastRejectedPhase)
     }
 
     // MARK: - Snapshot round-trip through every §5.4 phase
