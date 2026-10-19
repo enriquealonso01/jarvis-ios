@@ -56,17 +56,20 @@ public enum M2CallStateMapper {
 
 /// App-target feel adapter: VoiceFeelFeedback → the app's centralized
 /// Haptics (backlog #9 — every surface fires the same patterns, respects
-/// the settings toggle).
-@MainActor
+/// the settings toggle). UIFeedbackGenerator is main-thread-only, so the
+/// hop to the main actor is explicit (Swift 6: a non-isolated protocol
+/// requirement cannot cross into main-actor-isolated code silently).
 public final class M2VoiceHapticsAdapter: VoiceFeelFeedback {
     public init() {}
-    public func play(_ transition: VoiceFeelTransition) {
-        switch transition {
-        case .listeningStarted: Haptics.tap()
-        case .thinkingStarted: Haptics.tap()
-        case .respondingStarted: Haptics.tap()
-        case .sessionEnded: Haptics.success()
-        case .sessionFailed: Haptics.error()
+    public nonisolated func play(_ transition: VoiceFeelTransition) {
+        MainActor.assumeIsolated {
+            switch transition {
+            case .listeningStarted: Haptics.tap()
+            case .thinkingStarted: Haptics.tap()
+            case .respondingStarted: Haptics.tap()
+            case .sessionEnded: Haptics.success()
+            case .sessionFailed: Haptics.error()
+            }
         }
     }
 }
