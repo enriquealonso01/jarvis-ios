@@ -5,15 +5,22 @@ import Persistence
 /// snapshots cross isolation boundaries. Grows in Items 1–2: message send
 /// (outbox-enqueued when offline) + SSE stream endpoint per the fixture
 /// contract (JarvisKit/Fixtures/contract.json).
+/// Supplies the current dashboard bearer (refreshing it when needed) right
+/// before each request. nil = send unauthenticated (tests / fixtures).
+public typealias BearerProvider = @Sendable () async -> String?
+
 public actor APIClient {
     private let config: ServerConfig
     private var token: String?
     private let session: URLSession
+    private let bearerProvider: BearerProvider?
 
-    public init(config: ServerConfig, token: String? = nil, session: URLSession = .shared) {
+    public init(config: ServerConfig, token: String? = nil, session: URLSession = .shared,
+                bearerProvider: BearerProvider? = nil) {
         self.config = config
         self.token = token
         self.session = session
+        self.bearerProvider = bearerProvider
     }
 
     public func setToken(_ newToken: String?) { token = newToken }
@@ -65,6 +72,7 @@ public actor APIClient {
 
     /// GET an endpoint, returning decoded JSON. Never force-unwraps URLs.
     public func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+        await refreshBearer()
         let request = try makeRequest(path: path, method: "GET")
         let data = try await send(request)
         return try JSONDecoder().decode(T.self, from: data)
@@ -95,7 +103,14 @@ public actor APIClient {
 
     // MARK: Internals
 
+    /// Pull a fresh bearer from the provider (when one is wired).
+    private func refreshBearer() async {
+        guard let bearerProvider else { return }
+        if let fresh = await bearerProvider() { token = fresh }
+    }
+
     private func postData<Body: Encodable>(path: String, body: Body) async throws -> Data {
+        await refreshBearer()
         var request = try makeRequest(path: path, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)

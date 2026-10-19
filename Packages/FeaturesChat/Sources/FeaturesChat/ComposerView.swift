@@ -4,11 +4,16 @@ import DesignSystem
 // Cross-platform system colors (CI runs swift tests for macOS too).
 #if canImport(UIKit)
 import UIKit
+// Each case MUST resolve to a UIKit color — a case that calls sysColor()
+// again recurses forever (stack overflow the moment the composer draws).
 private func sysColor(_ name: String) -> Color {
     switch name {
-    case "secondaryBg": return sysColor("secondaryBg")
-    case "tertiaryBg": return sysColor("tertiaryBg")
-    case "separator": return sysColor("separator")
+    case "secondaryBg": return Color(uiColor: .secondarySystemBackground)
+    case "tertiaryBg": return Color(uiColor: .tertiarySystemBackground)
+    case "separator": return Color(uiColor: .separator)
+    case "tertiaryFill": return Color(uiColor: .tertiarySystemFill)
+    case "sysBg": return Color(uiColor: .systemBackground)
+    case "secondaryLabel": return Color(uiColor: .secondaryLabel)
     default: return Color.gray
     }
 }

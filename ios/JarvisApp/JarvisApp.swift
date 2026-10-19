@@ -58,6 +58,11 @@ struct JarvisApp: App {
                             // v2 Item 3: ChatGPT-grammar sidebar shell hosts
                             // the chat surface (v1 transcript rebuild is Item 4).
                             V2SidebarShell(store: LocalStoreBootstrap.shared.store)
+                                // Same post-login /register re-kick RootTabView
+                                // does: without it a fresh v2 install never
+                                // lands the PushKit registration and JARVIS
+                                // calls can't ring this phone.
+                                .task { await CallManager.shared.retryDeviceRegistration() }
                         } else {
                             RootTabView()
                         }
