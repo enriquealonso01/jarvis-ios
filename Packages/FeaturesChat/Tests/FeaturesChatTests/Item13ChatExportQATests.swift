@@ -55,8 +55,15 @@ final class Item13ChatExportQATests: XCTestCase {
         let store = try makeStore()
         let conversation = StoredConversation(title: "Order")
         try await store.upsert(conversation)
-        let newer = StoredMessage(conversationID: conversation.id, role: .user, content: "later")
-        let older = StoredMessage(conversationID: conversation.id, role: .assistant, content: "earlier")
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        // Insert newer-first, but give explicit createdAt stamps so the export
+        // contract (sort by createdAt, oldest first) is actually exercised:
+        // with default `Date()` stamps, wall-clock order would contradict the
+        // insert order and the fixture itself would be wrong.
+        let newer = StoredMessage(conversationID: conversation.id, role: .user, content: "later",
+                                  createdAt: base.addingTimeInterval(60))
+        let older = StoredMessage(conversationID: conversation.id, role: .assistant, content: "earlier",
+                                  createdAt: base)
         try await store.upsert(newer)
         try await store.upsert(older)
         let doc = try await ChatExportEngine.buildDocument(conversationID: conversation.id, store: store)
@@ -69,10 +76,10 @@ final class Item13ChatExportQATests: XCTestCase {
 
     func testSelectionExportsOnlyPickedIDsInOrder() async throws {
         let store = try makeStore()
-        let (_, ids) = try await seed(store)
+        let (conversationID, ids) = try await seed(store)
         // Pick assistant text then user text — order must be preserved.
         let doc = try await ChatExportEngine.buildDocument(
-            conversationID: ids[0],
+            conversationID: conversationID,
             selectedMessageIDs: [ids[1], ids[0]],
             store: store)
         XCTAssertEqual(doc.messageCount, 2)
@@ -125,9 +132,9 @@ final class Item13ChatExportQATests: XCTestCase {
 
     func testRichPayloadDecodesToRichBlocks() async throws {
         let store = try makeStore()
-        let (_, ids) = try await seed(store)
+        let (conversationID, ids) = try await seed(store)
         let doc = try await ChatExportEngine.buildDocument(
-            conversationID: ids[0],
+            conversationID: conversationID,
             selectedMessageIDs: [ids[2]],
             store: store)
         guard case .richBlocks(let blocks)? = doc.blocks.first?.kind else {
@@ -139,9 +146,9 @@ final class Item13ChatExportQATests: XCTestCase {
 
     func testSystemAndToolRowsSummarizeNeverBlank() async throws {
         let store = try makeStore()
-        let (_, ids) = try await seed(store)
+        let (conversationID, ids) = try await seed(store)
         let doc = try await ChatExportEngine.buildDocument(
-            conversationID: ids[0],
+            conversationID: conversationID,
             selectedMessageIDs: [ids[3]],
             store: store)
         guard case .omitted(let line)? = doc.blocks.first?.kind else {
