@@ -237,47 +237,23 @@ struct RichHLine: Shape {
     }
 }
 
-/// Wrapping row for action buttons (no horizontal scrolling of choices).
-struct RichFlowLayout: Layout {
-    var spacing: CGFloat = 8
+/// Result / share bar: a full-width track with a fill scaled from the
+/// leading edge. No GeometryReader — rich cards live inside a LazyVStack,
+/// where geometry-dependent children can feed layout back into itself.
+struct RichShareBar: View {
+    let fraction: Double
+    let highlighted: Bool
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var widest: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
-            if x > 0 && x + size.width > maxWidth {
-                y += rowHeight + spacing
-                x = 0
-                rowHeight = 0
+    var body: some View {
+        Capsule()
+            .fill(Tokens.Palette.resultTrack)
+            .overlay {
+                Capsule()
+                    .fill(highlighted ? Tokens.Palette.chartBarSelected : Tokens.Palette.chartBar)
+                    .scaleEffect(x: CGFloat(max(0, min(fraction, 1))), y: 1, anchor: .leading)
             }
-            x += size.width
-            widest = max(widest, x)
-            x += spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        let width = proposal.width ?? widest
-        return CGSize(width: width.isFinite ? width : widest, height: y + rowHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
-            if x > bounds.minX && x + size.width > bounds.maxX {
-                y += rowHeight + spacing
-                x = bounds.minX
-                rowHeight = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
+            .frame(height: 7)
+            .frame(maxWidth: .infinity)
     }
 }
 
@@ -518,9 +494,18 @@ struct RichButtonGroupView: View {
 
     var body: some View {
         if RichBlockRendererRegistry.rendersButtons(handlerExists: handlerExists) {
-            RichFlowLayout(spacing: 8) {
-                ForEach(buttons) { button in
-                    actionButton(button)
+            // Side by side when they fit, stacked otherwise — plain stacks
+            // only (no custom Layout / GeometryReader inside the lazy list).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(buttons) { button in
+                        actionButton(button)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(buttons) { button in
+                        actionButton(button)
+                    }
                 }
             }
             .accessibilityElement(children: .contain)
@@ -658,15 +643,7 @@ struct RichPollView: View {
                     Text(chosen ? "\(option) · Your choice" : option)
                         .font(.footnote.weight(chosen ? .semibold : .regular))
                         .foregroundStyle(chosen ? Tokens.Palette.textPrimary : Tokens.Palette.textBody)
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Tokens.Palette.resultTrack)
-                            Capsule()
-                                .fill(Tokens.Palette.chartBar)
-                                .frame(width: chosen ? geo.size.width : 0)
-                        }
-                    }
-                    .frame(height: 7)
+                    RichShareBar(fraction: chosen ? 1 : 0, highlighted: false)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(chosen ? "\(option), your vote" : "\(option), no votes")
@@ -909,15 +886,7 @@ struct RichChartView: View {
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(Tokens.Palette.textSecondary)
                         }
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(Tokens.Palette.resultTrack)
-                                Capsule()
-                                    .fill(inspected == index ? Tokens.Palette.chartBarSelected : Tokens.Palette.chartBar)
-                                    .frame(width: geo.size.width * CGFloat(share))
-                            }
-                        }
-                        .frame(height: 7)
+                        RichShareBar(fraction: share, highlighted: inspected == index)
                     }
                     .frame(minHeight: Tokens.Layout.hitTarget)
                     .contentShape(Rectangle())
