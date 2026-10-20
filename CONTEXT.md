@@ -1,0 +1,157 @@
+# Hermex Domain
+
+Canonical language for Hermex concepts that need consistent names across the product, planning, and support.
+
+## Servers
+
+**Webui server**:
+A configured `hermes-webui` server, shown as **Legacy**. It keeps working and gets fixes only; new features come to Hermes servers, and Move to Hermes switches it over. Hermex signs in to it with its password and cookie, and it opens on the session list.
+_Avoid_: server (alone, when the kind matters), WebUI
+
+**Hermes server**:
+A configured Hermes dashboard that Hermex reaches directly, and the default kind when adding a server. Its sign-in is its own Hermes connection, and it opens on the Bots inbox.
+_Avoid_: Hermes connection (that is the sign-in), bot server
+
+**Connection mode**:
+How this iPhone reaches the server, chosen in the connect form: Same Wi-Fi, Private network or Cloudflare Tunnel. It changes only the form's placeholder, help and header rows, and is not saved.
+_Avoid_: network type, connection type
+
+**Move to Hermes**:
+Copying a webui server's chats to a Hermes server and routing its old links, Shortcuts and notifications there. The webui server stays configured and usable, marked **Moved**, until the user removes it.
+_Avoid_: migration (in UI copy), import
+
+**Destination**:
+The Hermes server a webui server moved to. It holds the move's record, so old entry points keep working after the webui server is removed, and stop when the destination is removed.
+
+**Keep on webui**:
+A webui Profile the user chose not to move. Its chats stay on the webui server, and its Shortcuts keep opening there while it is configured.
+
+**Copy Missing Chats Again**:
+A later pass that scans the webui server again and copies only chats the destination still lacks. It doesn't finish titles, pins, folders or drafts for chats already in Hermes.
+
+**Finish with What's Done**:
+Ends a paused move without retrying the rest. Nothing in Hermes is undone; what stayed behind is reported.
+
+**Unchecked**:
+A chat the move couldn't confirm is in Hermes or missing from it. Never counted as missing, and never as copied.
+_Avoid_: missing, failed
+
+## Kanban
+
+**Kanban**:
+The Hermex destination for organizing and operating server-backed work across workflow states.
+_Avoid_: Boards, Tasks
+
+**Board**:
+A named container of Kanban work and its workflow states.
+_Avoid_: Kanban, project
+
+**Card**:
+An individual unit of work on a Board.
+_Avoid_: Task, Kanban task, work item
+
+**Status**:
+The workflow state of a Card: Triage, To Do, Scheduled, Ready, Running, Blocked, Review, Done, or Archived. Scheduled and Review exist only on a Hermes server.
+_Avoid_: Column, lane, stage
+
+**Scheduled**:
+The Status of a Card parked until a time or condition, waiting on the clock rather than a person. The Dispatcher skips it.
+_Avoid_: Delayed, snoozed
+
+**Review**:
+The Status of a Card whose work is finished and waits for a person to check it before Done.
+_Avoid_: Awaiting approval, QA
+
+**Column**:
+A visual grouping of Cards that share a Status.
+_Avoid_: Status, lane
+
+**Lane**:
+An optional visual grouping of Cards by Profile, including an Unassigned lane.
+_Avoid_: Status, column
+
+**Profile**:
+A Hermes agent configuration that can perform Card work.
+_Avoid_: Assignee, user, agent
+
+**Assignment**:
+The relationship between a Card and the Profile selected to perform it. A Card without that relationship is Unassigned.
+_Avoid_: Ownership
+
+**Prerequisite**:
+A Card that must precede another Card in a dependency relationship.
+_Avoid_: Parent, blocker
+
+**Dependent**:
+A Card that relies on a Prerequisite.
+_Avoid_: Child, blocked card
+
+**Dispatcher**:
+The server operation that claims eligible Ready Cards and may launch worker processes.
+_Avoid_: Runner, launcher
+
+**Preview Dispatch**:
+A dry run that reports expected Dispatcher outcomes without launching workers.
+_Avoid_: Test run, simulate dispatcher
+
+**Run Dispatcher**:
+The action that invokes the Dispatcher and may launch workers or consume API budget.
+_Avoid_: Dispatch, run
+
+**Dispatch Run**:
+The recorded execution of the Dispatcher.
+_Avoid_: Run, dispatcher result
+
+**Archived**:
+The Status of a Card removed from the active workflow.
+_Avoid_: Deleted
+
+**Archive Card**:
+The action that changes a Card's Status to Archived.
+_Avoid_: Delete Card, remove Card
+
+**Archive Board**:
+The action that removes a non-default Board from active use. Hermex cannot restore an archived Board in-app.
+_Avoid_: Delete Board, remove Board
+
+**Bulk Action**:
+A named operation applied to multiple selected Cards.
+_Avoid_: Bulk update, batch operation
+
+**Select Cards**:
+The mode for choosing Cards before applying a Bulk Action.
+_Avoid_: Multi-select, bulk mode
+
+## Tasks
+
+**Task Run**:
+One execution of a Task. On a Hermes server it is a session `cron_<task>_<time>`, and its output is that session's final reply; on a webui server it is an output file.
+_Avoid_: job run, execution
+
+## Sessions
+
+**Project**:
+A named group of sessions in the session list. On a webui server it is a tag the session carries, which Move to Project sets. On a Hermes server it is a set of host folders: a session belongs to the project with the deepest folder its working folder sits in, the host groups the rest into automatic per-repository projects, and Move to Project changes the session's working folder.
+_Avoid_: tag (for a Hermes project), workspace
+
+**Stored key**:
+The durable id that names a Hermes session, together with its Profile. Hermex caches, links, drafts and registers push by it, and REST routes and `session.resume` take it. Lists and caches identify a row by its lineage root (`_lineage_root_id ?? id`), so a session that a legacy compression continued under a new key stays one row.
+_Avoid_: session id (when the kind matters)
+
+**Runtime ID**:
+The id of the host's live runtime for a session, returned by `session.resume` or `session.create`. Session-scoped RPCs and the event `seq` use it. It changes when the host reaps the runtime (4001), so Hermex never stores it; reattaching to the stored key returns the new one.
+_Avoid_: session id (when the kind matters)
+
+## Chat
+
+**Fork**:
+A chat created from another chat's history by Fork From Here or `/branch` (`/api/session/branch`). The server marks it `session_source: fork` with a `parent_session_id`, and Hermex shows a "Forked from" row that opens the parent. Agent child sessions (subagents, cron, CLI `/new`) also carry a parent but are not Forks. On a Hermes host it is `session.branch`'s copy, marked by `_branched_from` in its row's `model_config`; a Hermes Duplicate is an independent copy with no parent, and no Fork.
+_Avoid_: Branch (for the chat), child session
+
+**Conversation target**:
+Which Hermes session a conversation attaches to: a bot's canonical Bot Chat, found by its title; a stored session, by its stored key; or a new session, created on first attach. Each target has its own draft (`ConversationTarget`).
+_Avoid_: chat target, session kind
+
+**Turn identity**:
+Which run a chat is following: a webui stream id, or for a Hermes session its stored key and the host's `turn_started_at`. A Hermes turn ends once `message.complete` and `session.info {running: false}` have both arrived.
+_Avoid_: stream id (for a Hermes turn), run id

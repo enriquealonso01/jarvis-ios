@@ -1,0 +1,702 @@
+import XCTest
+import AVFoundation
+import ImageIO
+import SwiftData
+import UIKit
+import SwiftUI
+import UniformTypeIdentifiers
+@testable import HermesMobile
+
+final class TranscriptMessageTests: XCTestCase {
+    func testTranscriptMessagesHideToolRowsAndPreserveLoadedIndices() {
+        let messages = [
+            ChatMessage(role: "user", content: "Plan it", timestamp: 1, messageId: "u1"),
+            ChatMessage(role: "assistant", content: "Working on it", timestamp: 2, messageId: "a1"),
+            ChatMessage(
+                role: "tool",
+                content: #"{"success":true,"diff":"..."}"#,
+                timestamp: 3,
+                messageId: "t1",
+                toolCallId: "tool-1"
+            ),
+            ChatMessage(role: "assistant", content: "Done. Here's what changed.", timestamp: 4, messageId: "a2")
+        ]
+
+        let transcriptMessages = ChatViewModel.transcriptMessages(from: messages)
+
+        XCTAssertEqual(transcriptMessages.map(\.loadedIndex), [0, 1, 3])
+        XCTAssertEqual(transcriptMessages.map(\.message.id), ["u1", "a1", "a2"])
+    }
+
+    func testTranscriptMessagesDropEmptyBlocksButKeepAssistantActivity() {
+        let messages = [
+            ChatMessage(role: "user", content: "Use tools", timestamp: 1, messageId: "u1"),
+            ChatMessage(role: "assistant", content: "  ", timestamp: 2, messageId: "empty"),
+            ChatMessage(
+                role: "assistant",
+                content: "",
+                timestamp: 3,
+                messageId: "reasoning",
+                reasoning: "Inspecting the transcript"
+            ),
+            ChatMessage(
+                role: "assistant",
+                content: nil,
+                timestamp: 4,
+                messageId: "tool-call",
+                toolCalls: [.object(["id": .string("call-1")])]
+            )
+        ]
+
+        let transcriptMessages = ChatViewModel.transcriptMessages(from: messages)
+
+        XCTAssertEqual(transcriptMessages.map(\.message.id), ["u1", "reasoning", "tool-call"])
+    }
+
+    func testTranscriptMessagesDropShellsAfterActivityGroupingAndReasoningDeduplication() {
+        func assistant(_ id: String, reasoning: String?, toolID: String) -> ChatMessage {
+            ChatMessage(
+                role: "assistant",
+                content: "",
+                timestamp: 2,
+                messageId: id,
+                toolCalls: [
+                    .object([
+                        "id": .string(toolID),
+                        "function": .object([
+                            "name": .string("browser_console"),
+                            "arguments": .string("{}")
+                        ])
+                    ])
+                ],
+                reasoning: reasoning
+            )
+        }
+
+        func toolResult(_ id: String) -> ChatMessage {
+            ChatMessage(
+                role: "tool",
+                content: "result",
+                timestamp: 3,
+                messageId: "result-\(id)",
+                toolCallId: id
+            )
+        }
+
+        let messages = [
+            ChatMessage(role: "user", content: "Inspect the app", timestamp: 1, messageId: "u1"),
+            assistant("a1", reasoning: "First visible thought", toolID: "call-1"),
+            toolResult("call-1"),
+            assistant("a2", reasoning: nil, toolID: "call-2"),
+            toolResult("call-2"),
+            assistant("a3", reasoning: nil, toolID: "call-3"),
+            toolResult("call-3"),
+            assistant("a4", reasoning: "Repeated thought", toolID: "call-4"),
+            toolResult("call-4"),
+            assistant("a5", reasoning: "Repeated thought", toolID: "call-5"),
+            toolResult("call-5")
+        ]
+
+        let transcriptMessages = ChatViewModel.transcriptMessages(from: messages)
+
+        XCTAssertEqual(transcriptMessages.map(\.message.id), ["u1", "a1", "a5"])
+    }
+
+    func testTranscriptMessagesCanHideActiveStreamingAssistantTurn() {
+        let messages = [
+            ChatMessage(role: "user", content: "Use tools", timestamp: 1, messageId: "u1"),
+            ChatMessage(role: "assistant", content: "", timestamp: 2, messageId: "stream-1"),
+            ChatMessage(
+                role: "tool",
+                content: #"{"success":true}"#,
+                timestamp: 3,
+                messageId: "t1",
+                toolCallId: "tool-1"
+            ),
+            ChatMessage(role: "assistant", content: "Older answer", timestamp: 4, messageId: "a2")
+        ]
+
+        let transcriptMessages = ChatViewModel.transcriptMessages(
+            from: messages,
+            hidingStreamingAssistantID: "stream-1"
+        )
+
+        XCTAssertEqual(transcriptMessages.map(\.loadedIndex), [0, 3])
+        XCTAssertEqual(transcriptMessages.map(\.message.id), ["u1", "a2"])
+    }
+
+    func testTranscriptMessagesKeepStreamingAssistantAnchorStableAcrossContentUpdates() {
+        let initialMessages = [
+            ChatMessage(role: "user", content: "Write a long answer", timestamp: 1, messageId: "u1"),
+            ChatMessage(role: "assistant", content: "", timestamp: 2, messageId: "stream-1")
+        ]
+        let updatedMessages = [
+            ChatMessage(role: "user", content: "Write a long answer", timestamp: 1, messageId: "u1"),
+            ChatMessage(role: "assistant", content: "First streamed token.", timestamp: 2, messageId: "stream-1")
+        ]
+
+        let initialTranscriptMessages = ChatViewModel.transcriptMessages(
+            from: initialMessages,
+            preservingEmptyAssistantID: "stream-1"
+        )
+        let updatedTranscriptMessages = ChatViewModel.transcriptMessages(
+            from: updatedMessages,
+            preservingEmptyAssistantID: "stream-1"
+        )
+
+        XCTAssertEqual(initialTranscriptMessages.map(\.anchorID), ["u1", "stream-1"])
+        XCTAssertEqual(updatedTranscriptMessages.map(\.anchorID), ["u1", "stream-1"])
+        XCTAssertEqual(initialTranscriptMessages.map(\.id), updatedTranscriptMessages.map(\.id))
+        XCTAssertEqual(initialTranscriptMessages.map(\.loadedIndex), updatedTranscriptMessages.map(\.loadedIndex))
+    }
+
+    func testTranscriptMessagesKeepRenderIDStableWhenServerReplacesStreamingAssistantID() {
+        let streamingMessages = [
+            ChatMessage(role: "user", content: "Finish the summary", timestamp: 1, messageId: "u1"),
+            ChatMessage(role: "assistant", content: "Working summary", timestamp: 2, messageId: "stream-1")
+        ]
+        let completedMessages = [
+            ChatMessage(role: "user", content: "Finish the summary", timestamp: 1, messageId: "u1"),
+            ChatMessage(role: "assistant", content: "Final summary", timestamp: 2, messageId: "assistant-1")
+        ]
+
+        let streamingTranscriptMessages = ChatViewModel.transcriptMessages(from: streamingMessages)
+        let completedTranscriptMessages = ChatViewModel.transcriptMessages(from: completedMessages)
+
+        XCTAssertEqual(streamingTranscriptMessages.map(\.id), completedTranscriptMessages.map(\.id))
+        XCTAssertEqual(streamingTranscriptMessages.map(\.anchorID), ["u1", "stream-1"])
+        XCTAssertEqual(completedTranscriptMessages.map(\.anchorID), ["u1", "assistant-1"])
+    }
+
+    func testTranscriptMessagesUseRawAnchorForNilMessageIDsIndependentOfContent() {
+        let initialMessages = [
+            ChatMessage(role: "user", content: "Hello", timestamp: 1, messageId: nil),
+            ChatMessage(role: "assistant", content: "", timestamp: 2, messageId: nil)
+        ]
+        let updatedMessages = [
+            ChatMessage(role: "user", content: "Hello", timestamp: 1, messageId: nil),
+            ChatMessage(role: "assistant", content: "A streamed response.", timestamp: 2, messageId: nil)
+        ]
+
+        let initialTranscriptMessages = ChatViewModel.transcriptMessages(
+            from: initialMessages,
+            messageOffset: 10,
+            preservingEmptyAssistantID: "raw:11"
+        )
+        let updatedTranscriptMessages = ChatViewModel.transcriptMessages(
+            from: updatedMessages,
+            messageOffset: 10,
+            preservingEmptyAssistantID: "raw:11"
+        )
+
+        XCTAssertEqual(initialTranscriptMessages.map(\.anchorID), ["raw:10", "raw:11"])
+        XCTAssertEqual(updatedTranscriptMessages.map(\.anchorID), ["raw:10", "raw:11"])
+        XCTAssertEqual(initialTranscriptMessages.map(\.id), updatedTranscriptMessages.map(\.id))
+    }
+
+    func testTranscriptMessagesKeepRenderIDsStableWhenOlderMessagesPrepend() {
+        let initialWindow = [
+            ChatMessage(role: "assistant", content: "Earlier answer", timestamp: 1, messageId: "a1"),
+            ChatMessage(role: "user", content: "Follow up", timestamp: 2, messageId: "u2"),
+            ChatMessage(role: "assistant", content: "Latest answer", timestamp: 3, messageId: "a2")
+        ]
+        let expandedWindow = [
+            ChatMessage(role: "user", content: "First question", timestamp: 0, messageId: "u1"),
+            ChatMessage(role: "assistant", content: "Earlier answer", timestamp: 1, messageId: "a1"),
+            ChatMessage(role: "user", content: "Follow up", timestamp: 2, messageId: "u2"),
+            ChatMessage(role: "assistant", content: "Latest answer", timestamp: 3, messageId: "a2")
+        ]
+
+        let initialTranscriptMessages = ChatViewModel.transcriptMessages(
+            from: initialWindow,
+            messageOffset: 1
+        )
+        let expandedTranscriptMessages = ChatViewModel.transcriptMessages(
+            from: expandedWindow,
+            messageOffset: 0
+        )
+
+        XCTAssertEqual(initialTranscriptMessages.map(\.id), ["transcript:1", "transcript:2", "transcript:3"])
+        XCTAssertEqual(expandedTranscriptMessages.map(\.id), ["transcript:0", "transcript:1", "transcript:2", "transcript:3"])
+
+        let initialRenderIDsByMessageID = Dictionary(
+            uniqueKeysWithValues: initialTranscriptMessages.compactMap { transcriptMessage in
+                transcriptMessage.message.messageId.map { ($0, transcriptMessage.id) }
+            }
+        )
+        for expandedTranscriptMessage in expandedTranscriptMessages {
+            guard let messageID = expandedTranscriptMessage.message.messageId,
+                  let initialRenderID = initialRenderIDsByMessageID[messageID]
+            else { continue }
+
+            XCTAssertEqual(
+                expandedTranscriptMessage.id,
+                initialRenderID,
+                "renderID should stay stable for message \(messageID)"
+            )
+        }
+    }
+}
+
+final class ChatTranscriptDisplaySettingsTests: XCTestCase {
+    func testWorkingRowShowsForActiveRunOnly() {
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        XCTAssertEqual(
+            ChatWorkingRowPolicy.startedAt(
+                activeRunStartedAt: startedAt,
+                isCancellingStream: false,
+                hasPendingClarificationPrompt: false
+            ),
+            startedAt
+        )
+        XCTAssertNil(ChatWorkingRowPolicy.startedAt(
+            activeRunStartedAt: nil,
+            isCancellingStream: false,
+            hasPendingClarificationPrompt: false
+        ))
+    }
+
+    func testWorkingRowHidesWhileStoppingOrAwaitingClarification() {
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        XCTAssertNil(ChatWorkingRowPolicy.startedAt(
+            activeRunStartedAt: startedAt,
+            isCancellingStream: true,
+            hasPendingClarificationPrompt: false
+        ))
+        XCTAssertNil(ChatWorkingRowPolicy.startedAt(
+            activeRunStartedAt: startedAt,
+            isCancellingStream: false,
+            hasPendingClarificationPrompt: true
+        ))
+    }
+
+    func testWorkingElapsedLabelUsesCompactUnits() {
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+        XCTAssertEqual(ChatWorkingElapsedFormatter.label(startedAt: startedAt, now: startedAt), "0s")
+        XCTAssertEqual(ChatWorkingElapsedFormatter.label(startedAt: startedAt, now: startedAt.addingTimeInterval(5.9)), "5s")
+        XCTAssertEqual(ChatWorkingElapsedFormatter.label(startedAt: startedAt, now: startedAt.addingTimeInterval(64)), "1m 4s")
+        XCTAssertEqual(ChatWorkingElapsedFormatter.label(startedAt: startedAt, now: startedAt.addingTimeInterval(3_723)), "1h 2m 3s")
+        XCTAssertEqual(ChatWorkingElapsedFormatter.label(startedAt: startedAt, now: startedAt.addingTimeInterval(-30)), "0s")
+        XCTAssertEqual(
+            ChatWorkingElapsedFormatter.spokenLabel(startedAt: startedAt, now: startedAt.addingTimeInterval(64)),
+            "1 minute, 4 seconds"
+        )
+    }
+
+    func testStreamingBubbleRenderingDoesNotMatchNilMessageIDs() {
+        XCTAssertFalse(ChatTranscriptDisplaySettings.shouldUseStreamingBubbleRendering(
+            hasActiveStream: true,
+            messageRole: "user",
+            messageID: nil,
+            streamingAssistantMessageID: nil
+        ))
+
+        XCTAssertFalse(ChatTranscriptDisplaySettings.shouldUseStreamingBubbleRendering(
+            hasActiveStream: true,
+            messageRole: "assistant",
+            messageID: nil,
+            streamingAssistantMessageID: nil
+        ))
+    }
+
+    func testStreamingBubbleRenderingMatchesActiveStreamingAssistant() {
+        XCTAssertTrue(ChatTranscriptDisplaySettings.shouldUseStreamingBubbleRendering(
+            hasActiveStream: true,
+            messageRole: "assistant",
+            messageID: "stream-1",
+            streamingAssistantMessageID: "stream-1"
+        ))
+
+        XCTAssertFalse(ChatTranscriptDisplaySettings.shouldUseStreamingBubbleRendering(
+            hasActiveStream: true,
+            messageRole: "assistant",
+            messageID: "assistant-1",
+            streamingAssistantMessageID: "stream-1"
+        ))
+    }
+
+    /// Every combination of the three toggles the picker replaced (#1254) lands on one mode,
+    /// and the old keys are gone afterwards.
+    func testThinkingAndToolCardsMigrationMapsEveryLegacyCombination() throws {
+        let cases: [(shows: Bool, thinking: Bool, tools: Bool, expected: ThinkingAndToolCards)] = [
+            (false, false, false, .hidden), (false, true, false, .hidden),
+            (false, false, true, .hidden), (false, true, true, .hidden),
+            (true, false, false, .collapsed), (true, true, false, .expanded),
+            (true, false, true, .expanded), (true, true, true, .expanded),
+        ]
+        for item in cases {
+            let defaults = try makeDefaults()
+            defaults.set(item.shows, forKey: "chatTranscript.showsThinkingAndToolCards")
+            defaults.set(item.thinking, forKey: "chatTranscript.thinkingCardsStartExpanded")
+            defaults.set(item.tools, forKey: "chatTranscript.toolCardsStartExpanded")
+
+            ChatTranscriptDisplaySettings.migrateThinkingAndToolCards(in: defaults)
+
+            XCTAssertEqual(defaults.string(forKey: "chatTranscript.thinkingAndToolCards"), item.expected.rawValue, "\(item)")
+            XCTAssertNil(defaults.object(forKey: "chatTranscript.showsThinkingAndToolCards"))
+            XCTAssertNil(defaults.object(forKey: "chatTranscript.thinkingCardsStartExpanded"))
+            XCTAssertNil(defaults.object(forKey: "chatTranscript.toolCardsStartExpanded"))
+        }
+    }
+
+    /// Only an expand toggle was ever touched: cards were on by default, so it is Expanded.
+    func testThinkingAndToolCardsMigrationTreatsUnsetShowToggleAsOn() throws {
+        let defaults = try makeDefaults()
+        defaults.set(true, forKey: "chatTranscript.toolCardsStartExpanded")
+
+        ChatTranscriptDisplaySettings.migrateThinkingAndToolCards(in: defaults)
+
+        XCTAssertEqual(defaults.string(forKey: "chatTranscript.thinkingAndToolCards"), "expanded")
+    }
+
+    func testThinkingAndToolCardsMigrationKeepsAChoiceAlreadyMade() throws {
+        let defaults = try makeDefaults()
+        defaults.set("hidden", forKey: "chatTranscript.thinkingAndToolCards")
+        defaults.set(true, forKey: "chatTranscript.thinkingCardsStartExpanded")
+
+        ChatTranscriptDisplaySettings.migrateThinkingAndToolCards(in: defaults)
+
+        XCTAssertEqual(defaults.string(forKey: "chatTranscript.thinkingAndToolCards"), "hidden")
+        XCTAssertNil(defaults.object(forKey: "chatTranscript.thinkingCardsStartExpanded"))
+    }
+
+    func testThinkingAndToolCardsMigrationLeavesAFreshInstallOnTheDefault() throws {
+        let defaults = try makeDefaults()
+
+        ChatTranscriptDisplaySettings.migrateThinkingAndToolCards(in: defaults)
+
+        XCTAssertNil(defaults.object(forKey: "chatTranscript.thinkingAndToolCards"))
+    }
+
+    private func makeDefaults() throws -> UserDefaults {
+        let suite = "TranscriptDisplayModelTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        return defaults
+    }
+
+    func testAssistantTurnHeaderIsOnlyTheResponseSpeedMarker() {
+        XCTAssertTrue(ChatTranscriptDisplaySettings.showsAssistantTurnHeader(
+            role: "assistant",
+            hasTextContent: true,
+            showsResponseSpeed: true,
+            hasResponseSpeed: true
+        ))
+        XCTAssertFalse(ChatTranscriptDisplaySettings.showsAssistantTurnHeader(
+            role: "assistant",
+            hasTextContent: true,
+            showsResponseSpeed: false,
+            hasResponseSpeed: true
+        ))
+    }
+
+    func testAssistantTurnHeaderHiddenForNonAssistantRoles() {
+        for role in ["user", "system", "tool", "local_assistant", "local_notice"] {
+            XCTAssertFalse(
+                ChatTranscriptDisplaySettings.showsAssistantTurnHeader(
+                    role: role,
+                    hasTextContent: true,
+                    showsResponseSpeed: true,
+                    hasResponseSpeed: true
+                ),
+                "Header must not render for role \(role)"
+            )
+        }
+
+        XCTAssertFalse(ChatTranscriptDisplaySettings.showsAssistantTurnHeader(
+            role: nil,
+            hasTextContent: true,
+            showsResponseSpeed: true,
+            hasResponseSpeed: true
+        ))
+    }
+
+    func testContentWithoutAttachedFilesMarkerStripsTrailingMarker() {
+        // Mirrors the exact format PendingAttachment.chatMessageText appends.
+        let sent = "Analyze these files\n\n[Attached files: /tmp/workspace/sample.html, /tmp/workspace/image.jpg]"
+        XCTAssertEqual(
+            MessageAttachment.contentWithoutAttachedFilesMarker(in: sent),
+            "Analyze these files"
+        )
+    }
+
+    func testContentWithoutAttachedFilesMarkerReturnsEmptyForAttachmentOnlyMessage() {
+        // No typed draft: the whole content is just the appended marker.
+        let sent = "\n\n[Attached files: /tmp/workspace/image.jpg]"
+        XCTAssertEqual(MessageAttachment.contentWithoutAttachedFilesMarker(in: sent), "")
+    }
+
+    func testContentWithoutAttachedFilesMarkerIgnoresMarkerWithTrailingText() {
+        // The parser only treats the marker as a suffix; trailing prose means it
+        // is not a real attachment marker, so the content is left untouched.
+        let content = "hello\n\n[Attached files: /tmp/a.png] and then more text"
+        XCTAssertEqual(MessageAttachment.contentWithoutAttachedFilesMarker(in: content), content)
+    }
+}
+
+final class ChatActiveRunStatusPolicyTests: XCTestCase {
+    func testStatusHidesWhenTranscriptBottomIsVisible() {
+        XCTAssertNil(ChatActiveRunStatusPolicy.presentation(
+            isStartingChat: false,
+            hasActiveStream: true,
+            activeStreamRecoveryState: .idle,
+            isCancellingStream: false,
+            isScrolledNearBottom: true,
+            activeRunStartedAt: nil
+        ))
+    }
+
+    func testStatusShowsActiveRunWhenScrolledAwayFromBottom() {
+        let presentation = ChatActiveRunStatusPolicy.presentation(
+            isStartingChat: false,
+            hasActiveStream: true,
+            activeStreamRecoveryState: .idle,
+            isCancellingStream: false,
+            isScrolledNearBottom: false,
+            activeRunStartedAt: nil
+        )
+
+        XCTAssertEqual(presentation?.kind, .active)
+        XCTAssertEqual(presentation?.label(now: Date()), "Hermes is working")
+    }
+
+    func testStatusShowsStartingBeforeStreamIDExists() {
+        let presentation = ChatActiveRunStatusPolicy.presentation(
+            isStartingChat: true,
+            hasActiveStream: false,
+            activeStreamRecoveryState: .idle,
+            isCancellingStream: false,
+            isScrolledNearBottom: false,
+            activeRunStartedAt: nil
+        )
+
+        XCTAssertEqual(presentation?.kind, .starting)
+    }
+
+    func testStatusPrioritizesRecoveryStateOverGenericActiveRun() {
+        let presentation = ChatActiveRunStatusPolicy.presentation(
+            isStartingChat: false,
+            hasActiveStream: true,
+            activeStreamRecoveryState: .reconnecting,
+            isCancellingStream: false,
+            isScrolledNearBottom: false,
+            activeRunStartedAt: nil
+        )
+
+        XCTAssertEqual(presentation?.kind, .reconnecting)
+        XCTAssertEqual(presentation?.accessibilityLabel(now: Date()), "Hermes is reconnecting the response stream")
+    }
+
+    func testStatusPrioritizesCancellationOverOtherStates() {
+        let presentation = ChatActiveRunStatusPolicy.presentation(
+            isStartingChat: true,
+            hasActiveStream: true,
+            activeStreamRecoveryState: .checking,
+            isCancellingStream: true,
+            isScrolledNearBottom: false,
+            activeRunStartedAt: nil
+        )
+
+        XCTAssertEqual(presentation?.kind, .stopping)
+    }
+
+    func testStatusHidesWhenIdleAndNoRunIsStarting() {
+        XCTAssertNil(ChatActiveRunStatusPolicy.presentation(
+            isStartingChat: false,
+            hasActiveStream: false,
+            activeStreamRecoveryState: .idle,
+            isCancellingStream: false,
+            isScrolledNearBottom: false,
+            activeRunStartedAt: nil
+        ))
+    }
+
+    func testActivePresentationShowsElapsedSinceRunStart() {
+        let now = Date(timeIntervalSince1970: 1_700_000_133)
+        let presentation = ChatActiveRunStatusPolicy.presentation(
+            isStartingChat: false,
+            hasActiveStream: true,
+            activeStreamRecoveryState: .idle,
+            isCancellingStream: false,
+            isScrolledNearBottom: false,
+            activeRunStartedAt: now.addingTimeInterval(-133)
+        )
+
+        XCTAssertEqual(presentation?.label(now: now), "Hermes is working · 2m 13s")
+        XCTAssertEqual(
+            presentation?.accessibilityLabel(now: now),
+            "Hermes has been working for 2 minutes, 13 seconds"
+        )
+    }
+
+    func testRecoveryKindsIgnoreRunStart() {
+        let now = Date(timeIntervalSince1970: 1_700_000_133)
+        let expectations: [(ActiveStreamRecoveryState, String)] = [
+            (.checking, "Checking stream"),
+            (.reconnecting, "Reconnecting stream")
+        ]
+
+        for (recoveryState, expectedLabel) in expectations {
+            let presentation = ChatActiveRunStatusPolicy.presentation(
+                isStartingChat: false,
+                hasActiveStream: true,
+                activeStreamRecoveryState: recoveryState,
+                isCancellingStream: false,
+                isScrolledNearBottom: false,
+                activeRunStartedAt: now.addingTimeInterval(-133)
+            )
+
+            XCTAssertEqual(presentation?.label(now: now), expectedLabel)
+            XCTAssertNil(presentation?.startedAt, "\(recoveryState) must not tick an elapsed counter")
+        }
+    }
+
+    func testWaitingForNetworkMapsToItsOwnKind() {
+        let now = Date(timeIntervalSince1970: 1_700_000_133)
+        let presentation = ChatActiveRunStatusPolicy.presentation(
+            isStartingChat: false,
+            hasActiveStream: true,
+            activeStreamRecoveryState: .waitingForNetwork,
+            isCancellingStream: false,
+            isScrolledNearBottom: false,
+            activeRunStartedAt: now.addingTimeInterval(-133)
+        )
+
+        XCTAssertEqual(presentation?.kind, .waitingForNetwork)
+        XCTAssertEqual(presentation?.label(now: now), "Waiting for network")
+        XCTAssertNil(presentation?.startedAt)
+    }
+}
+
+final class ChatMessageTimestampFormatterTests: XCTestCase {
+    // 2021-01-01 14:14:00 UTC
+    private let fixedTimestamp: Double = 1_609_510_440
+    private let utc = TimeZone(identifier: "UTC")!
+
+    func testFormatsTwelveHourLocaleAsShortTime() {
+        let result = ChatMessageTimestampFormatter.shortTime(
+            forUnixTimestamp: fixedTimestamp,
+            locale: Locale(identifier: "en_US"),
+            timeZone: utc
+        )
+
+        XCTAssertNotNil(result)
+        XCTAssertTrue(result?.contains("2:14") == true, "Expected 12h time, got \(result ?? "nil")")
+        XCTAssertTrue(result?.contains("PM") == true, "Expected PM marker, got \(result ?? "nil")")
+    }
+
+    func testFormatsTwentyFourHourLocaleAsShortTime() {
+        let result = ChatMessageTimestampFormatter.shortTime(
+            forUnixTimestamp: fixedTimestamp,
+            locale: Locale(identifier: "en_GB"),
+            timeZone: utc
+        )
+
+        XCTAssertNotNil(result)
+        XCTAssertTrue(result?.contains("14:14") == true, "Expected 24h time, got \(result ?? "nil")")
+        XCTAssertFalse(result?.contains("PM") == true, "24h time must not carry a PM marker")
+    }
+
+    func testReturnsNilForNonFiniteTimestamp() {
+        XCTAssertNil(ChatMessageTimestampFormatter.shortTime(forUnixTimestamp: .nan))
+        XCTAssertNil(ChatMessageTimestampFormatter.shortTime(forUnixTimestamp: .infinity))
+    }
+}
+
+final class ResponseSpeedFormatterTests: XCTestCase {
+    func testFormatsOneDecimalWithCompactAndAccessibleUnits() {
+        let locale = Locale(identifier: "en_US")
+
+        XCTAssertEqual(ResponseSpeedFormatter.compactText(12.34, locale: locale), "12.3 t/s")
+        XCTAssertEqual(
+            ResponseSpeedFormatter.accessibilityText(12.34, locale: locale),
+            "12.3 tokens per second"
+        )
+    }
+
+    func testReturnsNilForMissingNonPositiveOrNonFiniteValues() {
+        XCTAssertNil(ResponseSpeedFormatter.compactText(nil))
+        XCTAssertNil(ResponseSpeedFormatter.compactText(0))
+        XCTAssertNil(ResponseSpeedFormatter.compactText(-1))
+        XCTAssertNil(ResponseSpeedFormatter.compactText(.infinity))
+        XCTAssertNil(ResponseSpeedFormatter.compactText(.nan))
+    }
+}
+
+final class ClarificationRequestPresentationTests: XCTestCase {
+    func testBarSummaryIsFirstNonEmptyLineOfQuestion() {
+        XCTAssertEqual(ClarificationRequestBar.summary(for: "Which branch?"), "Which branch?")
+        XCTAssertEqual(
+            ClarificationRequestBar.summary(for: "\n  Which branch should I use?  \n1. main\n2. release"),
+            "Which branch should I use?"
+        )
+        XCTAssertEqual(ClarificationRequestBar.summary(for: "   "), "")
+    }
+
+    func testHeightPolicyFitsContentWithoutGrowingTheCard() {
+        XCTAssertEqual(
+            ClarificationRequestHeightPolicy.bodyHeight(
+                maximumExpandedHeight: 500,
+                fixedContentHeight: 160,
+                bodyContentHeight: 180,
+                minimumBodyHeight: 44
+            ),
+            180
+        )
+    }
+
+    func testHeightPolicyClampsBodyToSafeGapAndCap() {
+        XCTAssertEqual(
+            ClarificationRequestHeightPolicy.bodyHeight(
+                maximumExpandedHeight: 360,
+                fixedContentHeight: 160,
+                bodyContentHeight: 500,
+                minimumBodyHeight: 44
+            ),
+            200
+        )
+        XCTAssertEqual(
+            ClarificationRequestHeightPolicy.bodyHeight(
+                maximumExpandedHeight: 600,
+                fixedContentHeight: 160,
+                bodyContentHeight: 500,
+                minimumBodyHeight: 44
+            ),
+            300
+        )
+    }
+
+    func testHeightPolicyCollapsesWhenOneScaledChoiceCannotFit() {
+        XCTAssertNil(
+            ClarificationRequestHeightPolicy.bodyHeight(
+                maximumExpandedHeight: 247,
+                fixedContentHeight: 160,
+                bodyContentHeight: 500,
+                minimumBodyHeight: 88
+            )
+        )
+        XCTAssertEqual(
+            ClarificationRequestHeightPolicy.bodyHeight(
+                maximumExpandedHeight: 248,
+                fixedContentHeight: 160,
+                bodyContentHeight: 500,
+                minimumBodyHeight: 88
+            ),
+            88
+        )
+    }
+}
+
+final class ChatMotionTests: XCTestCase {
+    func testEveryCurveSnapsUnderReduceMotion() {
+        XCTAssertNil(ChatMotion.press(duration: 0.2, reduceMotion: true))
+        XCTAssertNil(ChatMotion.quickState(reduceMotion: true))
+        XCTAssertNil(ChatMotion.disclosure(reduceMotion: true))
+        XCTAssertNil(ChatMotion.composerChrome(reduceMotion: true))
+        XCTAssertNil(ChatMotion.scrollToLatest(reduceMotion: true))
+        XCTAssertNil(ChatMotion.clarificationToggle(reduceMotion: true))
+    }
+}

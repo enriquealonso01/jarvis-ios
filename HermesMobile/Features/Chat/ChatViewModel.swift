@@ -1,0 +1,9090 @@
+import Foundation
+import AVFoundation
+import MediaPlayer
+import Observation
+import SwiftData
+
+enum ListenPlaybackPhase: Equatable {
+    case idle
+    case loading
+    case playing
+    case paused
+}
+
+enum ListenPlaybackSpeed: Double, CaseIterable, Identifiable {
+    case half = 0.5
+    case normal = 1
+    case oneAndHalf = 1.5
+    case double = 2
+
+    static let storageKey = "Chat.listenPlaybackSpeed"
+    static let defaultValue: ListenPlaybackSpeed = .normal
+
+    var id: Double { rawValue }
+
+    var title: String {
+        switch self {
+        case .half:
+            return "0.5x"
+        case .normal:
+            return "1x"
+        case .oneAndHalf:
+            return "1.5x"
+        case .double:
+            return "2x"
+        }
+    }
+
+    static func stored(in userDefaults: UserDefaults) -> ListenPlaybackSpeed {
+        let storedValue = userDefaults.double(forKey: storageKey)
+        return allCases.first { abs($0.rawValue - storedValue) < 0.001 } ?? defaultValue
+    }
+}
+
+struct ListenNowPlayingSnapshot: Equatable {
+    let title: String
+    let duration: TimeInterval
+    let elapsedTime: TimeInterval
+    let speed: ListenPlaybackSpeed
+    let isPlaying: Bool
+}
+
+@MainActor
+protocol ListenRemoteControlControlling {
+    func configure(
+        play: @escaping @MainActor () -> Void,
+        pause: @escaping @MainActor () -> Void,
+        togglePlayPause: @escaping @MainActor () -> Void,
+        changePlaybackPosition: @escaping @MainActor (TimeInterval) -> Void
+    )
+    func update(_ snapshot: ListenNowPlayingSnapshot)
+    func clear()
+}
+
+@MainActor
+final class ListenRemoteControlController: ListenRemoteControlControlling {
+    private var commandTargets: [(MPRemoteCommand, Any)] = []
+
+    deinit {
+        commandTargets.forEach { command, target in
+            command.removeTarget(target)
+            command.isEnabled = false
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+    }
+
+    func configure(
+        play: @escaping @MainActor () -> Void,
+        pause: @escaping @MainActor () -> Void,
+        togglePlayPause: @escaping @MainActor () -> Void,
+        changePlaybackPosition: @escaping @MainActor (TimeInterval) -> Void
+    ) {
+        clearCommandTargets()
+
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandCenter.playCommand.isEnabled = true
+        commandTargets.append((commandCenter.playCommand, commandCenter.playCommand.addTarget { _ in
+            Task { @MainActor in play() }
+            return .success
+        }))
+
+        commandCenter.pauseCommand.isEnabled = true
+        commandTargets.append((commandCenter.pauseCommand, commandCenter.pauseCommand.addTarget { _ in
+            Task { @MainActor in pause() }
+            return .success
+        }))
+
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandTargets.append((commandCenter.togglePlayPauseCommand, commandCenter.togglePlayPauseCommand.addTarget { _ in
+            Task { @MainActor in togglePlayPause() }
+            return .success
+        }))
+
+        commandCenter.changePlaybackPositionCommand.isEnabled = true
+        commandTargets.append((
+            commandCenter.changePlaybackPositionCommand,
+            commandCenter.changePlaybackPositionCommand.addTarget { event in
+                guard let event = event as? MPChangePlaybackPositionCommandEvent else {
+                    return .commandFailed
+                }
+                Task { @MainActor in changePlaybackPosition(event.positionTime) }
+                return .success
+            }
+        ))
+    }
+
+    func update(_ snapshot: ListenNowPlayingSnapshot) {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+            MPMediaItemPropertyTitle: snapshot.title,
+            MPMediaItemPropertyArtist: "Hermex",
+            MPMediaItemPropertyPlaybackDuration: max(0, snapshot.duration),
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: max(0, snapshot.elapsedTime),
+            MPNowPlayingInfoPropertyPlaybackRate: snapshot.isPlaying ? snapshot.speed.rawValue : 0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: snapshot.speed.rawValue
+        ]
+        MPNowPlayingInfoCenter.default().playbackState = snapshot.isPlaying ? .playing : .paused
+    }
+
+    func clear() {
+        clearCommandTargets()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+    }
+
+    private func clearCommandTargets() {
+        commandTargets.forEach { command, target in
+            command.removeTarget(target)
+            command.isEnabled = false
+        }
+        commandTargets.removeAll()
+    }
+}
+
+struct ApprovalPromptState: Equatable, Identifiable {
+    var id: String {
+        "\(sessionID)-\(pending.id)"
+    }
+
+    let sessionID: String
+    let pending: PendingApproval
+    let pendingCount: Int
+
+    var patternKeys: [String] {
+        pending.displayPatternKeys
+    }
+
+    /// What Allow session and Always allow cover on this webui server. The
+    /// overlay always offers both.
+    var scopeLine: AttributedString? {
+        ApprovalScope.line(
+            keys: patternKeys, description: pending.description, command: pending.command, toolName: nil, host: .webui
+        )
+    }
+}
+
+struct ClarificationPromptState: Equatable, Identifiable {
+    var id: String {
+        "\(sessionID)-\(pending.id)"
+    }
+
+    let sessionID: String
+    let pending: PendingClarification
+    let pendingCount: Int
+
+    var question: String {
+        pending.displayQuestion
+    }
+
+    var choices: [String] {
+        pending.displayChoices
+    }
+}
+
+struct ProfileSwitchOutcome: Equatable {
+    let session: SessionSummary?
+}
+
+struct ChatPollingIntervals {
+    let approvalNanoseconds: UInt64
+    let clarificationNanoseconds: UInt64
+    let backgroundNanoseconds: UInt64
+    /// Waits out one interval between polls. A test passes its own, so it sees each poll go
+    /// back to sleep, and a cancelled one stop, instead of timing them.
+    var sleep: @Sendable (UInt64) async -> Void = { try? await Task.sleep(nanoseconds: $0) }
+
+    static let standard = ChatPollingIntervals(
+        approvalNanoseconds: 1_500_000_000,
+        clarificationNanoseconds: 1_500_000_000,
+        backgroundNanoseconds: 3_000_000_000
+    )
+}
+
+/// Which server runs a chat's turns: a webui session's SSE streams, or a Hermes session on
+/// the gateway socket (#1010).
+enum ChatBackend {
+    case webui
+    case hermes(HermesChatTurnCoordinator)
+}
+
+enum ActiveStreamRecoveryState: Equatable {
+    case idle
+    case checking
+    case reconnecting
+    /// The phone is offline, so the stream waits for the network path to
+    /// return instead of spending its status probes (#869).
+    case waitingForNetwork
+}
+
+@MainActor
+@Observable
+final class ChatViewModel {
+    private static let messagePageLimit = 50
+
+    private(set) var messages: [ChatMessage] = [] {
+        didSet {
+            recomputeDisplayedTranscriptMessages()
+            if hermesTurn != nil, !Self.onlyRepliesChanged(from: oldValue, to: messages) { updateHermesRewindableMessageIDs() }
+        }
+    }
+    /// A Hermes session's rows that offer Edit or Regenerate (#1049). Reassigned only when
+    /// the set changes, so a stream tick leaves every row's menu alone.
+    private var hermesRewindableMessageIDs: Set<String> = []
+    /// The message ↑ brings back into an empty composer. Computed on demand:
+    /// the composer asks only when ↑ is pressed.
+    var lastSentText: String? { ComposerRecall.lastSentText(in: messages) }
+    /// Memoized transcript mapping, recomputed once whenever `messages` or
+    /// `messagesOffset` changes. Views read this single cached value instead of
+    /// re-running the full classification pass on every body evaluation.
+    private(set) var displayedTranscriptMessages: [TranscriptMessage] = []
+    private(set) var isLoading = false
+    private(set) var isLoadingOlderMessages = false
+    private(set) var isStartingChat = false
+    /// True while a recorded voice note is being transcribed, uploaded, and sent.
+    /// Spans all three steps so the composer can show progress and disable input.
+    private(set) var isSendingVoiceNote = false
+    private(set) var isForkingMessage = false
+    /// A Hermes branch's "Forked from" row (#1051), once its host has said which session it
+    /// branched from (`checkHermesForkParent`).
+    private(set) var hermesForkOrigin: ForkOrigin?
+    /// The row a Hermes chat opened from named a parent, and its host has not answered yet.
+    @ObservationIgnored private var needsHermesForkCheck = false
+    @ObservationIgnored private var isCheckingHermesForkParent = false
+    private(set) var isEditingMessage = false
+    private(set) var isRegeneratingMessage = false
+    /// A Hermes `/undo` is out (#1049). Send waits, since each one removes an exchange for good.
+    private(set) var isUndoingExchange = false
+    private(set) var isCompressingSession = false
+    private(set) var isCancellingStream = false
+    private(set) var isViewingCachedData = false {
+        didSet { if !isViewingCachedData { isCachedCopyProvisional = false } }
+    }
+    /// A Hermes chat's cached transcript shows because the host has yet to answer this open, not
+    /// because it can't be reached: still read-only, with Send held, but without the offline
+    /// banner. Only while `isViewingCachedData`.
+    private(set) var isCachedCopyProvisional = false
+    /// The chat shows its offline presentation: the banner and the composer's reconnect line.
+    var showsOfflineCache: Bool { isViewingCachedData && !isCachedCopyProvisional }
+    var activeStreamID: String? { turn.activeStreamID }
+    var successfulResponseCompletion: ChatStreamCoordinator.SuccessfulResponseCompletion? {
+        turn.successfulResponseCompletion
+    }
+    var activeRunStartedAt: Date? { turn.activeRunStartedAt }
+    /// How the latest run ended, keyed to the turn it answered. Drives the
+    /// settled-turn fold label and which turns start expanded.
+    private(set) var latestRunOutcome: TranscriptTurnRunOutcome?
+    var activeStreamRecoveryState: ActiveStreamRecoveryState { turn.recoveryState }
+    var liveTokensPerSecond: Double? { turn.liveTokensPerSecond }
+    private(set) var errorMessage: String?
+    private(set) var sendErrorMessage: String? {
+        didSet {
+            sendErrorIsFromStreamRecovery = false
+            // Slash commands re-set the same text after a failed send; keep the kind then.
+            if sendErrorMessage != oldValue, sendErrorRuntimeStale != nil { sendErrorRuntimeStale = nil }
+        }
+    }
+    @ObservationIgnored private var sendErrorIsFromStreamRecovery = false
+    /// Set when the server refused a send because Hermes was updated under the
+    /// running WebUI (#955), so the composer can offer Copy fix prompt. A
+    /// different `sendErrorMessage` clears it.
+    private(set) var sendErrorRuntimeStale: AgentRuntimeStale?
+    private(set) var messageActionErrorMessage: String?
+    private(set) var cacheErrorMessage: String?
+
+    /// Set while `POST /api/session/clear` is in flight. A send or a second
+    /// `/clear` refuses while it is set, so the clear response cannot wipe a
+    /// message the user started inside that window (#389).
+    private(set) var isClearingConversation = false
+    private(set) var lastError: Error?
+    private(set) var displayTitle: String
+    private(set) var listeningMessageID: String?
+    private(set) var streamingScrollTrigger = 0
+    /// Bumped when a cache-first cold open (#289) finishes reconciling the network
+    /// transcript over the instantly-rendered cached one. The richer server content
+    /// (tool-call / reasoning cards, content parts) is taller than the lighter cached
+    /// render, so the view re-pins to the bottom on this token *without* animation —
+    /// otherwise the height growth produces a visible scroll jump.
+    /// Bumped whenever something re-lays out the transcript under the reader
+    /// without adding a message: the server transcript replacing the lighter
+    /// cache-first render, or the skill catalog turning sent `/slug` text into
+    /// chips. A reader who was pinned to the bottom is put back there.
+    private(set) var transcriptRelayoutScrollToken = 0
+    private var hasPrimedInitialCachedMessages = false
+    /// The transcript request `prepareInitialMessageLoad` sends while the push
+    /// transition runs, so the round trip overlaps the animation (#678). Only the
+    /// initial `loadMessages` may use it, and only while the active stream is the
+    /// one it was sent under; every other load discards it.
+    @ObservationIgnored private var initialSessionPrefetch: InitialSessionPrefetch?
+    @ObservationIgnored private var pendingStreamingScrollTriggerTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingAssistantText = ""
+    /// Whether the last reveal tick held a trailing fragment back; the next tick
+    /// releases it even without new whitespace (`StreamingRevealGate`).
+    @ObservationIgnored private var heldStreamingFragmentLastTick = false
+    @ObservationIgnored private var pendingReasoningChunks: [String] = []
+    @ObservationIgnored private var pendingStreamingContentFlushTask: Task<Void, Never>?
+    private(set) var completedToolCallGroups: [ToolCallGroup] = []
+    private var completedToolCallGroupLookup = ToolCallGroupAnchorLookup()
+    private(set) var completedReasoningGroups: [ReasoningGroup] = [] {
+        didSet { recomputeDisplayedTranscriptMessages() }
+    }
+    /// Reasoning cards for the loaded transcript. Derived in
+    /// `recomputeDisplayedTranscriptMessages()` and reassigned only when the
+    /// cards change, so a stream tick or a keystroke neither re-derives them nor
+    /// hands the transcript rows a fresh array to compare.
+    private(set) var displayedReasoningGroups: [ReasoningGroup] = []
+    /// `displayedReasoningGroups` bucketed by anchor message ID (nil holds the
+    /// unanchored cards), so each transcript row receives only its own cards.
+    private(set) var reasoningGroupsByAnchorID: [String?: [ReasoningGroup]] = [:]
+    @ObservationIgnored private var reasoningCandidateCache = ReasoningCandidateCache()
+    func completedToolCallGroupsForAnchor(_ anchorMessageID: String?) -> [ToolCallGroup] {
+        completedToolCallGroupLookup.groups(anchorMessageID: anchorMessageID)
+    }
+
+    /// Tool calls for the latest assistant turn, driving the in-chat "file changes" recap
+    /// card and composer "N changes" capsule (#316). A turn often spans multiple assistant
+    /// messages (tool calls on one, the final text on the next), and the archived tool group
+    /// anchors to the *first* of them — so collect every completed group in the current turn
+    /// (since the last user message) plus any still-live calls, not just one anchor.
+    var latestTurnToolCalls: [ToolCall] {
+        let turnAnchors = Set(
+            TranscriptTurnClassifier.currentTurnAssistantAnchorIDs(in: messages, messageOffset: messagesOffset)
+        )
+        var calls = completedToolCallGroups
+            .filter { group in group.anchorMessageID.map(turnAnchors.contains) ?? false }
+            .flatMap(\.toolCalls)
+        calls.append(contentsOf: liveToolCalls)
+        return calls
+    }
+
+    private func recomputeDisplayedTranscriptMessages() {
+        let reasoningGroups = Self.reasoningDisplayGroups(
+            messages: messages,
+            messageOffset: messagesOffset,
+            archivedGroups: completedReasoningGroups,
+            cache: &reasoningCandidateCache
+        )
+        if reasoningGroups != displayedReasoningGroups {
+            displayedReasoningGroups = reasoningGroups
+            reasoningGroupsByAnchorID = Dictionary(grouping: reasoningGroups, by: \.anchorMessageID)
+        }
+        let renderedActivityAnchorIDs = Self.transcriptActivityAnchorIDs(
+            reasoningGroups: displayedReasoningGroups,
+            toolCallGroups: completedToolCallGroups
+        )
+        displayedTranscriptMessages = Self.transcriptMessages(
+            from: messages,
+            messageOffset: messagesOffset,
+            preservingEmptyAssistantID: streamingAssistantMessageID,
+            renderedActivityAnchorIDs: renderedActivityAnchorIDs
+        )
+        recomputeCompressionReferenceCard()
+    }
+    /// Synthesized "Context compaction · Reference only" card resolved from the
+    /// session's `compression_anchor_*` metadata; nil when the session has no
+    /// compaction metadata or the reference text is gated out.
+    private(set) var compressionReferenceCard: CompressionReferenceCard?
+    @ObservationIgnored private var compressionAnchorMetadata: CompressionAnchorMetadata?
+    /// A Hermes session's compaction, from its settled history (#1047), in place of the
+    /// webui's `compression_anchor_*` metadata.
+    @ObservationIgnored private var hermesCompaction: HermesCompaction?
+    /// The offline cache a Hermes chat's settled history is written to and read back from
+    /// before its attach and while its host can't be reached (#1054, #1144), from the chat's
+    /// first load.
+    @ObservationIgnored private var hermesCache: ModelContext?
+    /// The root this Hermes chat's cached transcript is kept under, once found: a session's
+    /// lineage root, or a Bot Chat's canonical root, which its attach confirms or replaces.
+    @ObservationIgnored private var hermesCacheRoot: String?
+    /// An archived Bot Chat, opened by its key, keeps its cached copy under this lineage root,
+    /// and reads its bot's Bot Chat's copy of that root while it has none (#1144). Nil for any
+    /// other chat.
+    @ObservationIgnored var hermesBotChatRoot: String?
+    /// A session's lineage root as its row or link named it (`HermesSessionChat.lineageRoot`);
+    /// nil asks the cache.
+    @ObservationIgnored var hermesLineageRoot: String?
+    /// The cache epoch this chat's attach took (`CacheStore.hermesCacheEpoch`): its writes are
+    /// dropped once a clear or removal moves the server's on, until the next attach.
+    @ObservationIgnored private var hermesCacheEpoch: Int?
+    private func applyCompressionAnchorMetadata(from session: SessionDetail?) {
+        compressionAnchorMetadata = CompressionAnchorMetadata(from: session)
+        recomputeCompressionReferenceCard()
+    }
+    private func clearCompressionAnchorMetadata() {
+        compressionAnchorMetadata = nil
+        compressionReferenceCard = nil
+    }
+    private func recomputeCompressionReferenceCard() {
+        // Not folded into the messages/messagesOffset observers alone:
+        // applyCompletedStreamSession can update the metadata without
+        // reassigning messages, so metadata changes recompute here too. The
+        // equality guard keeps the overlapping triggers observer-silent.
+        let card = hermesCompaction.map {
+            Self.hermesCompressionReferenceCard($0, messages: messages, transcriptMessages: displayedTranscriptMessages)
+        } ?? Self.compressionReferenceCard(
+            messages: messages,
+            messagesOffset: messagesOffset,
+            transcriptMessages: displayedTranscriptMessages,
+            metadata: compressionAnchorMetadata
+        )
+        guard compressionReferenceCard != card else { return }
+
+        compressionReferenceCard = card
+    }
+    private(set) var liveToolCalls: [ToolCall] = []
+    private(set) var liveReasoningText = ""
+    private(set) var streamingAssistantMessageID: String? {
+        didSet {
+            guard oldValue != streamingAssistantMessageID else { return }
+            recomputeDisplayedTranscriptMessages()
+        }
+    }
+    private(set) var toolCallAnchorMessageID: String?
+    private(set) var reasoningAnchorMessageID: String?
+    private(set) var messagesOffset = 0 {
+        didSet { recomputeDisplayedTranscriptMessages() }
+    }
+    private(set) var hasOlderMessages = false
+    private(set) var contextWindowSnapshot: ContextWindowSnapshot?
+    private(set) var responseCompletionHapticTrigger = 0
+    /// Bumps once for every run that ends completed or failed, after `runEndOutcome`
+    /// records which. `ChatView` turns each bump into at most one local alert and
+    /// keeps its background task open until then (#862). A stopped run never bumps.
+    private(set) var runEndTrigger = 0
+    private(set) var runEndOutcome: ResponseCompletionOutcome = .completed
+    /// The coordinator's ending the last bump counted, so no ending counts twice.
+    @ObservationIgnored private var runEndRecordedAt: Date?
+    /// Bumps at most once per throttle interval while live (non-replay) assistant
+    /// text arrives; the view turns each bump into one streaming pulse haptic.
+    private(set) var streamingHapticPulseTrigger = 0
+    private var streamingHapticPulseThrottle = ChatHaptics.StreamingPulseThrottle()
+    private(set) var responseCompletionNeedsTranscriptRefresh = false
+    private(set) var modelCatalogGroups: [ModelCatalogGroup] = []
+    private(set) var agentCommands: [AgentCommand] = []
+    private(set) var workspaceRoots: [WorkspaceRoot] = []
+    private(set) var workspaceSuggestions: [String] = []
+    private(set) var personalitySuggestions: [String] = ["none"]
+    private(set) var skillSlashSuggestions: [SkillSlashSuggestion] = []
+    /// The same skills in the shape the chip tokenizer needs, kept beside the
+    /// list so the transcript's `body` never rebuilds it. Always assigned
+    /// through `applySkillSlashSuggestions(_:)`.
+    private(set) var skillChipCatalog: ComposerChipCatalog = .empty
+    /// Workspace files picked from the composer's `@` panel in this chat.
+    /// Held here rather than in the composer so the transcript draws the same
+    /// references the composer does, and so switching chats never carries one
+    /// session's paths into another.
+    private(set) var fileChipPaths: Set<String> = []
+    /// The catalog both the composer and the transcript draw from: this chat's
+    /// skills plus the files it has referenced.
+    private(set) var composerChipCatalog: ComposerChipCatalog = .empty
+    /// The workspace directory listings behind both the composer's `@` panel and
+    /// the confirmation of `@path` references in a restored draft or transcript,
+    /// so a folder either surface has already listed is never listed twice.
+    @ObservationIgnored let filePathSearch = ComposerFilePathSearch()
+    @ObservationIgnored private var fileChipReferenceLoad: Task<Void, Never>?
+    /// Identifies the pass a handle belongs to, so a pass that was cancelled and
+    /// finishes late cannot clear the handle of the one that replaced it.
+    @ObservationIgnored private var fileChipReferenceLoadGeneration = 0
+    /// Candidates the server has already answered for, so a `@word` that is not
+    /// a file is not re-checked on every transcript update.
+    @ObservationIgnored private var checkedFileChipCandidates: Set<String> = []
+    /// Bumped whenever the confirmed paths are thrown away because the
+    /// workspace moved. The chat re-runs its confirmation pass on the change, so
+    /// a file that exists in the new workspace too comes back as a chip, and a
+    /// pass started under an older revision applies nothing.
+    private(set) var fileChipScopeRevision = 0
+    /// Bumped whenever the transcript is replaced rather than extended: a
+    /// cache-first paint, the server's reconcile, a page of older messages. A
+    /// reconcile can rewrite a message in the middle of the list without
+    /// changing the count or the last id, so nothing cheaper than "the
+    /// transcript was swapped" can be trusted to notice a reference arriving.
+    private(set) var transcriptRevision = 0
+    /// Most folders one batch of a confirmation pass lists. The pass works
+    /// through every folder its candidates name, a batch at a time, so a long
+    /// transcript is answered in full without one burst of requests.
+    private static let fileChipDirectoryLimit = 20
+    private(set) var profileOptions: [ProfileSummary] = []
+    private(set) var isSingleProfileMode = false
+    private(set) var selectedProfileName: String?
+    private(set) var selectedReasoningEffort: String?
+    /// Model-aware effort vocabulary (`supported_efforts` from `GET /api/reasoning`).
+    /// `nil` on older servers → the composer falls back to the static list (issue #18).
+    private(set) var supportedReasoningEfforts: [String]?
+    /// `supports_reasoning_effort`; `false` hides the composer effort control.
+    private(set) var supportsReasoningEffort: Bool?
+    /// Drops out-of-order `GET /api/reasoning` responses after rapid model switches
+    /// so the gating never reflects a stale model (upstream #3750 class of bug).
+    private var reasoningGatingFetchToken = 0
+    /// A Hermes session shows it unless the host marks the model `reasoning: false` (#1016).
+    var showsReasoningEffortControl: Bool {
+        if let hermesSettings { return hermesSettings.showsEffort }
+        return ReasoningEffortOption.showsEffortControl(
+            supportsReasoningEffort: supportsReasoningEffort,
+            supportedEfforts: supportedReasoningEfforts
+        )
+    }
+    private(set) var isLoadingComposerConfiguration = false
+    private(set) var isUpdatingComposerConfiguration = false
+    private(set) var composerConfigurationErrorMessage: String?
+    var pendingAttachments: [PendingAttachment] { attachmentCoordinator.pendingAttachments }
+    var isUploadingAttachment: Bool { attachmentCoordinator.isUploadingAttachment || isSendingAttachments }
+    /// A Hermes Send or Queue is uploading its files (#1012); `cancelAttachmentUpload()` stops it.
+    var isSendingAttachments: Bool { hermesTurn?.isUploadingAttachments == true }
+    var attachmentUploadCount: Int { attachmentCoordinator.uploadInFlightCount }
+    var attachmentUploadGeneration: Int { attachmentCoordinator.uploadStartGeneration }
+    var uploadAttachmentErrorMessage: String? { attachmentCoordinator.uploadAttachmentErrorMessage }
+    var localAttachmentPreviews: [String: [String: Data]] { attachmentCoordinator.localAttachmentPreviews }
+    private(set) var pinnedLocalNotices: [String] = []
+    /// The one composer line shown while messages wait behind the run. It is
+    /// derived from the queue, so it goes away when the queue drains or is
+    /// handed over, and it never enters a stream snapshot.
+    var queuedMessagesReceipt: String? {
+        guard !queuedSlashMessages.isEmpty || hermesTurn?.queuedPrompt != nil else { return nil }
+        return String(localized: "Queued, sends when this run finishes")
+    }
+    private(set) var steeringConfirmationNotice: String?
+    /// "Couldn't steer", plus the system's reason for a network or HTTP
+    /// failure, after the latest steer didn't reach the run. The composer shows
+    /// it with Retry; `clearSteerFailure()` removes it.
+    private(set) var steerFailureMessage: String?
+    var approvalPrompt: ApprovalPromptState? { pendingActionCoordinator.approvalPrompt }
+    var isRespondingToApproval: Bool { pendingActionCoordinator.isRespondingToApproval }
+    var approvalErrorMessage: String? { pendingActionCoordinator.approvalErrorMessage }
+    /// A Hermes session's reads `session.info`'s `yolo` (#1011); a webui session's, its yolo route.
+    var isSessionApprovalBypassEnabled: Bool {
+        hermesRequests?.approvalBypass ?? pendingActionCoordinator.isSessionApprovalBypassEnabled
+    }
+    var clarificationPrompt: ClarificationPromptState? { pendingActionCoordinator.clarificationPrompt }
+    var isRespondingToClarification: Bool { pendingActionCoordinator.isRespondingToClarification }
+    var clarificationErrorMessage: String? { pendingActionCoordinator.clarificationErrorMessage }
+    private(set) var currentGoal: SubmittedGoal?
+    private(set) var isSubmittingGoal = false
+    private(set) var goalErrorMessage: String?
+    private(set) var hasActivatedGoalCommand = false
+
+    private let sessionID: String?
+    @ObservationIgnored private var chatSendGeneration = 0
+    @ObservationIgnored private var compressionContinuation: SessionSummary?
+    @ObservationIgnored private var compressionContinuationID: String?
+    private(set) var isCompressionRotated = false
+    @ObservationIgnored private var compressionRejectionMessage: String?
+    @ObservationIgnored private var didHandOffCompressionDraft = false
+    /// The workspace this chat's session is pointed at. `/workspace` and the
+    /// composer's picker move it without the session id changing, and every
+    /// `@path` the chat has confirmed was confirmed against the old root.
+    private var currentWorkspace: String? {
+        didSet {
+            guard currentWorkspace != oldValue else { return }
+            resetFileChipReferences()
+        }
+    }
+    private var currentModel: String?
+    private var currentModelProvider: String?
+    private var currentProfile: String?
+    private let isCLISession: Bool
+    private let server: URL
+    /// A Hermes chat's session as a link names it (#1177): its Profile and current stored key,
+    /// which a compaction on a legacy-rotation host moves. Its run alert opens it. Nil for a
+    /// webui chat, and for a new one before the host names its key.
+    var hermesSessionLink: HermesSessionDestination? {
+        guard let engine = hermesTurn?.engine,
+              let key = HermesDeepLink.normalizedSessionID(engine.storedKey ?? sessionID) else { return nil }
+        return HermesSessionDestination(server: server, profile: engine.target.profile, key: key)
+    }
+
+    /// The session pushes report under: a webui session's own ID, or a Hermes session's
+    /// current stored key, the `session_id` every hook sends.
+    var pushPresence: PushPresence.Viewer? {
+        (hermesSessionLink?.key ?? sessionID).map { PushPresence.Viewer(server: server, sessionID: $0) }
+    }
+    let client: APIClient
+    /// Webui's streams. Its start, cancel and session-load calls run only on a webui chat.
+    private let streamCoordinator: ChatStreamCoordinator
+    /// The run lifecycle of whichever backend runs this chat: `streamCoordinator`, or `hermesTurn`.
+    private let turn: any ChatTurnCoordinating
+    /// Set on a Hermes session: its turns run here, and webui-only paths stay off.
+    private let hermesTurn: HermesChatTurnCoordinator?
+    private let drafts: ChatDraftStore
+    private let pendingActionCoordinator: ChatPendingActionCoordinator
+    private let attachmentCoordinator: ChatAttachmentCoordinator
+    private let btwStreamClient: SSEStreamingClient
+    private let liveActivityManager: any AgentLiveActivityManaging
+    private let speechSynthesizerFactory: () -> any ChatSpeechSynthesizing
+    private let listenAudioSession: any ListenAudioSessionControlling
+    private let listenRemoteControlCenter: any ListenRemoteControlControlling
+    private let userDefaults: UserDefaults
+    private let pollingIntervals: ChatPollingIntervals
+    private let steeringConfirmationDismissDelay: @Sendable () async throws -> Void
+    @ObservationIgnored private var steeringConfirmationDismissTask: Task<Void, Never>?
+    // Real-time window over which rapid streaming updates coalesce into a single
+    // scroll trigger. Injectable so tests can drive coalescing deterministically;
+    // production keeps the 16ms default.
+    private let streamingScrollCoalescingDelayNanoseconds: UInt64
+    // Waits out one streaming reveal tick (50ms in production, #1126): buffered
+    // tokens and reasoning show at most once per tick. Injectable so tests drive
+    // ticks deterministically.
+    private let streamingRevealTick: @Sendable () async throws -> Void
+    private var speechSynthesizer: (any ChatSpeechSynthesizing)?
+    private var speechDelegate: SpeechSynthesizerDelegate?
+    // Identity of the utterance currently being spoken. A stale finish/cancel callback
+    // from a superseded utterance (e.g. switching messages mid-playback) is ignored so
+    // it can't clear the new listen state or deactivate the session. See #252.
+    private var activeListeningUtteranceID: ObjectIdentifier?
+    // Server-TTS playback seam (#15): the factory builds an audio player from the
+    // server's synthesized bytes; injectable so tests never construct a real
+    // `AVAudioPlayer` (which requires decodable audio data).
+    private let serverTTSAudioPlayerFactory: @MainActor (Data) throws -> any ListenAudioPlaying
+    // A reply's server speech for Listen, or nil to speak it on device: webui's `/api/tts`
+    // with the saved engine and voice, or a Hermes host's voice for the chat's Profile
+    // (#1072). Any throw also falls back on device (#15). Injectable so tests stub the server.
+    private let synthesizeListenAudio: @MainActor (String) async throws -> Data?
+    private var listenAudioPlayer: (any ListenAudioPlaying)?
+    // Identity of the server-TTS player currently playing. Mirrors
+    // `activeListeningUtteranceID`: a stale finish callback from a superseded player
+    // must not clear the new listen state or deactivate the session.
+    private var activeListenPlayerID: ObjectIdentifier?
+    // In-flight settings/audio fetch for the Listen action. Cancelled by
+    // `stopListening()`; exposed (read-only) so tests can await the async
+    // server-first path deterministically.
+    @ObservationIgnored private(set) var listenPreparationTask: Task<Void, Never>?
+    // Identity of the Listen request the in-flight fetch belongs to. A response
+    // arriving after stop/switch carries a stale ID and is dropped instead of
+    // starting audio the user no longer wants.
+    private var activeListenRequestID: UUID?
+    private var listenPlaybackTitle = String(localized: "Hermex response")
+    private(set) var listenPlaybackPhase: ListenPlaybackPhase = .idle
+    private(set) var listenPlaybackElapsedTime: TimeInterval = 0
+    private(set) var listenPlaybackDuration: TimeInterval = 0
+    private(set) var listenPlaybackScrubTime: TimeInterval?
+    private(set) var listenPlaybackSpeed: ListenPlaybackSpeed
+    @ObservationIgnored private var listenPlaybackTicker: Timer?
+    private var showsLiveActivityResponseExcerpts: Bool
+    private var hasCompletedCurrentResponse: Bool { turn.hasCompletedCurrentResponse }
+    private var isStreamConnectionSuspended: Bool { turn.isConnectionSuspended }
+    var isActiveStreamConnectionSuspended: Bool { turn.isConnectionSuspended }
+    private var hasLoadedPersonalitySuggestions = false
+    /// The in-flight personality list request, shared by every caller of
+    /// `loadPersonalitySuggestions()` so no view's cancellation can orphan it.
+    private var personalitySuggestionsLoad: Task<Void, Never>?
+    /// Whether a skills list request has succeeded for this session, even when
+    /// it returned no skills. Lets the composer tell "still loading" from
+    /// "loaded, and the server has none".
+    private(set) var hasLoadedSkillSlashSuggestions = false
+    /// The in-flight skill list request, shared by every caller of
+    /// `loadSkillSlashSuggestions()` so no view's cancellation can orphan it.
+    private var skillSlashSuggestionsLoad: Task<Void, Never>?
+    private var queuedSlashMessages: [QueuedSlashMessage] = []
+    private var isDrainingQueuedSlashMessage = false
+    /// Counts `takeQueuedMessages()` hand-overs, so an interrupt whose cancel
+    /// was in flight across one knows its message went to the draft.
+    @ObservationIgnored private var queueHandOverCount = 0
+    private var activeBtwStreamID: String?
+    private var activeBtwMessageID: String?
+    private var activeBtwQuestion: String?
+    private var activeBtwAnswer = ""
+    private var backgroundPromptsByTaskID: [String: String] = [:]
+    @ObservationIgnored private var backgroundPollTask: Task<Void, Never>?
+    private var isRefreshingCompletedResponseTitle = false
+    /// True while a reattached stream replays events the transcript may already
+    /// hold. Clears once replayed text catches up; until then live tool rows
+    /// skip their entrance.
+    var isActiveStreamReplayConnection: Bool { turn.isReplayConnection }
+    private var activeStreamReplayMatchedPrefixLength = 0
+    private var activeStreamReplayMatchedInterimLength = 0
+    private var activeStreamReplayMatchedReasoningLength = 0
+    private var activeStreamReplayLoadedReasoningText = ""
+    private var activeStreamReplayLoadedToolCalls: [ToolCall] = []
+    private var activeStreamReplayLoadedToolMatchIndex = 0
+    private var activeStreamReplayPendingLoadedToolMatchIndex: Int?
+    private var activeStreamReplayToolMatchIndex = 0
+    private var activeStreamReplayPendingToolMatchIndex: Int?
+    private var latestServerLoadHadAssistantResponseAfterLatestUser = false
+    private var needsComposerConfigurationReload = false
+    private var pendingExplicitModelPick = false
+    private(set) var composerConfigurationInteractionGeneration = 0
+
+    init(
+        session: SessionSummary,
+        server: URL,
+        client: APIClient? = nil,
+        streamClient: SSEStreamingClient? = nil,
+        approvalStreamClient: SSEStreamingClient? = nil,
+        clarifyStreamClient: SSEStreamingClient? = nil,
+        btwStreamClient: SSEStreamingClient? = nil,
+        liveActivityManager: (any AgentLiveActivityManaging)? = nil,
+        showsLiveActivityResponseExcerpts: Bool = false,
+        pollingIntervals: ChatPollingIntervals = .standard,
+        steeringConfirmationDismissDelay: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(nanoseconds: 3_000_000_000)
+        },
+        streamingScrollCoalescingDelayNanoseconds: UInt64 = 16_000_000,
+        streamingRevealTick: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        },
+        speechSynthesizerFactory: @escaping () -> any ChatSpeechSynthesizing = { AVSpeechSynthesizer() },
+        listenAudioSession: (any ListenAudioSessionControlling)? = nil,
+        listenRemoteControlCenter: (any ListenRemoteControlControlling)? = nil,
+        serverTTSAudioPlayerFactory: (@MainActor (Data) throws -> any ListenAudioPlaying)? = nil,
+        synthesizeListenAudio: (@MainActor (String) async throws -> Data?)? = nil,
+        draftAttachmentStore: any ChatDraftAttachmentStoring = ChatDraftAttachmentStore.shared,
+        draftStore: ChatDraftStore? = nil,
+        userDefaults: UserDefaults = .standard,
+        backend: ChatBackend = .webui
+    ) {
+        sessionID = session.sessionId
+        currentWorkspace = session.workspace
+        currentModel = session.model
+        currentModelProvider = session.modelProvider
+        currentProfile = session.profile
+        isCLISession = session.isCliSession == true
+        self.server = server
+        let resolvedClient = client ?? APIClient(baseURL: server)
+        let resolvedStreamClient = streamClient ?? SSEClient()
+        let resolvedLiveActivityManager = liveActivityManager ?? AgentLiveActivityManager.shared
+        self.client = resolvedClient
+        let streamCoordinator = ChatStreamCoordinator(
+            client: resolvedClient,
+            streamClient: resolvedStreamClient,
+            liveActivityManager: resolvedLiveActivityManager,
+            showsLiveActivityResponseExcerpts: showsLiveActivityResponseExcerpts
+        )
+        self.streamCoordinator = streamCoordinator
+        let backendSpeech: @MainActor (String) async throws -> Data?
+        switch backend {
+        case .webui:
+            hermesTurn = nil
+            turn = streamCoordinator
+            backendSpeech = { try await resolvedClient.listenSpeech(for: $0) }
+        case .hermes(let coordinator):
+            hermesTurn = coordinator
+            turn = coordinator
+            backendSpeech = { try await coordinator.speech(for: $0) }
+            currentProfile = coordinator.settings.profile
+            selectedProfileName = coordinator.settings.profile
+            coordinator.setShowsLiveActivityResponseExcerpts(showsLiveActivityResponseExcerpts)
+        }
+        self.drafts = draftStore ?? .shared
+        self.pendingActionCoordinator = ChatPendingActionCoordinator(
+            client: resolvedClient,
+            approvalStreamClient: approvalStreamClient ?? SSEClient(),
+            clarifyStreamClient: clarifyStreamClient ?? SSEClient(),
+            pollingIntervals: pollingIntervals
+        )
+        self.attachmentCoordinator = ChatAttachmentCoordinator(
+            client: resolvedClient,
+            draftAttachmentStore: draftAttachmentStore,
+            draftStore: draftStore,
+            uploadsOnSend: hermesTurn != nil
+        )
+        self.btwStreamClient = btwStreamClient ?? SSEClient()
+        self.liveActivityManager = resolvedLiveActivityManager
+        self.showsLiveActivityResponseExcerpts = showsLiveActivityResponseExcerpts
+        self.pollingIntervals = pollingIntervals
+        self.steeringConfirmationDismissDelay = steeringConfirmationDismissDelay
+        self.streamingScrollCoalescingDelayNanoseconds = streamingScrollCoalescingDelayNanoseconds
+        self.streamingRevealTick = streamingRevealTick
+        self.speechSynthesizerFactory = speechSynthesizerFactory
+        self.listenAudioSession = listenAudioSession ?? ListenAudioSessionController()
+        self.listenRemoteControlCenter = listenRemoteControlCenter ?? ListenRemoteControlController()
+        self.userDefaults = userDefaults
+        self.listenPlaybackSpeed = ListenPlaybackSpeed.stored(in: userDefaults)
+        self.serverTTSAudioPlayerFactory = serverTTSAudioPlayerFactory
+            ?? { try ServerTTSAudioPlayer(data: $0) }
+        self.synthesizeListenAudio = synthesizeListenAudio ?? backendSpeech
+        displayTitle = Self.displayTitle(from: session.title)
+        turn.attach(delegate: self)
+        self.pendingActionCoordinator.delegate = self
+        self.attachmentCoordinator.delegate = self
+    }
+
+    deinit {
+        backgroundPollTask?.cancel()
+        steeringConfirmationDismissTask?.cancel()
+        pendingStreamingScrollTriggerTask?.cancel()
+        pendingStreamingContentFlushTask?.cancel()
+        listenPreparationTask?.cancel()
+        listenPlaybackTicker?.invalidate()
+        initialSessionPrefetch?.task.cancel()
+    }
+
+    func setShowsLiveActivityResponseExcerpts(_ shows: Bool) {
+        guard showsLiveActivityResponseExcerpts != shows else { return }
+
+        showsLiveActivityResponseExcerpts = shows
+        turn.setShowsLiveActivityResponseExcerpts(shows)
+    }
+
+    var showsListenPlaybackBar: Bool {
+        listenPlaybackPhase != .idle
+    }
+
+    var listenPlaybackDisplayTime: TimeInterval {
+        listenPlaybackScrubTime ?? listenPlaybackElapsedTime
+    }
+
+    nonisolated static func resetActiveStreamSnapshotsForTesting() {
+        ActiveChatStreamSnapshotStore.shared.removeAll()
+    }
+
+    // Test seam: deterministically await the in-flight coalesced scroll-trigger task
+    // so streaming assertions never depend on the real coalescing window elapsing.
+    // No-op when no trigger is pending.
+    func awaitPendingStreamingScrollTriggerForTesting() async {
+        await pendingStreamingScrollTriggerTask?.value
+    }
+
+    struct ActiveStreamMessageMerge {
+        let messages: [ChatMessage]
+        let streamingAssistantMessageID: String?
+        let usedSnapshotMessagesOffset: Bool
+    }
+
+    /// A Hermes session's model chip shows `model.options`' live model, or the pick
+    /// waiting on the running response (#1015); `session.info`'s model until it answers.
+    var selectedModelID: String? {
+        hermesSettings?.selectedModel?.id ?? currentModel
+    }
+
+    var selectedModelProviderID: String? {
+        hermesSettings.map { $0.selectedModel?.providerID } ?? currentModelProvider
+    }
+
+    /// The model picker's groups: a Hermes session's `model.options` (#1015), else webui's catalog.
+    var composerModelGroups: [ModelCatalogGroup] {
+        hermesSettings?.controls.catalog.groups ?? modelCatalogGroups
+    }
+
+    /// The Profile chip's list: a Hermes host's `profiles.list` (#1015), else webui's Profiles.
+    var composerProfileOptions: [ProfileSummary] {
+        hermesSettings?.profileOptions ?? profileOptions
+    }
+
+    /// The Profile chip only shows its Profile: one Profile, or a Bot Chat's bot, whose chat
+    /// picks no other (#1145).
+    var composerIsSingleProfileMode: Bool {
+        guard let hermesTurn else { return isSingleProfileMode }
+        return !hermesTurn.policy.picksProfile || hermesTurn.settings.profiles.count <= 1
+    }
+
+    /// A Hermes model pick the host applies after the running response (#1015).
+    var composerConfigurationNotice: String? {
+        guard let pending = hermesSettings?.controls.pendingModel else { return nil }
+        return String(localized: "Switches to \(pending.displayName) after this response.")
+    }
+
+    /// A Hermes session's model and Profile controls (#1015). Nil on a webui session.
+    var hermesSettings: HermesChatSettings? { hermesTurn?.settings }
+    /// A bot's Bot Chat's turns (#1145), for its pill, `@` roster and profile; nil otherwise.
+    var hermesBotChat: HermesChatTurnCoordinator? { hermesTurn?.policy == .botChat ? hermesTurn : nil }
+    /// The bot's chat a deep link named was replaced by a newer one (#554).
+    var hermesChatWasReplaced: Bool { hermesTurn?.engine.linkedRootIsStale == true }
+
+    /// The effort chip's level: a Hermes session's `session.info` effort (#1016), else webui's.
+    var composerReasoningEffort: String? {
+        hermesSettings.map { $0.controls.effort } ?? selectedReasoningEffort
+    }
+
+    /// The effort ladder: a Hermes host's for the live model (#1016), else webui's vocabulary.
+    var composerSupportedReasoningEfforts: [String]? {
+        hermesSettings?.effortLevels ?? supportedReasoningEfforts
+    }
+
+    /// The level a Hermes host sends when the model takes less than the one picked (#1016).
+    var composerSentReasoningEffort: String? { hermesSettings?.sentEffort }
+
+    /// A Hermes session's Fast mode (#1142); nil hides the chip, as on a webui session.
+    var composerFastMode: Bool? { hermesSettings?.fast }
+
+    /// Whether that Fast mode can change now (#1142).
+    var composerMayChangeFastMode: Bool { hermesSettings?.mayChangeFast == true }
+
+    /// Turns a Hermes session's Fast mode on or off for this chat (#1142); false when it
+    /// can't go now or the host refused it.
+    func selectFastMode(_ enabled: Bool) async -> Bool {
+        await hermesSettings?.select(fast: enabled) ?? false
+    }
+
+    /// The chat's workspace: a Hermes session's working folder as its host reports it (#1117).
+    var selectedWorkspacePath: String? {
+        hermesTurn.map(\.cwd) ?? currentWorkspace
+    }
+
+    var selectedProfileTitle: String {
+        let profileName = selectedProfileName ?? currentProfile
+        guard let profileName, !profileName.isEmpty else {
+            return String(localized: "Profile")
+        }
+
+        if let option = composerProfileOptions.first(where: { $0.name == profileName }) {
+            return option.displayName
+        }
+
+        return profileName == "default" ? String(localized: "Default") : profileName
+    }
+
+    var selectedModelTitle: String {
+        guard let model = selectedModelID, !model.isEmpty else {
+            return String(localized: "Model")
+        }
+
+        let catalogName = composerModelGroups
+            .flatMap(\.allModels)
+            .firstMatchingSelection(modelID: selectedModelID, providerID: selectedModelProviderID)?
+            .displayName
+
+        return catalogName ?? Self.compactModelTitle(model)
+    }
+
+    func isSelectedProfile(_ profile: ProfileSummary) -> Bool {
+        guard let profileName = profile.normalizedName else { return false }
+        return profileName == (Self.nonEmpty(selectedProfileName) ?? Self.nonEmpty(currentProfile))
+    }
+
+    private func scheduleStreamingScrollTrigger() {
+        guard pendingStreamingScrollTriggerTask == nil else { return }
+
+        let expectedSessionID = sessionID
+        let delay = streamingScrollCoalescingDelayNanoseconds
+        pendingStreamingScrollTriggerTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self else { return }
+
+            self.pendingStreamingScrollTriggerTask = nil
+            guard !Task.isCancelled, self.sessionID == expectedSessionID else { return }
+
+            self.streamingScrollTrigger += 1
+        }
+    }
+
+    private func cancelPendingStreamingScrollTrigger() {
+        pendingStreamingScrollTriggerTask?.cancel()
+        pendingStreamingScrollTriggerTask = nil
+    }
+
+    private func scheduleStreamingContentFlush() {
+        guard pendingStreamingContentFlushTask == nil else { return }
+
+        let expectedSessionID = sessionID
+        let tick = streamingRevealTick
+        pendingStreamingContentFlushTask = Task { @MainActor [weak self] in
+            try? await tick()
+            // A cancelled tick was already replaced or flushed; it must not clear
+            // the task slot a newer tick owns.
+            guard let self, !Task.isCancelled else { return }
+
+            self.pendingStreamingContentFlushTask = nil
+            guard self.sessionID == expectedSessionID else { return }
+
+            self.revealStreamingContentTick()
+        }
+    }
+
+    /// One reveal tick: shows buffered assistant text through `StreamingRevealGate`
+    /// and all buffered reasoning, then reschedules only while a fragment is held.
+    /// Completion paths (done/cancel/error/interim/snapshot) skip the gate via
+    /// `flushPendingStreamingContent()`, which cancels any scheduled tick.
+    private func revealStreamingContentTick() {
+        var didMutate = false
+        if flushAssistantTokens(throughRevealGate: true) {
+            didMutate = true
+        }
+        if flushReasoningChunks() {
+            didMutate = true
+        }
+
+        if didMutate {
+            scheduleStreamingScrollTrigger()
+        }
+
+        if heldStreamingFragmentLastTick {
+            scheduleStreamingContentFlush()
+        }
+    }
+
+    private func cancelPendingStreamingContentFlush() {
+        pendingStreamingContentFlushTask?.cancel()
+        pendingStreamingContentFlushTask = nil
+    }
+
+    private func resetPendingStreamingContentBuffers() {
+        cancelPendingStreamingContentFlush()
+        pendingAssistantText = ""
+        heldStreamingFragmentLastTick = false
+        pendingReasoningChunks = []
+        // Chunks are deduplicated at append time, so the replay matched-prefix
+        // counters can reference unflushed content; dropping the buffers makes them
+        // stale. Reset only the counters — the replay connection may still be live
+        // (e.g. loadOlderMessages pagination mid-catch-up), so dedup must stay armed.
+        activeStreamReplayMatchedPrefixLength = 0
+        activeStreamReplayMatchedReasoningLength = 0
+    }
+
+    func flushPendingStreamingContent() {
+        let signpost = performanceSignposter.beginInterval("Stream Batch Apply")
+        cancelPendingStreamingContentFlush()
+
+        var didMutate = false
+        if flushAssistantTokens() {
+            didMutate = true
+        }
+        if flushReasoningChunks() {
+            didMutate = true
+        }
+
+        if didMutate {
+            scheduleStreamingScrollTrigger()
+        }
+        performanceSignposter.endInterval("Stream Batch Apply", signpost, "mutated=\(didMutate ? 1 : 0, privacy: .public)")
+    }
+
+    private var requestProfileName: String? {
+        Self.nonEmpty(selectedProfileName) ?? Self.nonEmpty(currentProfile)
+    }
+
+    private var requestModelProvider: String? {
+        Self.nonEmpty(currentModelProvider)
+    }
+
+    private func explicitModelPickForChatStart() -> Bool {
+        pendingExplicitModelPick && Self.nonEmpty(currentModel) != nil
+    }
+
+    private func completeExplicitModelPickForChatStart(_ explicitModelPick: Bool) {
+        if explicitModelPick {
+            pendingExplicitModelPick = false
+        }
+    }
+
+    func loadComposerConfiguration() async {
+        // A Hermes session's chips read its gateway (`HermesChatSettings`), never webui's routes.
+        guard hermesTurn == nil else { return }
+        if isLoadingComposerConfiguration {
+            needsComposerConfigurationReload = true
+            return
+        }
+
+        isLoadingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        lastError = nil
+        defer { isLoadingComposerConfiguration = false }
+
+        repeat {
+            needsComposerConfigurationReload = false
+
+            let initialState = composerConfigurationState
+            let result = await ChatComposerConfigLoader(client: client)
+                .loadConfiguration(from: initialState)
+
+            guard composerConfigurationState == initialState else {
+                needsComposerConfigurationReload = true
+                continue
+            }
+
+            applyComposerConfigurationState(result.state)
+
+            if let error = result.configurationError {
+                lastError = error
+                composerConfigurationErrorMessage = error.localizedDescription
+            }
+        } while needsComposerConfigurationReload
+    }
+
+    /// Refreshes the model catalog when a picker opens: refetch `/api/models`
+    /// (so the sheet stops pinning the chat-load-time snapshot), then overlay
+    /// the active provider's live list from `/api/models/live`. Failures are
+    /// silent by design — the picker keeps whatever it already shows.
+    func refreshModelCatalogForPickerOpen() async {
+        if let hermesSettings {
+            await hermesSettings.controls.reload()
+            return
+        }
+        if let response = try? await client.models() {
+            let groups = response.catalogGroups
+            if !groups.isEmpty {
+                modelCatalogGroups = groups
+            }
+        }
+
+        if let live = try? await client.modelsLive() {
+            modelCatalogGroups = modelCatalogGroups.mergingLiveModels(from: live)
+        }
+    }
+
+    private var composerConfigurationState: ChatComposerConfigState {
+        ChatComposerConfigState(
+            currentWorkspace: currentWorkspace,
+            currentModel: currentModel,
+            currentModelProvider: currentModelProvider,
+            currentProfile: currentProfile,
+            selectedProfileName: selectedProfileName,
+            selectedReasoningEffort: selectedReasoningEffort,
+            supportedReasoningEfforts: supportedReasoningEfforts,
+            supportsReasoningEffort: supportsReasoningEffort,
+            modelCatalogGroups: modelCatalogGroups,
+            agentCommands: agentCommands,
+            workspaceRoots: workspaceRoots,
+            workspaceSuggestions: workspaceSuggestions,
+            profileOptions: profileOptions,
+            isSingleProfileMode: isSingleProfileMode
+        )
+    }
+
+    private func applyComposerConfigurationState(_ state: ChatComposerConfigState) {
+        currentWorkspace = state.currentWorkspace
+        currentModel = state.currentModel
+        currentModelProvider = state.currentModelProvider
+        currentProfile = state.currentProfile
+        selectedProfileName = state.selectedProfileName
+        selectedReasoningEffort = state.selectedReasoningEffort
+        supportedReasoningEfforts = state.supportedReasoningEfforts
+        supportsReasoningEffort = state.supportsReasoningEffort
+        modelCatalogGroups = state.modelCatalogGroups
+        agentCommands = state.agentCommands
+        workspaceRoots = state.workspaceRoots
+        workspaceSuggestions = state.workspaceSuggestions
+        profileOptions = state.profileOptions
+        isSingleProfileMode = state.isSingleProfileMode
+    }
+
+    func refreshApprovalBypassState() async {
+        await pendingActionCoordinator.refreshApprovalBypassState()
+    }
+
+    @discardableResult
+    func selectComposerModel(
+        _ option: ModelCatalogOption,
+        recordsInteraction: Bool = true
+    ) async -> Bool {
+        if recordsInteraction {
+            composerConfigurationInteractionGeneration &+= 1
+        }
+        if let hermesSettings {
+            return await hermesSettings.select(option)
+        }
+        guard !option.matchesSelection(modelID: currentModel, providerID: currentModelProvider) else {
+            return false
+        }
+
+        guard !isViewingCachedData else {
+            composerConfigurationErrorMessage = String(localized: "Reconnect to the server to change models.")
+            return false
+        }
+
+        guard activeStreamID == nil else {
+            composerConfigurationErrorMessage = String(localized: "Wait for the current response to finish before changing models.")
+            return false
+        }
+
+        guard let sessionID else {
+            composerConfigurationErrorMessage = String(localized: "The server did not provide a session ID.")
+            return false
+        }
+
+        isUpdatingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        lastError = nil
+        defer { isUpdatingComposerConfiguration = false }
+
+        do {
+            let response = try await client.updateSession(
+                id: sessionID,
+                workspace: currentWorkspace,
+                model: option.id,
+                modelProvider: option.providerID
+            )
+
+            currentModel = response.session?.model ?? option.id
+            currentModelProvider = response.session?.modelProvider ?? option.providerID
+            currentWorkspace = response.session?.workspace ?? currentWorkspace
+            pendingExplicitModelPick = true
+            // Still inside the isUpdatingComposerConfiguration window, so the
+            // effort menu stays disabled until the new model's gating lands —
+            // no interactable flash of the previous model's options (issue #18).
+            await refreshReasoningEffortGating()
+            return true
+        } catch {
+            lastError = error
+            composerConfigurationErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Re-queries `GET /api/reasoning` for the current model/provider and updates
+    /// the effort gating (issue #18). Failures are silent to the user, but reset
+    /// the gating to the "unknown" fallback (static effort list, control shown) —
+    /// keeping the previous model's gating after a successful model switch could
+    /// hide the control for a model that supports it, or offer efforts the new
+    /// model rejects. If the selected effort is no longer supported, snaps to the
+    /// server's coerced `reasoning_effort`.
+    func refreshReasoningEffortGating() async {
+        guard !isViewingCachedData else { return }
+
+        reasoningGatingFetchToken += 1
+        let token = reasoningGatingFetchToken
+
+        guard let response = try? await client.reasoning(
+            model: Self.nonEmpty(currentModel),
+            provider: Self.nonEmpty(currentModelProvider)
+        ) else {
+            if token == reasoningGatingFetchToken {
+                supportedReasoningEfforts = nil
+                supportsReasoningEffort = nil
+            }
+            return
+        }
+
+        guard token == reasoningGatingFetchToken else { return }
+
+        supportedReasoningEfforts = response.normalizedSupportedEfforts
+        supportsReasoningEffort = response.supportsReasoningEffort
+
+        if let selected = Self.nonEmpty(selectedReasoningEffort)?.lowercased(),
+           let supported = supportedReasoningEfforts,
+           !supported.contains(selected),
+           let serverEffort = Self.nonEmpty(response.effectiveEffort) {
+            selectedReasoningEffort = serverEffort
+        }
+    }
+
+    /// Refetches the workspace registry after the manager sheet mutated it
+    /// (issue #22), so the picker reflects adds/removes/renames/reorders.
+    func refreshWorkspaceRoots() async {
+        guard !isViewingCachedData else { return }
+
+        do {
+            let response = try await client.workspaces()
+            workspaceRoots = response.workspaces ?? []
+            workspaceSuggestions = workspaceRoots.compactMap(\.path)
+        } catch {
+            lastError = error
+        }
+    }
+
+    func loadWorkspaceSuggestions(prefix: String) async {
+        if let hermesTurn, !isViewingCachedData {
+            await loadHermesFolderSuggestions(prefix: prefix, on: hermesTurn)
+            return
+        }
+        guard !isViewingCachedData else {
+            workspaceSuggestions = workspaceRoots.compactMap(\.path)
+            return
+        }
+
+        do {
+            let response = try await client.workspaceSuggestions(prefix: prefix)
+            workspaceSuggestions = response.suggestions ?? []
+        } catch {
+            lastError = error
+            composerConfigurationErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// Loads the personality list once, sharing a single request between
+    /// callers.
+    ///
+    /// Same shape as `loadSkillSlashSuggestions()` and for the same reason: the
+    /// request lives on a task this view model owns, so a cancelled caller
+    /// cannot take the fetch down with it, and a caller arriving mid-flight
+    /// waits for that same result instead of racing past an "already loading"
+    /// flag and finding an empty list. A failed load clears the handle, so the
+    /// next caller retries.
+    func loadPersonalitySuggestions() async {
+        guard !hasLoadedPersonalitySuggestions else { return }
+        // A Hermes host lists its own (#1016), here for the `/personality ` panel (#1036).
+        if let hermesSettings {
+            guard let personalities = try? await hermesSettings.personalities() else { return }
+            personalitySuggestions = ["none"] + personalities.map(\.name)
+            hasLoadedPersonalitySuggestions = true
+            return
+        }
+
+        let load: Task<Void, Never>
+        if let existing = personalitySuggestionsLoad {
+            load = existing
+        } else {
+            load = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    self.personalitySuggestions = (try await self.client.personalities()).slashAutocompleteNames
+                    self.hasLoadedPersonalitySuggestions = true
+                } catch {
+                    self.lastError = error
+                    self.composerConfigurationErrorMessage = error.localizedDescription
+                    if self.personalitySuggestions.isEmpty {
+                        self.personalitySuggestions = ["none"]
+                    }
+                }
+                self.personalitySuggestionsLoad = nil
+            }
+            personalitySuggestionsLoad = load
+        }
+
+        await load.value
+    }
+
+    /// Loads the skill list once, sharing a single request between callers.
+    ///
+    /// The composer asks for this from two `.task` modifiers — the chip warm-up
+    /// for a restored draft and the autocomplete panel — and either can be
+    /// cancelled by an unrelated view update. So the request lives on a task
+    /// this view model owns: a cancelled caller cannot take the fetch down with
+    /// it, and a caller arriving mid-flight waits for that same result instead
+    /// of racing past an "already loading" flag and finding an empty list. A
+    /// failed load clears the handle, so the next caller retries.
+    func loadSkillSlashSuggestions() async {
+        guard hermesTurn == nil, !hasLoadedSkillSlashSuggestions else { return }
+
+        let load: Task<Void, Never>
+        if let existing = skillSlashSuggestionsLoad {
+            load = existing
+        } else {
+            load = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let response = try await self.client.skills()
+                    self.applySkillSlashSuggestions(
+                        SlashSkillFormatter.suggestions(from: response.skills ?? [])
+                    )
+                    self.hasLoadedSkillSlashSuggestions = true
+                } catch {
+                    self.lastError = error
+                }
+                self.skillSlashSuggestionsLoad = nil
+            }
+            skillSlashSuggestionsLoad = load
+        }
+
+        await load.value
+    }
+
+    @discardableResult
+    func selectWorkspacePath(
+        _ path: String,
+        recordsInteraction: Bool = true
+    ) async -> Bool {
+        if recordsInteraction {
+            composerConfigurationInteractionGeneration &+= 1
+        }
+        if hermesTurn != nil { return await selectHermesFolder(path) }
+        let workspace = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workspace.isEmpty else { return false }
+
+        guard workspace != currentWorkspace else {
+            return false
+        }
+
+        guard !isViewingCachedData else {
+            composerConfigurationErrorMessage = String(localized: "Reconnect to the server to change workspace.")
+            return false
+        }
+
+        guard activeStreamID == nil else {
+            composerConfigurationErrorMessage = String(localized: "Wait for the current response to finish before changing workspace.")
+            return false
+        }
+
+        guard let sessionID else {
+            composerConfigurationErrorMessage = String(localized: "The server did not provide a session ID.")
+            return false
+        }
+
+        let previousWorkspace = currentWorkspace
+        currentWorkspace = workspace
+        isUpdatingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        lastError = nil
+        defer { isUpdatingComposerConfiguration = false }
+
+        do {
+            let response = try await client.updateSession(
+                id: sessionID,
+                workspace: workspace,
+                model: currentModel,
+                modelProvider: currentModelProvider
+            )
+
+            currentWorkspace = response.session?.workspace ?? workspace
+            currentModel = response.session?.model ?? currentModel
+            currentModelProvider = response.session?.modelProvider ?? currentModelProvider
+            return true
+        } catch {
+            currentWorkspace = previousWorkspace
+            lastError = error
+            composerConfigurationErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    // MARK: Hermes working folder (#1117)
+
+    /// A folder picked in a Hermes chat that has run, waiting for the user to confirm the move.
+    private(set) var pendingHermesFolder: String?
+    /// The folder picker's untyped list for a Hermes chat, kept while the user types a filter;
+    /// nil until a read for the open picker finishes.
+    @ObservationIgnored private var hermesFolderChoices: [String]?
+
+    /// A Hermes chat's folder pick: a new chat nothing ran in moves at once; any other asks first
+    /// (`pendingHermesFolder`), since the work so far stays in the old folder.
+    private func selectHermesFolder(_ path: String) async -> Bool {
+        var folder = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        while folder.count > 1, folder.hasSuffix("/") { folder.removeLast() }
+        guard let hermesTurn, !folder.isEmpty, folder != hermesTurn.cwd, canChangeHermesFolder() else { return false }
+        guard hermesTurn.isUnstarted else {
+            pendingHermesFolder = folder
+            return false
+        }
+        return await moveHermesFolder(folder, on: hermesTurn)
+    }
+
+    func cancelHermesFolderMove() { pendingHermesFolder = nil }
+
+    /// Moves a Hermes chat to the `folder` the user confirmed; false when it didn't move.
+    func confirmHermesFolderMove(_ folder: String) async -> Bool {
+        pendingHermesFolder = nil
+        guard let hermesTurn, canChangeHermesFolder() else { return false }
+        return await moveHermesFolder(folder, on: hermesTurn)
+    }
+
+    /// The client refuses a folder change while a reply runs, though the host would take it.
+    private func canChangeHermesFolder() -> Bool {
+        if isViewingCachedData {
+            composerConfigurationErrorMessage = String(localized: "Reconnect to the server to change workspace.")
+            return false
+        }
+        if activeStreamID != nil {
+            composerConfigurationErrorMessage = Self.waitToChangeWorkspace
+            return false
+        }
+        return true
+    }
+
+    private static var waitToChangeWorkspace: String {
+        String(localized: "Wait for the current response to finish before changing workspace.")
+    }
+
+    private func moveHermesFolder(_ folder: String, on hermes: HermesChatTurnCoordinator) async -> Bool {
+        isUpdatingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        defer { isUpdatingComposerConfiguration = false }
+        do {
+            try await hermes.moveFolder(to: folder)
+            return true
+        } catch BotSettingFailure.rejected(4017, _) {
+            composerConfigurationErrorMessage = String(localized: "Hermes can't find the folder \(folder), so the session didn't move.")
+        } catch is HermesChatTurnCoordinator.ReplyRunning {
+            composerConfigurationErrorMessage = Self.waitToChangeWorkspace
+        } catch {
+            composerConfigurationErrorMessage = error.localizedDescription
+        }
+        return false
+    }
+
+    /// The folder picker's list for a Hermes chat: a typed path completes from the host's
+    /// folders; anything else filters the untyped list, read again each time the picker opens.
+    /// A filter typed before that read finishes cancels it, so the filter reads the list itself.
+    private func loadHermesFolderSuggestions(prefix: String, on hermes: HermesChatTurnCoordinator) async {
+        let typed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        if HermesFolderCompletion.completes(typed) {
+            let folders = await hermes.completeFolder(typed)
+            guard !Task.isCancelled else { return }
+            workspaceSuggestions = folders
+            return
+        }
+        if typed.isEmpty { hermesFolderChoices = nil }
+        let choices: [String]
+        if let hermesFolderChoices {
+            choices = hermesFolderChoices
+        } else {
+            choices = await hermes.folderChoices()
+            guard !Task.isCancelled else { return }
+            hermesFolderChoices = choices
+        }
+        workspaceSuggestions = typed.isEmpty ? choices : choices.filter { $0.localizedCaseInsensitiveContains(typed) }
+    }
+
+    func switchProfile(
+        _ profile: ProfileSummary,
+        startNewSession: Bool,
+        recordsInteraction: Bool = true
+    ) async -> ProfileSwitchOutcome? {
+        if recordsInteraction {
+            composerConfigurationInteractionGeneration &+= 1
+        }
+        guard !isViewingCachedData else {
+            composerConfigurationErrorMessage = String(localized: "Reconnect to the server to change profiles.")
+            return nil
+        }
+
+        guard activeStreamID == nil else {
+            composerConfigurationErrorMessage = String(localized: "Wait for the current response to finish before changing profiles.")
+            return nil
+        }
+
+        guard let profileName = profile.normalizedName else {
+            composerConfigurationErrorMessage = String(localized: "The server did not provide a profile name.")
+            return nil
+        }
+
+        if !startNewSession, isSelectedProfile(profile) {
+            return nil
+        }
+
+        isUpdatingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        lastError = nil
+        defer { isUpdatingComposerConfiguration = false }
+
+        do {
+            let response = try await client.switchProfile(name: profileName)
+            profileOptions = response.profiles ?? profileOptions
+            selectedProfileName = response.active ?? profileName
+            currentProfile = selectedProfileName
+
+            if let defaultWorkspace = response.defaultWorkspace, !defaultWorkspace.isEmpty {
+                currentWorkspace = defaultWorkspace
+            }
+
+            if let defaultModel = response.defaultModel, !defaultModel.isEmpty {
+                currentModel = defaultModel
+                currentModelProvider = Self.nonEmpty(profile.provider)
+            }
+            pendingExplicitModelPick = false
+
+            await loadComposerConfiguration()
+
+            guard startNewSession else {
+                return ProfileSwitchOutcome(session: nil)
+            }
+
+            let newSessionResponse = try await client.createSession(
+                workspace: currentWorkspace,
+                model: currentModel,
+                modelProvider: requestModelProvider,
+                profile: requestProfileName
+            )
+
+            guard let session = newSessionResponse.session else {
+                composerConfigurationErrorMessage = String(localized: "The server did not return the new profile session.")
+                return nil
+            }
+
+            return ProfileSwitchOutcome(session: SessionSummary(from: session))
+        } catch {
+            lastError = error
+            composerConfigurationErrorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    func selectReasoningEffort(
+        _ effort: String,
+        recordsInteraction: Bool = true
+    ) async -> Bool {
+        if recordsInteraction {
+            composerConfigurationInteractionGeneration &+= 1
+        }
+        let selectedEffort = effort.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selectedEffort.isEmpty else { return false }
+
+        // A Hermes session sends it for this chat alone (#1016).
+        if let hermesSettings {
+            guard selectedEffort != hermesSettings.controls.effort else { return false }
+            return await hermesSettings.select(effort: selectedEffort)
+        }
+
+        guard selectedEffort != selectedReasoningEffort else {
+            return false
+        }
+
+        guard !isViewingCachedData else {
+            composerConfigurationErrorMessage = String(localized: "Reconnect to the server to change reasoning.")
+            return false
+        }
+
+        guard activeStreamID == nil else {
+            composerConfigurationErrorMessage = String(localized: "Wait for the current response to finish before changing reasoning.")
+            return false
+        }
+
+        guard let sessionID = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionID.isEmpty else {
+            composerConfigurationErrorMessage = String(localized: "The server did not provide a session ID.")
+            return false
+        }
+
+        isUpdatingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        lastError = nil
+        defer { isUpdatingComposerConfiguration = false }
+
+        do {
+            let response = try await client.saveReasoningEffort(
+                selectedEffort,
+                sessionID: sessionID
+            )
+            selectedReasoningEffort = response.effectiveEffort ?? selectedEffort
+            return true
+        } catch {
+            lastError = error
+            composerConfigurationErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Restores one new-chat settings snapshot only while the configuration
+    /// remains untouched. Profile owns the defaults for the remaining fields,
+    /// so a missing or rejected profile stops the whole replay rather than
+    /// projecting its model/workspace/reasoning choices onto another profile.
+    func restoreDraftSettings(
+        _ rawSettings: ChatDraftSettings,
+        expectedInteractionGeneration: Int
+    ) async {
+        guard canContinueDraftSettingsRestore(expectedInteractionGeneration) else { return }
+        guard messages.isEmpty, activeStreamID == nil else { return }
+        let settings = rawSettings.normalized()
+
+        if let profileName = settings.profileName {
+            guard let option = profileOptions.first(where: { $0.normalizedName == profileName }) else {
+                return
+            }
+            if !isSelectedProfile(option) {
+                let outcome = await switchProfile(
+                    option,
+                    startNewSession: false,
+                    recordsInteraction: false
+                )
+                guard outcome != nil,
+                      canContinueDraftSettingsRestore(expectedInteractionGeneration),
+                      isSelectedProfile(option) else {
+                    return
+                }
+            }
+        }
+
+        guard canContinueDraftSettingsRestore(expectedInteractionGeneration) else { return }
+        if let modelID = settings.modelID,
+           let option = modelCatalogGroups
+               .flatMap(\.allModels)
+               .firstMatchingSelection(modelID: modelID, providerID: settings.modelProviderID),
+           !option.matchesSelection(modelID: currentModel, providerID: currentModelProvider) {
+            _ = await selectComposerModel(option, recordsInteraction: false)
+            guard canContinueDraftSettingsRestore(expectedInteractionGeneration) else { return }
+        }
+
+        if let workspace = settings.workspacePath,
+           workspace != currentWorkspace,
+           workspaceRoots.contains(where: { $0.path == workspace }) {
+            _ = await selectWorkspacePath(workspace, recordsInteraction: false)
+            guard canContinueDraftSettingsRestore(expectedInteractionGeneration) else { return }
+        }
+
+        if let effort = settings.reasoningEffort,
+           effort != selectedReasoningEffort,
+           showsReasoningEffortControl {
+            let supportedEfforts = supportedReasoningEfforts
+            if supportedEfforts == nil || supportedEfforts?.contains(effort.lowercased()) == true {
+                _ = await selectReasoningEffort(effort, recordsInteraction: false)
+            }
+        }
+    }
+
+    func markComposerConfigurationInteraction() {
+        composerConfigurationInteractionGeneration &+= 1
+    }
+
+    private func canContinueDraftSettingsRestore(_ expectedInteractionGeneration: Int) -> Bool {
+        !Task.isCancelled
+            && composerConfigurationInteractionGeneration == expectedInteractionGeneration
+    }
+
+    /// Saves and uploads a freshly staged file into the pending strip. Returns
+    /// nil unless both the durable draft copy and server upload succeed. A Hermes
+    /// session only saves the copy; its Send or Queue uploads it (#1012).
+    @discardableResult
+    func uploadAttachment(data: Data, filename: String, previewData: Data? = nil) async -> PendingAttachment? {
+        await attachmentCoordinator.uploadAttachment(
+            data: data,
+            filename: filename,
+            previewData: previewData
+        )
+    }
+
+    /// Re-uploads a restored draft attachment from its durable local copy,
+    /// preserving the draft record's identity. Quiet on failure (returns nil):
+    /// the caller reports in aggregate and keeps the record for a later retry.
+    @discardableResult
+    func reuploadDraftAttachment(_ draftAttachment: ChatDraftAttachment, data: Data) async -> PendingAttachment? {
+        await attachmentCoordinator.reuploadDraftAttachment(data: data, draftAttachment: draftAttachment)
+    }
+
+    func clearPendingAttachments() {
+        attachmentCoordinator.clearPendingAttachments()
+    }
+
+    func protectDraftAttachments(for key: ChatDraftKey, restoring records: [ChatDraftAttachment] = []) {
+        attachmentCoordinator.protectDraft(key)
+        attachmentCoordinator.protectRestoringAttachments(records)
+    }
+
+    func deleteDraftAttachmentCopy(named file: String, attachmentID: UUID) async {
+        await attachmentCoordinator.deleteDraftCopy(named: file, attachmentID: attachmentID)
+    }
+
+    func removePendingAttachment(id: UUID) {
+        attachmentCoordinator.removePendingAttachment(id: id)
+    }
+
+    /// Stages files after the composer's own, such as the files of queued
+    /// messages parked back into the draft.
+    func appendPendingAttachments(_ attachments: [PendingAttachment]) {
+        attachmentCoordinator.appendPendingAttachments(attachments)
+    }
+
+    func setUploadAttachmentError(_ message: String?) {
+        attachmentCoordinator.setUploadAttachmentError(message)
+    }
+
+    /// A sent attachment's thumbnail bytes: a Hermes session downloads from its host
+    /// (#1030), a webui chat through the server's file API. Nil when it can't load.
+    func attachmentImageData(path: String) async -> Data? {
+        guard let hermesTurn else { return await attachmentCoordinator.attachmentImageData(path: path) }
+        guard let data = try? await hermesTurn.attachmentData(path: path) else { return nil }
+        return await ImagePreviewDownsampler.previewDataAsync(
+            from: data,
+            maxPixelSize: ImagePreviewDownsampler.attachmentMaxPixelSize
+        ) ?? data
+    }
+
+    /// A Hermes session's sent file in full, for its preview (#1030). Throws `.stale` on a
+    /// webui chat, which previews through `ChatAttachmentPreviewView` instead.
+    func hermesAttachmentData(path: String) async throws -> Data {
+        guard let hermesTurn else { throw BotFailure.stale }
+        return try await hermesTurn.attachmentData(path: path)
+    }
+
+    /// The thumbnail cache namespace of a Hermes session; nil on a webui chat.
+    var hermesAttachmentCacheNamespace: String? { hermesTurn?.attachmentCacheNamespace }
+
+    /// A Hermes session's working folder (#1112); nil on a webui chat, and until `session.info`
+    /// names it.
+    var hermesWorkspace: HermesWorkspaceContext? { hermesTurn?.workspace }
+
+    /// The files of `hermesWorkspace`, on the session's connection.
+    var hermesWorkspaceFiles: HermesWorkspaceFileClient? { hermesTurn?.workspaceFiles }
+
+    /// The repository holding `hermesWorkspace` (#1114), on the session's connection. Each read is a
+    /// new client, which resolves its root once, so keep one per folder. Its writes stop while a
+    /// turn runs or this chat shows cached data (#1115).
+    var hermesWorkspaceGit: HermesGitClient? {
+        hermesTurn?.workspaceGit { [weak self] in self?.isViewingCachedData ?? true }
+    }
+
+    /// A sent attachment's original bytes for its inline audio player: a Hermes session downloads
+    /// from its host under the preview cap (#1143), a webui chat through the server's file API.
+    /// Nil when it can't load, including on a detached Hermes chat, which the player avoids by
+    /// waiting on `attachmentLoadKey`.
+    func attachmentRawData(path: String) async -> Data? {
+        guard let hermesTurn else { return await attachmentCoordinator.attachmentRawData(path: path) }
+        return try? await hermesTurn.attachmentData(path: path)
+    }
+
+    /// When `attachmentRawData` can load: a Hermes chat's current attach, nil while detached; a
+    /// constant on webui. The inline audio player's `loadKey`.
+    var attachmentLoadKey: Int? {
+        guard let hermesTurn else { return 0 }
+        return hermesTurn.attachmentLoadKey
+    }
+
+    /// A transcript MEDIA image's inline thumbnail: a Hermes session's from its host (#1112), a
+    /// webui chat's through `/api/media`. Nil when it can't load.
+    func transcriptMediaThumbnailData(for reference: TranscriptMediaReference) async -> Data? {
+        guard let hermesTurn else { return await attachmentCoordinator.transcriptMediaThumbnailData(for: reference) }
+        guard reference.isRasterImageCandidate,
+              let data = await hermesTranscriptMediaData(for: reference, from: hermesTurn, whole: false) else { return nil }
+        return await ImagePreviewDownsampler.previewDataAsync(
+            from: data,
+            maxPixelSize: ImagePreviewDownsampler.attachmentMaxPixelSize
+        ) ?? data
+    }
+
+    /// A transcript MEDIA reference's bytes for inline audio and file export. A Hermes session
+    /// downloads a local path from its host as it does a sent file (#1112), which resolves it
+    /// against the session, in full as webui's `/api/media` does; a remote URL loads as on webui.
+    /// Nil when it can't load.
+    func transcriptMediaData(for reference: TranscriptMediaReference) async -> Data? {
+        guard let hermesTurn else { return await attachmentCoordinator.transcriptMediaData(for: reference) }
+        return await hermesTranscriptMediaData(for: reference, from: hermesTurn, whole: true)
+    }
+
+    private func hermesTranscriptMediaData(for reference: TranscriptMediaReference, from turn: HermesChatTurnCoordinator,
+                                           whole: Bool) async -> Data? {
+        switch reference.source {
+        case let .localPath(path): return try? await turn.attachmentData(path: path, whole: whole)
+        case let .remoteURL(url): return try? await client.remoteTranscriptMediaData(from: url)
+        }
+    }
+
+    /// Reloads the newest transcript window from the server. `usesInitialPrefetch`
+    /// is for the chat's first load only: it takes over the request
+    /// `prepareInitialMessageLoad` already sent instead of sending another.
+    func loadMessages(modelContext: ModelContext? = nil, usesInitialPrefetch: Bool = false) async {
+        if let hermesTurn {
+            if let modelContext { hermesCache = modelContext }
+            // For an open that skipped `prepareInitialMessageLoad`.
+            showCachedHermesTranscriptBeforeAttach(hermesTurn)
+            await loadHermesSession(hermesTurn)
+            return
+        }
+        guard let sessionID else {
+            errorMessage = String(localized: "The server did not provide a session ID.")
+            return
+        }
+
+        let prefetchedSession = takeInitialSessionPrefetch(usable: usesInitialPrefetch)
+
+        resetPendingStreamingContentBuffers()
+        latestServerLoadHadAssistantResponseAfterLatestUser = false
+        let streamLoadPreparation = streamCoordinator.prepareForSessionLoad()
+        isLoading = true
+        errorMessage = nil
+        cacheErrorMessage = nil
+        lastError = nil
+        defer { isLoading = false }
+
+        // Cache-first render (#289): capture the pre-reload window *before* painting
+        // any cached transcript, so the network reconcile below replaces it cleanly
+        // (no merge, no duplication). Then, on a cold open with a populated cache,
+        // render the cached messages immediately so the loading skeleton never shows.
+        let previousMessages = messages
+        let previousMessagesOffset = messagesOffset
+        let usesPrimedInitialCache = hasPrimedInitialCachedMessages && !previousMessages.isEmpty
+        hasPrimedInitialCachedMessages = false
+        let cacheFirstPlaceholder: [ChatMessage]
+        if previousMessages.isEmpty, let modelContext {
+            cacheFirstPlaceholder = renderCachedMessagesBeforeReload(
+                sessionID: sessionID,
+                modelContext: modelContext
+            )
+        } else if usesPrimedInitialCache {
+            cacheFirstPlaceholder = previousMessages
+        } else {
+            cacheFirstPlaceholder = []
+        }
+        let renderedCacheFirst = !cacheFirstPlaceholder.isEmpty
+
+        do {
+            let response: SessionResponse
+            if let prefetchedSession {
+                // The prefetch is unstructured, so forward this load's cancellation to it.
+                response = try await withTaskCancellationHandler {
+                    try await prefetchedSession.value.session
+                } onCancel: {
+                    prefetchedSession.cancel()
+                }
+            } else {
+                response = try await Self.requestNewestTranscriptWindow(client: client, sessionID: sessionID)
+            }
+            let session = response.session
+            let loadedMessages = session?.messages ?? []
+            let loadedActiveStreamID = session?.activeStreamId?.trimmingCharacters(in: .whitespacesAndNewlines)
+            var reloadedMessages = loadedMessages
+            if let modelContext {
+                do {
+                    let cachedMessages = try CacheStore.cachedMessages(
+                        serverURL: server,
+                        sessionID: sessionID,
+                        in: modelContext,
+                        limit: Self.messagePageLimit
+                    )
+                    reloadedMessages = Self.mergingLoadedMessages(
+                        loadedMessages,
+                        withLocalOptimisticMessages: cachedMessages
+                    )
+                } catch {
+                    cacheErrorMessage = error.localizedDescription
+                }
+            }
+            if streamCoordinator.shouldPreserveLocalOptimisticMessages(
+                for: streamLoadPreparation,
+                loadedActiveStreamID: loadedActiveStreamID
+            ) {
+                reloadedMessages = Self.mergingLoadedMessages(
+                    reloadedMessages,
+                    withLocalOptimisticMessages: previousMessages,
+                    knownMessageIDsBeforeLoad: Set(previousMessages.compactMap(\.messageId))
+                )
+            }
+            applyCompressionAnchorMetadata(from: session)
+            applyReloadedMessages(
+                reloadedMessages,
+                from: session,
+                previousMessages: previousMessages,
+                previousMessagesOffset: previousMessagesOffset
+            )
+            if renderedCacheFirst {
+                // The taller server transcript has now replaced the lighter cache-first
+                // render; signal the view to re-pin to the bottom without a visible jump.
+                transcriptRelayoutScrollToken += 1
+            }
+            latestServerLoadHadAssistantResponseAfterLatestUser = Self.hasAssistantResponseAfterLatestUser(
+                in: messages
+            )
+            responseCompletionNeedsTranscriptRefresh = false
+            isViewingCachedData = false
+            contextWindowSnapshot = ContextWindowSnapshot(
+                contextLength: session?.contextLength,
+                thresholdTokens: session?.thresholdTokens,
+                lastPromptTokens: session?.lastPromptTokens,
+                inputTokens: session?.inputTokens,
+                outputTokens: session?.outputTokens,
+                estimatedCost: session?.estimatedCost
+            )
+            if let modelContext {
+                do {
+                    try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
+                } catch {
+                    cacheErrorMessage = error.localizedDescription
+                }
+            }
+            if let title = session?.title {
+                displayTitle = Self.displayTitle(from: title)
+            }
+            setCompletedToolCallGroups(ToolCallGroup.groups(
+                persistedToolCalls: session?.toolCalls ?? [],
+                messages: messages,
+                messageOffset: messagesOffset
+            ))
+            completedReasoningGroups = []
+            liveToolCalls = []
+            liveReasoningText = ""
+            pinnedLocalNotices = []
+            toolCallAnchorMessageID = nil
+            reasoningAnchorMessageID = nil
+            attachmentCoordinator.removeAllLocalPreviews()
+            streamCoordinator.reconcileSessionLoad(
+                loadedActiveStreamID: loadedActiveStreamID,
+                preparation: streamLoadPreparation,
+                usedCacheFallback: false,
+                runStartedAt: Self.activeRunStartDate(
+                    pendingStartedAt: session?.pendingStartedAt,
+                    messages: messages
+                )
+            )
+        } catch {
+            lastError = error
+            latestServerLoadHadAssistantResponseAfterLatestUser = false
+            if CacheFallbackPolicy.shouldUseCache(for: error), let modelContext {
+                do {
+                    let cachedMessages = try CacheStore.cachedMessages(
+                        serverURL: server,
+                        sessionID: sessionID,
+                        in: modelContext,
+                        limit: Self.messagePageLimit
+                    )
+                    if !cachedMessages.isEmpty {
+                        clearCompressionAnchorMetadata()
+                        messages = cachedMessages
+                        transcriptRevision &+= 1
+                        latestServerLoadHadAssistantResponseAfterLatestUser = Self.hasAssistantResponseAfterLatestUser(
+                            in: messages
+                        )
+                        responseCompletionNeedsTranscriptRefresh = false
+                        messagesOffset = 0
+                        hasOlderMessages = false
+                        isViewingCachedData = true
+                        contextWindowSnapshot = nil
+                        errorMessage = nil
+                        setCompletedToolCallGroups([])
+                        completedReasoningGroups = []
+                        liveToolCalls = []
+                        liveReasoningText = ""
+                        pinnedLocalNotices = []
+                        toolCallAnchorMessageID = nil
+                        reasoningAnchorMessageID = nil
+                        streamingAssistantMessageID = nil
+                        attachmentCoordinator.removeAllLocalPreviews()
+                        streamCoordinator.reconcileSessionLoad(
+                            loadedActiveStreamID: nil,
+                            preparation: streamLoadPreparation,
+                            usedCacheFallback: true
+                        )
+                    } else {
+                        if renderedCacheFirst {
+                            revertCacheFirstPlaceholder(
+                                cacheFirstPlaceholder,
+                                to: previousMessages,
+                                previousMessagesOffset: previousMessagesOffset
+                            )
+                        }
+                        isViewingCachedData = false
+                        errorMessage = error.localizedDescription
+                    }
+                } catch {
+                    if renderedCacheFirst {
+                        revertCacheFirstPlaceholder(
+                            cacheFirstPlaceholder,
+                            to: previousMessages,
+                            previousMessagesOffset: previousMessagesOffset
+                        )
+                    }
+                    cacheErrorMessage = error.localizedDescription
+                    isViewingCachedData = false
+                    errorMessage = lastError?.localizedDescription
+                }
+            } else {
+                if renderedCacheFirst {
+                    revertCacheFirstPlaceholder(
+                        cacheFirstPlaceholder,
+                        to: previousMessages,
+                        previousMessagesOffset: previousMessagesOffset
+                    )
+                }
+                isViewingCachedData = false
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Performs the fast, local portion of an existing session's first load and
+    /// sends its transcript request. `ChatView` applies the response only after
+    /// its navigation appearance completes (`loadMessages(usesInitialPrefetch:)`),
+    /// so rendering a richer transcript cannot stall the system push animation,
+    /// while the round trip overlaps it. A Hermes chat shows its cached transcript here instead,
+    /// and attaches from `loadMessages`.
+    func prepareInitialMessageLoad(modelContext: ModelContext) {
+        if let hermesTurn {
+            hermesCache = modelContext
+            return showCachedHermesTranscriptBeforeAttach(hermesTurn)
+        }
+        guard let sessionID else { return }
+
+        if initialSessionPrefetch == nil {
+            initialSessionPrefetch = InitialSessionPrefetch(
+                activeStreamID: activeStreamID,
+                task: Task { [client] in
+                    let session = try await Self.requestNewestTranscriptWindow(client: client, sessionID: sessionID)
+                    return InitialSessionPrefetch.Response(session: session)
+                }
+            )
+        }
+
+        isLoading = true
+        guard messages.isEmpty else { return }
+
+        let cachedMessages = renderCachedMessagesBeforeReload(
+            sessionID: sessionID,
+            modelContext: modelContext
+        )
+        hasPrimedInitialCachedMessages = !cachedMessages.isEmpty
+    }
+
+    /// Clears the stored initial prefetch and returns its task when this load may
+    /// use it: the initial load, with the active stream unchanged since the
+    /// request went out. A response fetched before a stream started would read as
+    /// that stream having ended. Otherwise the request is cancelled.
+    @discardableResult
+    private func takeInitialSessionPrefetch(usable: Bool) -> Task<InitialSessionPrefetch.Response, Error>? {
+        guard let prefetch = initialSessionPrefetch else { return nil }
+        initialSessionPrefetch = nil
+        guard usable, prefetch.activeStreamID == activeStreamID else {
+            prefetch.task.cancel()
+            return nil
+        }
+        return prefetch.task
+    }
+
+    private struct InitialSessionPrefetch {
+        /// `SessionResponse` is not `Sendable`, but this decoded value is
+        /// immutable and handed from the task to its single consumer.
+        struct Response: @unchecked Sendable {
+            let session: SessionResponse
+        }
+
+        let activeStreamID: String?
+        let task: Task<Response, Error>
+    }
+
+    private static func requestNewestTranscriptWindow(
+        client: APIClient,
+        sessionID: String
+    ) async throws -> SessionResponse {
+        try await client.session(
+            id: sessionID,
+            includeMessages: true,
+            messageLimit: messagePageLimit,
+            // Cold load only: widen the window to renderable-dense (upstream #3790) so a
+            // tool-heavy session opens populated. "Load earlier" keeps the raw cap.
+            expandRenderable: true
+        )
+    }
+
+    /// Cache-first render (#289): on a cold session open, paint the cached transcript
+    /// immediately so the loading skeleton never appears, then let the in-flight
+    /// `loadMessages` network reload reconcile silently in place. Keeps
+    /// `isViewingCachedData` off because this is the success-expected window, not an
+    /// offline failure — the offline indicator stays tied to a real network error.
+    /// Returns the cached messages it rendered (empty if nothing was cached), so the
+    /// caller can revert the placeholder if the reload surfaces an error instead of
+    /// content — but only while the transcript is still that exact placeholder.
+    private func renderCachedMessagesBeforeReload(
+        sessionID: String,
+        modelContext: ModelContext
+    ) -> [ChatMessage] {
+        let signpost = performanceSignposter.beginInterval("Transcript Apply")
+        defer {
+            performanceSignposter.endInterval("Transcript Apply", signpost, "messages=\(self.messages.count, privacy: .public)")
+        }
+
+        let cachedMessages: [ChatMessage]
+        do {
+            cachedMessages = try CacheStore.cachedMessages(
+                serverURL: server,
+                sessionID: sessionID,
+                in: modelContext,
+                limit: Self.messagePageLimit
+            )
+        } catch {
+            // A cache read failure must not block the normal network load; fall back
+            // to the existing skeleton-until-network behavior.
+            return []
+        }
+
+        guard !cachedMessages.isEmpty else { return [] }
+
+        messages = cachedMessages
+        transcriptRevision &+= 1
+        messagesOffset = 0
+        hasOlderMessages = false
+        isViewingCachedData = false
+        return cachedMessages
+    }
+
+    /// Undo a cache-first placeholder (#289) when the reload fails without adopting
+    /// the offline cache, so the existing error UI (empty transcript + message) shows
+    /// instead of a stale cached transcript masquerading as live.
+    private func revertCacheFirstPlaceholder(
+        _ placeholder: [ChatMessage],
+        to previousMessages: [ChatMessage],
+        previousMessagesOffset: Int
+    ) {
+        // Only undo the cache-first paint if nothing mutated the transcript since the
+        // prime (e.g. an optimistic send during the load window) — otherwise we'd wipe
+        // in-flight local content while its send/stream is still running.
+        guard messages == placeholder else { return }
+        messages = previousMessages
+        transcriptRevision &+= 1
+        messagesOffset = previousMessagesOffset
+        hasOlderMessages = previousMessagesOffset > 0
+    }
+
+    @discardableResult
+    func loadOlderMessages(modelContext: ModelContext? = nil) async -> Bool {
+        if let hermesTurn {
+            guard !isLoadingOlderMessages, hasOlderMessages else { return false }
+            isLoadingOlderMessages = true
+            defer { isLoadingOlderMessages = false }
+            return await hermesTurn.loadOlderHistory()
+        }
+        guard let sessionID else {
+            errorMessage = String(localized: "The server did not provide a session ID.")
+            return false
+        }
+
+        guard !isLoadingOlderMessages, hasOlderMessages else {
+            return false
+        }
+
+        guard messagesOffset > 0 else {
+            hasOlderMessages = false
+            return false
+        }
+
+        resetPendingStreamingContentBuffers()
+        let messageBefore = messagesOffset
+        isLoadingOlderMessages = true
+        errorMessage = nil
+        cacheErrorMessage = nil
+        lastError = nil
+        defer { isLoadingOlderMessages = false }
+
+        do {
+            let response = try await client.session(
+                id: sessionID,
+                includeMessages: true,
+                messageLimit: Self.messagePageLimit,
+                messageBefore: messageBefore
+            )
+            guard let session = response.session else {
+                hasOlderMessages = false
+                return false
+            }
+
+            let olderMessages = session.messages ?? []
+            let mergedMessages = Self.prependingOlderMessages(olderMessages, to: messages)
+            let didAddMessages = mergedMessages.count > messages.count
+            applyCompressionAnchorMetadata(from: session)
+            messages = mergedMessages
+            transcriptRevision &+= 1
+            latestServerLoadHadAssistantResponseAfterLatestUser = Self.hasAssistantResponseAfterLatestUser(
+                in: messages
+            )
+            responseCompletionNeedsTranscriptRefresh = false
+            updateOlderMessagePagination(from: session, loadedMessageCount: messages.count)
+            isViewingCachedData = false
+            contextWindowSnapshot = ContextWindowSnapshot(
+                contextLength: session.contextLength,
+                thresholdTokens: session.thresholdTokens,
+                lastPromptTokens: session.lastPromptTokens,
+                inputTokens: session.inputTokens,
+                outputTokens: session.outputTokens,
+                estimatedCost: session.estimatedCost
+            )
+            if let title = session.title {
+                displayTitle = Self.displayTitle(from: title)
+            }
+            currentWorkspace = session.workspace ?? currentWorkspace
+            currentModel = session.model ?? currentModel
+            currentModelProvider = session.modelProvider ?? currentModelProvider
+            currentProfile = session.profile ?? currentProfile
+            setCompletedToolCallGroups(ToolCallGroup.groups(
+                persistedToolCalls: session.toolCalls ?? [],
+                messages: messages,
+                messageOffset: messagesOffset
+            ))
+            completedReasoningGroups = []
+
+            if let modelContext {
+                do {
+                    try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
+                } catch {
+                    cacheErrorMessage = error.localizedDescription
+                }
+            }
+
+            return didAddMessages
+        } catch {
+            lastError = error
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func actionContext(for message: ChatMessage, visibleIndex: Int) -> MessageActionContext? {
+        // Steering hints are annotations on the active turn, not user-editable
+        // content: no edit/fork/copy actions.
+        guard !message.isSteerMessage else { return nil }
+        return MessageActionContext(
+            message: message,
+            visibleIndex: visibleIndex,
+            messagesOffset: messagesOffset,
+            offersHistoryActions: hermesTurn.map { $0.policy.offersHistoryActions && hermesRewindableMessageIDs.contains(message.id) }
+                ?? true,
+            // A Hermes branch counts to a row the host saved (#1051). A Bot Chat offers neither (#1145).
+            offersFork: hermesTurn.map { $0.policy.offersHistoryActions && message.rowID != nil } ?? true
+        )
+    }
+
+    /// How many transcript rows follow `context`'s row: what an edit or a regenerate discards,
+    /// which its confirmation counts. Rows match by message, never by their positional render id.
+    func transcriptMessagesAfter(_ context: MessageActionContext) -> Int {
+        guard let index = displayedTranscriptMessages.firstIndex(where: { $0.message.id == context.messageID }) else { return 0 }
+        return max(0, displayedTranscriptMessages.count - 1 - index)
+    }
+
+    nonisolated static func precedingUserMessageText(
+        in messages: [ChatMessage],
+        beforeVisibleIndex visibleIndex: Int
+    ) -> String? {
+        guard !messages.isEmpty, visibleIndex > 0 else { return nil }
+
+        let startIndex = min(visibleIndex - 1, messages.count - 1)
+        guard startIndex >= 0 else { return nil }
+
+        for index in stride(from: startIndex, through: 0, by: -1) {
+            let message = messages[index]
+            // A steer sits between the prompt and its reply; regenerating must
+            // resend the prompt, never the steer's wrapped text.
+            guard message.role == "user", !message.isSteerMessage else { continue }
+
+            let text = message.content?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let text, !text.isEmpty {
+                return text
+            }
+        }
+
+        return nil
+    }
+
+    nonisolated static func mergingLoadedMessages(
+        _ loadedMessages: [ChatMessage],
+        withLocalOptimisticMessages candidateMessages: [ChatMessage],
+        knownMessageIDsBeforeLoad: Set<String>? = nil
+    ) -> [ChatMessage] {
+        let localUserMessages = candidateMessages.filter { candidateMessage in
+            isLocalOptimisticUserMessage(candidateMessage)
+                && !loadedMessagesContainEquivalentUserMessage(
+                    loadedMessages,
+                    localMessage: candidateMessage,
+                    knownMessageIDsBeforeLoad: knownMessageIDsBeforeLoad
+                )
+        }
+
+        guard !localUserMessages.isEmpty else {
+            return loadedMessages
+        }
+
+        return localUserMessages.reduce(into: loadedMessages) { partialMessages, localMessage in
+            insertLocalOptimisticMessage(localMessage, into: &partialMessages)
+        }
+    }
+
+    nonisolated private static func prependingOlderMessages(
+        _ olderMessages: [ChatMessage],
+        to currentMessages: [ChatMessage]
+    ) -> [ChatMessage] {
+        guard !olderMessages.isEmpty else { return currentMessages }
+
+        var seenIDs = Set(currentMessages.map(\.id))
+        var uniqueOlderMessages: [ChatMessage] = []
+        uniqueOlderMessages.reserveCapacity(olderMessages.count)
+
+        for message in olderMessages {
+            guard seenIDs.insert(message.id).inserted else { continue }
+            uniqueOlderMessages.append(message)
+        }
+
+        return uniqueOlderMessages + currentMessages
+    }
+
+    private func applyReloadedMessages(
+        _ reloadedMessages: [ChatMessage],
+        from session: SessionDetail?,
+        previousMessages: [ChatMessage],
+        previousMessagesOffset: Int
+    ) {
+        let signpost = performanceSignposter.beginInterval("Transcript Apply")
+        defer {
+            performanceSignposter.endInterval("Transcript Apply", signpost, "messages=\(self.messages.count, privacy: .public)")
+        }
+
+        let reloadedMessagesOffset = Self.resolvedMessagesOffset(
+            from: session,
+            loadedMessageCount: reloadedMessages.count
+        )
+
+        if let expandedMessages = Self.mergingReloadedMessages(
+            reloadedMessages,
+            intoCurrentMessages: previousMessages,
+            currentMessagesOffset: previousMessagesOffset,
+            reloadedMessagesOffset: reloadedMessagesOffset
+        ) {
+            messages = expandedMessages
+            transcriptRevision &+= 1
+            messagesOffset = previousMessagesOffset
+            hasOlderMessages = previousMessagesOffset > 0
+            return
+        }
+
+        if let trimmedMessages = Self.trimmingReloadedMessages(
+            reloadedMessages,
+            toPreserveCurrentMessages: previousMessages,
+            currentMessagesOffset: previousMessagesOffset,
+            reloadedMessagesOffset: reloadedMessagesOffset
+        ) {
+            messages = trimmedMessages
+            transcriptRevision &+= 1
+            messagesOffset = previousMessagesOffset
+            hasOlderMessages = previousMessagesOffset > 0 || session?.messagesTruncated == true
+            return
+        }
+
+        messages = reloadedMessages
+        transcriptRevision &+= 1
+        updateOlderMessagePagination(from: session, loadedMessageCount: messages.count)
+    }
+
+    nonisolated private static func mergingReloadedMessages(
+        _ reloadedMessages: [ChatMessage],
+        intoCurrentMessages currentMessages: [ChatMessage],
+        currentMessagesOffset: Int,
+        reloadedMessagesOffset: Int
+    ) -> [ChatMessage]? {
+        guard currentMessagesOffset < reloadedMessagesOffset,
+              let firstReloadedMessage = reloadedMessages.first,
+              let overlapIndex = currentMessages.firstIndex(where: { $0.id == firstReloadedMessage.id }),
+              overlapIndex > currentMessages.startIndex
+        else {
+            return nil
+        }
+
+        return Array(currentMessages[..<overlapIndex]) + reloadedMessages
+    }
+
+    /// Mid-session reloads (turn-end `.done`, the completion refresh, or a
+    /// pull-to-refresh while reading) can come back with a *smaller*
+    /// `_messages_offset` than the window on screen — the server widened the
+    /// page, or `.done` omitted the offset entirely and it resolved to 0.
+    /// Adopting that shrunken offset renumbers every positional
+    /// `transcript:<absoluteIndex>` renderID, SwiftUI remounts the whole list,
+    /// and a reader who scrolled up is dumped at the top of the session.
+    ///
+    /// When the reloaded window still contains the first message we're already
+    /// showing at the absolute index implied by both offsets, drop the reloaded
+    /// rows *before* that overlap and keep the current offset: rows on screen
+    /// keep their renderIDs, and the tail is replaced with the
+    /// server-authoritative content. Returns nil when the windows don't align
+    /// (fall back to plain replacement).
+    nonisolated private static func trimmingReloadedMessages(
+        _ reloadedMessages: [ChatMessage],
+        toPreserveCurrentMessages currentMessages: [ChatMessage],
+        currentMessagesOffset: Int,
+        reloadedMessagesOffset: Int
+    ) -> [ChatMessage]? {
+        guard reloadedMessagesOffset < currentMessagesOffset,
+              let firstCurrentMessage = currentMessages.first
+        else {
+            return nil
+        }
+
+        let overlapIndex = currentMessagesOffset - reloadedMessagesOffset
+        guard reloadedMessages.indices.contains(overlapIndex),
+              reloadedMessages[overlapIndex].id == firstCurrentMessage.id
+        else {
+            return nil
+        }
+
+        return Array(reloadedMessages[overlapIndex...])
+    }
+
+    private func updateOlderMessagePagination(from session: SessionDetail?, loadedMessageCount: Int) {
+        let resolvedOffset = Self.resolvedMessagesOffset(
+            from: session,
+            loadedMessageCount: loadedMessageCount
+        )
+        messagesOffset = resolvedOffset
+        hasOlderMessages = resolvedOffset > 0 || session?.messagesTruncated == true
+    }
+
+    nonisolated private static func resolvedMessagesOffset(
+        from session: SessionDetail?,
+        loadedMessageCount: Int
+    ) -> Int {
+        if let messagesOffset = session?.messagesOffset {
+            return max(0, messagesOffset)
+        }
+
+        guard session?.messagesTruncated == true,
+              let messageCount = session?.messageCount
+        else {
+            return 0
+        }
+
+        return max(0, messageCount - loadedMessageCount)
+    }
+
+    nonisolated static func mergingLoadedMessages(
+        _ loadedMessages: [ChatMessage],
+        withActiveStreamSnapshot snapshot: ActiveChatStreamSnapshot
+    ) -> ActiveStreamMessageMerge {
+        guard !snapshot.messages.isEmpty else {
+            return ActiveStreamMessageMerge(
+                messages: loadedMessages,
+                streamingAssistantMessageID: latestAssistantMessageID(in: loadedMessages),
+                usedSnapshotMessagesOffset: false
+            )
+        }
+
+        guard let snapshotAssistantMessageID = snapshot.streamingAssistantMessageID,
+              let snapshotAssistant = snapshot.messages.first(where: { $0.messageId == snapshotAssistantMessageID })
+        else {
+            if loadedMessages.isEmpty {
+                return ActiveStreamMessageMerge(
+                    messages: snapshot.messages,
+                    streamingAssistantMessageID: latestAssistantMessageID(in: snapshot.messages),
+                    usedSnapshotMessagesOffset: true
+                )
+            }
+
+            return ActiveStreamMessageMerge(
+                messages: loadedMessages,
+                streamingAssistantMessageID: latestAssistantMessageID(in: loadedMessages),
+                usedSnapshotMessagesOffset: false
+            )
+        }
+
+        guard !loadedMessages.isEmpty else {
+            return ActiveStreamMessageMerge(
+                messages: snapshot.messages,
+                streamingAssistantMessageID: snapshotAssistant.messageId,
+                usedSnapshotMessagesOffset: true
+            )
+        }
+
+        var mergedMessages = loadedMessages
+        // Steer echoes ride along inside the active turn and never open a new
+        // one, so a trailing echo must not move the assistant search range past
+        // the streaming assistant: that would skip content reconciliation and
+        // append a duplicate assistant row.
+        let latestUserIndex = mergedMessages.lastIndex(where: TranscriptTurnClassifier.isUserTurnBoundary)
+        let assistantSearchRange: Range<Int>
+        if let latestUserIndex {
+            assistantSearchRange = mergedMessages.index(after: latestUserIndex)..<mergedMessages.endIndex
+        } else {
+            assistantSearchRange = mergedMessages.startIndex..<mergedMessages.endIndex
+        }
+
+        if let assistantIndex = assistantSearchRange.reversed().first(where: { mergedMessages[$0].role == "assistant" }) {
+            let loadedAssistant = mergedMessages[assistantIndex]
+            mergedMessages[assistantIndex] = ChatMessage(
+                role: loadedAssistant.role,
+                content: reconciledActiveStreamContent(
+                    loadedContent: loadedAssistant.content,
+                    snapshotContent: snapshotAssistant.content
+                ),
+                timestamp: loadedAssistant.timestamp ?? snapshotAssistant.timestamp,
+                messageId: loadedAssistant.messageId ?? snapshotAssistant.messageId,
+                name: loadedAssistant.name ?? snapshotAssistant.name,
+                toolCallId: loadedAssistant.toolCallId ?? snapshotAssistant.toolCallId,
+                toolUseId: loadedAssistant.toolUseId ?? snapshotAssistant.toolUseId,
+                toolCalls: loadedAssistant.toolCalls ?? snapshotAssistant.toolCalls,
+                contentParts: loadedAssistant.contentParts ?? snapshotAssistant.contentParts,
+                reasoning: loadedAssistant.reasoning ?? snapshotAssistant.reasoning,
+                attachments: loadedAssistant.attachments ?? snapshotAssistant.attachments,
+                turnTps: loadedAssistant.turnTps ?? snapshotAssistant.turnTps
+            )
+            return ActiveStreamMessageMerge(
+                messages: mergedMessages,
+                streamingAssistantMessageID: mergedMessages[assistantIndex].messageId,
+                usedSnapshotMessagesOffset: false
+            )
+        }
+
+        if !messagesContainEquivalentMessage(mergedMessages, candidate: snapshotAssistant) {
+            mergedMessages.append(snapshotAssistant)
+        }
+
+        return ActiveStreamMessageMerge(
+            messages: mergedMessages,
+            streamingAssistantMessageID: snapshotAssistant.messageId,
+            usedSnapshotMessagesOffset: false
+        )
+    }
+
+    nonisolated private static func reconciledActiveStreamContent(
+        loadedContent: String?,
+        snapshotContent: String?
+    ) -> String? {
+        let loaded = loadedContent ?? ""
+        let snapshot = snapshotContent ?? ""
+
+        if loaded.isEmpty {
+            return snapshotContent
+        }
+
+        if snapshot.isEmpty {
+            return loadedContent
+        }
+
+        if loaded.hasPrefix(snapshot) {
+            return loadedContent
+        }
+
+        if snapshot.hasPrefix(loaded) {
+            return snapshotContent
+        }
+
+        return loadedContent
+    }
+
+    nonisolated private static func messagesContainEquivalentMessage(
+        _ messages: [ChatMessage],
+        candidate: ChatMessage
+    ) -> Bool {
+        if let candidateID = candidate.messageId,
+           messages.contains(where: { $0.messageId == candidateID }) {
+            return true
+        }
+
+        let candidateContent = candidate.content?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard candidateContent?.isEmpty == false else { return false }
+
+        return messages.contains { message in
+            message.role == candidate.role &&
+                message.content?.trimmingCharacters(in: .whitespacesAndNewlines) == candidateContent
+        }
+    }
+
+    /// When the session's in-flight turn started, for seeding the stream
+    /// coordinator's run clock: the server's `pending_started_at` first, then the
+    /// latest user message's timestamp. Both survive leaving and re-entering the
+    /// session, so "Working for" keeps counting from one instant; nil leaves the
+    /// coordinator counting from when it discovered the stream.
+    nonisolated private static func activeRunStartDate(
+        pendingStartedAt: Double?,
+        messages: [ChatMessage]
+    ) -> Date? {
+        if let pendingStartedAt, pendingStartedAt > 0 {
+            return Date(timeIntervalSince1970: pendingStartedAt)
+        }
+
+        guard let latestUserTimestamp = messages
+            .last(where: TranscriptTurnClassifier.isUserTurnBoundary)?
+            .timestamp,
+            latestUserTimestamp > 0
+        else {
+            return nil
+        }
+
+        return Date(timeIntervalSince1970: latestUserTimestamp)
+    }
+
+    nonisolated static func hasAssistantResponseAfterLatestUser(in messages: [ChatMessage]) -> Bool {
+        guard !messages.isEmpty else { return false }
+
+        let searchRange: Range<Int>
+        // Steer echoes are not user-turn boundaries; a trailing echo must not
+        // hide an in-flight assistant response from the stream coordinator.
+        if let latestUserIndex = messages.lastIndex(where: TranscriptTurnClassifier.isUserTurnBoundary) {
+            searchRange = messages.index(after: latestUserIndex)..<messages.endIndex
+        } else {
+            searchRange = messages.startIndex..<messages.endIndex
+        }
+
+        return messages[searchRange].contains { message in
+            guard message.role == "assistant" else { return false }
+            return hasAssistantResponseContent(message)
+        }
+    }
+
+    nonisolated private static func hasAssistantResponseContent(_ message: ChatMessage) -> Bool {
+        if message.content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return true
+        }
+
+        if message.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return true
+        }
+
+        if message.toolCalls?.isEmpty == false {
+            return true
+        }
+
+        return hasAssistantContentParts(message.contentParts)
+    }
+
+    nonisolated private static func hasAssistantContentParts(_ parts: [JSONValue]?) -> Bool {
+        guard let parts else { return false }
+
+        return parts.contains { part in
+            switch part {
+            case .string(let value):
+                return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            case .object(let object):
+                if case .string(let type)? = object["type"] {
+                    switch type {
+                    case "tool_use", "thinking", "reasoning", "redacted_thinking":
+                        return true
+                    case "text":
+                        if case .string(let text)? = object["text"] {
+                            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                        }
+                    default:
+                        break
+                    }
+                }
+
+                return false
+            case .number, .bool, .array, .null:
+                return false
+            }
+        }
+    }
+
+    nonisolated private static func remappedAnchorMessageID(
+        _ anchorMessageID: String?,
+        from snapshotStreamingAssistantMessageID: String?,
+        to restoredStreamingAssistantMessageID: String?
+    ) -> String? {
+        guard let anchorMessageID,
+              anchorMessageID == snapshotStreamingAssistantMessageID,
+              snapshotStreamingAssistantMessageID != restoredStreamingAssistantMessageID
+        else {
+            return anchorMessageID
+        }
+
+        return restoredStreamingAssistantMessageID ?? anchorMessageID
+    }
+
+    nonisolated private static func isLocalOptimisticUserMessage(_ message: ChatMessage) -> Bool {
+        message.role == "user" && message.messageId?.hasPrefix("local-") == true
+    }
+
+    nonisolated private static func loadedMessagesContainEquivalentUserMessage(
+        _ loadedMessages: [ChatMessage],
+        localMessage: ChatMessage,
+        knownMessageIDsBeforeLoad: Set<String>?
+    ) -> Bool {
+        let localContent = normalizedUserMessageContent(localMessage.content)
+        let localAttachmentKeys = attachmentKeys(for: localMessage)
+
+        return loadedMessages.contains { loadedMessage in
+            guard loadedMessage.role == "user" else { return false }
+
+            if loadedMessage.messageId == localMessage.messageId {
+                return true
+            }
+
+            // Steer echoes only match persisted steer rows (and vice versa):
+            // the wrapper is stripped for content comparison, so without this
+            // gate an ordinary repeated prompt could swallow a persisted steer
+            // row, or a steer echo could swallow an ordinary user message with
+            // identical text.
+            guard loadedMessage.isSteerMessage == localMessage.isSteerMessage else {
+                return false
+            }
+
+            guard normalizedUserMessageContent(loadedMessage.content) == localContent else {
+                return false
+            }
+
+            if !localAttachmentKeys.isEmpty {
+                let loadedAttachmentKeys = attachmentKeys(for: loadedMessage)
+                guard !loadedAttachmentKeys.isEmpty,
+                      loadedAttachmentKeys.isSuperset(of: localAttachmentKeys)
+                else {
+                    return false
+                }
+            }
+
+            if let loadedMessageID = loadedMessage.messageId,
+               let knownMessageIDsBeforeLoad,
+               knownMessageIDsBeforeLoad.contains(loadedMessageID) {
+                // This row already preceded the optimistic turn. Matching text
+                // cannot make it the server-confirmed copy of a repeated prompt.
+                return false
+            }
+
+            guard let localTimestamp = localMessage.timestamp,
+                  let loadedTimestamp = loadedMessage.timestamp
+            else {
+                return true
+            }
+
+            return loadedTimestamp >= localTimestamp - 300
+        }
+    }
+
+    nonisolated private static func insertLocalOptimisticMessage(
+        _ localMessage: ChatMessage,
+        into messages: inout [ChatMessage]
+    ) {
+        if !messages.contains(where: { $0.role == "user" }),
+           let firstAssistantIndex = messages.firstIndex(where: { $0.role == "assistant" }) {
+            messages.insert(localMessage, at: firstAssistantIndex)
+            return
+        }
+
+        guard let localTimestamp = localMessage.timestamp,
+              let insertionIndex = messages.firstIndex(where: { loadedMessage in
+                  guard let loadedTimestamp = loadedMessage.timestamp else { return false }
+                  return loadedTimestamp > localTimestamp
+              })
+        else {
+            messages.append(localMessage)
+            return
+        }
+
+        messages.insert(localMessage, at: insertionIndex)
+    }
+
+    nonisolated private static func latestAssistantMessageID(in messages: [ChatMessage]) -> String? {
+        messages.last(where: { $0.role == "assistant" })?.messageId
+    }
+
+    nonisolated private static func latestAssistantAnchorID(in messages: [ChatMessage], messageOffset: Int?) -> String? {
+        guard let index = messages.lastIndex(where: { $0.role == "assistant" }) else {
+            return nil
+        }
+
+        return TranscriptTurnClassifier.anchorID(
+            for: messages[index],
+            at: index,
+            messageOffset: messageOffset
+        )
+    }
+
+    nonisolated static func deduplicatedReasoningTexts(_ texts: [String]) -> [String] {
+        var seen: Set<String> = []
+
+        return texts.compactMap { text in
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+
+            let key = trimmed
+                .components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+
+            guard seen.insert(key).inserted else { return nil }
+            return trimmed
+        }
+    }
+
+    nonisolated private static func normalizedUserMessageContent(_ content: String?) -> String {
+        guard let content else { return "" }
+
+        // Share the single marker parser with the display layer so the two can
+        // never disagree about what counts as an attachment marker. Trim the
+        // result because this normalized form is compared for dedup equality.
+        let withoutAttachments = MessageAttachment
+            .contentWithoutAttachedFilesMarker(in: content)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // The server persists an accepted steer wrapped in the out-of-band
+        // marker while the local echo carries the bare text. Strip the wrapper
+        // so the persisted row is recognized as the echo's server copy instead
+        // of a duplicate.
+        let steerStripped = ChatMessage.strippedSteerText(from: withoutAttachments)
+            ?? withoutAttachments
+        return steerStripped.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func attachmentKeys(for message: ChatMessage) -> Set<String> {
+        // Match on `MessageAttachment.identityKey` (lowercased basename): the
+        // server returns attachment paths inconsistently on reload, so basename
+        // matching is the only reliable way to dedupe an optimistic bubble
+        // against its reloaded copy. See `identityKey` for the full rationale.
+        Set((message.attachments ?? []).compactMap(\.identityKey))
+    }
+
+    func sendMessage(_ draft: String, modelContext: ModelContext? = nil) async -> Bool {
+        guard !isViewingCachedData else {
+            // A cached copy shown while the chat connects holds the draft without a word.
+            if !isCachedCopyProvisional { sendErrorMessage = String(localized: "Reconnect to the server to send a message.") }
+            return false
+        }
+
+        guard !isClearingConversation else {
+            sendErrorMessage = String(localized: "Wait for the conversation to finish clearing.")
+            return false
+        }
+
+        if let hermesTurn {
+            return await submitHermesPrompt(draft, mode: .send, to: hermesTurn)
+        }
+
+        guard !isCompressionRotated else {
+            sendErrorMessage = compressionRejectionMessage
+            // A failed continuation load would otherwise strand the draft here.
+            if compressionContinuation == nil, let id = compressionContinuationID, let sessionID {
+                // Holds Send off during the retry, as `performChatSend` does for the first load,
+                // so a second Send can't race this one's composer restore and handoff.
+                isStartingChat = true
+                defer { isStartingChat = false }
+                await resolveCompressionContinuation(id: id, from: sessionID,
+                                                     profile: Self.compressionProfile(currentProfile),
+                                                     generation: chatSendGeneration)
+            }
+            return false
+        }
+
+        let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Attachment-only sends (empty text, staged attachments) synthesize
+        // their message text in `PendingAttachment.chatMessageText` below.
+        guard !message.isEmpty || !attachmentCoordinator.pendingAttachments.isEmpty else { return false }
+
+        guard let sessionID else {
+            sendErrorMessage = String(localized: "The server did not provide a session ID.")
+            return false
+        }
+
+        let localMessageID = "local-\(UUID().uuidString)"
+        let attachmentPreparation = attachmentCoordinator.prepareForSend(localMessageID: localMessageID)
+        let messageForAPI = attachmentPreparation.chatMessageText(draft: message)
+        // Attachment-only sends show the synthesized text in the bubble, matching
+        // what a reload from the server displays; text sends keep the bare draft.
+        let displayText = message.isEmpty ? messageForAPI : message
+
+        let didStart = await performChatSend(
+            sessionID: sessionID,
+            localMessageID: localMessageID,
+            displayContent: displayText,
+            messageForAPI: messageForAPI,
+            messageAttachments: attachmentPreparation.messageAttachments,
+            apiPayloads: attachmentPreparation.apiPayloads,
+            attachmentsToRestoreOnFailure: attachmentPreparation.attachments,
+            modelContext: modelContext,
+            allowsCompressionContinuation: true
+        )
+        if didStart {
+            for attachment in attachmentPreparation.attachments {
+                guard let fileName = attachment.draftFileName else { continue }
+                await attachmentCoordinator.deleteDraftCopy(named: fileName, attachmentID: attachment.id)
+            }
+        }
+        return didStart
+    }
+
+    /// Called only after ChatView restores the rejected composer submission. Uses
+    /// the normal pushed-session route and moves all retained draft work together.
+    func compressionContinuationForNavigation(
+        from sourceKey: ChatDraftKey, isCurrent: @MainActor () -> Bool,
+        prepareDraftForHandoff: @MainActor () -> Void = {}
+    ) async -> SessionSummary? {
+        guard !didHandOffCompressionDraft,
+              let continuation = compressionContinuation, let id = continuation.sessionId,
+              let sessionID, sourceKey == .session(server: server, sessionID: sessionID),
+              isCurrent(), !Task.isCancelled else { return nil }
+        let generation = chatSendGeneration
+        let targetKey = ChatDraftKey.session(server: server, sessionID: id)
+        let existing = await drafts.draft(for: targetKey)
+        guard generation == chatSendGeneration, compressionContinuation?.sessionId == id,
+              isCurrent(), !Task.isCancelled,
+              Self.compressionProfile(continuation.profile) == Self.compressionProfile(currentProfile) else { return nil }
+        // Never overwrite another window's unsent work. Stay here with this draft
+        // and the original conflict rather than dropping either composer's content.
+        guard existing?.isEmpty != false else { return nil }
+        // Destination hydration suspended above. Snapshot the latest composer
+        // now, with no suspension between reconciliation and the atomic move.
+        prepareDraftForHandoff()
+        drafts.moveDraft(from: sourceKey, to: targetKey)
+        didHandOffCompressionDraft = true
+        lastError = nil
+        sendErrorMessage = nil
+        return continuation
+    }
+
+    /// Whether this chat runs a Hermes session rather than a webui one (#1010).
+    var isHermesSession: Bool { hermesTurn != nil }
+
+    /// A Hermes prompt is on its way, from its uploads to the host's answer.
+    @ObservationIgnored private var isSubmittingHermesPrompt = false
+    /// #508: a Hermes prompt's answer was lost, so nothing sends until the next attach's
+    /// snapshot shows whether it ran. Restored from the draft's mark when the chat opens.
+    private(set) var isHermesSubmissionUncertain = false
+    /// The last attach's release of a lost prompt's mark (`releaseSubmissionMark`).
+    @ObservationIgnored private(set) var submissionMarkRelease: Task<Void, Never>?
+
+    /// A Hermes session's draft key: the new-session key until the host names the session.
+    var hermesDraftKey: ChatDraftKey? { hermesTurn?.currentDraftKey }
+
+    /// Stop asks first on a Hermes session holding a queued prompt or an open request,
+    /// which the stop would discard or deny.
+    var stopNeedsConfirmation: Bool { hermesTurn?.stopNeedsConfirmation == true }
+
+    /// A Hermes session's host requests (#1011, #1141): its approvals, questions, sudo and
+    /// secret prompts, Desktop tasks and connection operations. Nil on a webui session, whose
+    /// prompts are `approvalPrompt` and `clarificationPrompt`.
+    var hermesRequests: HermesChatRequests? { hermesTurn?.requests }
+
+    /// A Hermes session is parked on one of its host's requests.
+    var isWaitingForUser: Bool { hermesRequests?.isWaiting == true }
+
+    /// The host refused a Hermes session's saved password (#884, #942): the chat offers Update
+    /// sign-in and never signs in again on its own.
+    var hermesNeedsSignIn: Bool { hermesTurn?.needsSignIn == true }
+
+    /// A Hermes session's goal, loop and heartbeat (#1142), `/btw` question and `/background`
+    /// tasks (#1013). Nil on a webui session.
+    var hermesSideTasks: HermesChatSideTasks? { hermesTurn?.sideTasks }
+
+    /// Whether the toolbar shows the goal menu: once the chat has a goal, or a Hermes
+    /// session's loop or heartbeat (#1142).
+    var showsGoalControls: Bool {
+        hasActivatedGoalCommand || hermesSideTasks?.automations.isEmpty == false
+    }
+
+    /// Sends the loop or heartbeat Pause or Resume confirmed in the goal menu (#1142). A
+    /// failure shows in the composer, like a goal command's.
+    func confirmHermesAutomation(_ control: BotSessionControl) async {
+        guard let sideTasks = hermesSideTasks else { return }
+        do {
+            try await sideTasks.confirmAutomation(control)
+        } catch let error where error is HermesChatTurnCoordinator.NotSent || HermesChatSideTasks.isReaped(error) {
+            sendErrorMessage = String(localized: "Reconnect to the server to manage goals.")
+        } catch BotFailure.stale {
+            sendErrorMessage = BotFailure.stale.localizedDescription
+        } catch let refusal as BotSettingFailure {
+            sendErrorMessage = refusal.localizedDescription
+        } catch {
+            sendErrorMessage = BotSettingFailure.unknownOutcome.localizedDescription
+        }
+    }
+
+    /// A Hermes session's plan and how its last turn ended (#1139). Nil on a webui session.
+    var hermesActivity: HermesChatActivity? { hermesTurn?.activity }
+
+    /// A new chat in `profile` on this Hermes session's server and connection (#1015).
+    func newHermesSessionChat(profile: String) -> HermesSessionChat? {
+        hermesTurn.map { HermesSessionChat(server: $0.engine.server, connection: $0.engine.connection,
+                                           target: .new(profile: profile)) }
+    }
+
+    /// `/sessions` and a bare `/resume` in a Hermes chat (#1053): its Profile's Sessions list,
+    /// searching `query`. Webui has neither command.
+    private func hermesSessionList(searching query: String) -> SlashCommandExecutionResult {
+        guard let hermesTurn else { return .unsupported(friendlyMessage: SlashCommandExecutor.unsupportedMessage(for: "sessions")) }
+        return .openedHermesSessionList(HermesSessionListEntry(server: hermesTurn.engine.server, connection: hermesTurn.engine.connection,
+                                                               profile: hermesTurn.settings.profile, query: query))
+    }
+
+    /// `/resume <name>` in a Hermes chat (#1053): searches the Profile for `name` and opens the
+    /// one session titled exactly that, ignoring case. Anything else (no such title, several,
+    /// a Bot Chat, which opens in its bot, or a failed search) opens the Sessions list searching
+    /// `name`, so it never opens the wrong chat. The host's search reads ids and message text,
+    /// not titles, so a title none of its messages share lands on the list, whose rows match it.
+    private func resumeHermesSession(named rawName: String) async -> SlashCommandExecutionResult {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let hermesTurn, !name.isEmpty else { return hermesSessionList(searching: name) }
+        let engine = hermesTurn.engine
+        let profile = hermesTurn.settings.profile
+        let results = (try? await engine.wire.searchSessions(query: name, profile: profile)) ?? []
+        let titled = results.filter { $0.row.title?.compare(name, options: .caseInsensitive) == .orderedSame }
+        guard titled.count == 1, let match = titled.first?.row, !match.isBotChat else { return hermesSessionList(searching: name) }
+        // Already open here.
+        if match.id == engine.storedKey { return .executed(message: nil) }
+        return .openedHermesSession(HermesSessionChat(server: engine.server, connection: engine.connection,
+                                                      target: .session(profile: match.profile ?? profile, key: match.id),
+                                                      parentKey: match.parentSessionID))
+    }
+
+    /// Moves this new Hermes chat's draft, files included, to `chat`, which replaces it. A
+    /// draft already waiting in that Profile's new chat stays, and this one keeps its key.
+    func handOffHermesDraft(to chat: HermesSessionChat) async {
+        guard let key = hermesDraftKey else { return }
+        let target = chat.target.draftKey(server: chat.server, connectionID: chat.connection.id, lineageRoot: chat.lineageRoot)
+        guard await drafts.draft(for: target) == nil else { return }
+        drafts.moveDraft(from: key, to: target)
+    }
+
+    /// Moves a draft saved under the segment of a compression chain this chat opened by, before
+    /// drafts followed the chain's root (#1176), to the chain's key, unless that has one already.
+    /// The chat calls it before it restores its draft.
+    func adoptHermesSegmentDraft() async {
+        guard let hermesTurn, let segment = hermesTurn.segmentDraftKey else { return }
+        let key = hermesTurn.currentDraftKey
+        guard await drafts.draft(for: key) == nil, await drafts.draft(for: segment) != nil else { return }
+        drafts.moveDraft(from: segment, to: key)
+    }
+
+    /// Who asks in a Hermes session's request card: its Profile on its saved connection.
+    var hermesRequestIdentity: String? {
+        hermesTurn.map { String(localized: "\($0.engine.target.profile) on \($0.engine.connection.name)") }
+    }
+
+    /// Attaches the Hermes session; its newest history page and live state fill the transcript.
+    /// After a failed history read (the chat's retry, a pull to refresh) it reads the page again.
+    private func loadHermesSession(_ hermes: HermesChatTurnCoordinator) async {
+        isLoading = messages.isEmpty
+        errorMessage = nil
+        defer { isLoading = false }
+        let retriesHistory = hermes.hasHistoryFailure
+        await hermes.activate()
+        if retriesHistory { await hermes.retryHistoryIfFailed() }
+    }
+
+    /// Sends one prompt to the Hermes session in `mode`, once (#1010). A Send shows the
+    /// prompt at once and a Stop & send once it takes over; a steer shows its echo once
+    /// accepted; a queued prompt shows only the composer receipt until the host runs it.
+    /// False keeps the draft: the host refused it, did not confirm it, or it was not sent.
+    /// `shown` is the prompt's row when it differs from what is sent, as for a goal's message;
+    /// such a prompt leaves the staged files where they are.
+    private func submitHermesPrompt(
+        _ draft: String,
+        mode: BotPromptMode,
+        to hermes: HermesChatTurnCoordinator,
+        shown: String? = nil
+    ) async -> Bool {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Only Send and Queue carry the staged files (#1012); Steer and Stop & send stay text-only.
+        let files = mode.startsTurn && shown == nil ? attachmentCoordinator.pendingAttachments : []
+        guard !text.isEmpty || !files.isEmpty, !isHermesSubmissionUncertain else { return false }
+        sendErrorMessage = nil
+        lastError = nil
+        // A staging error is stale once the files go; the status line shows the upload and its Cancel.
+        if !files.isEmpty { attachmentCoordinator.setUploadAttachmentError(nil) }
+        let promptID = "local-\(UUID().uuidString)"
+        let prompt = ChatMessage(
+            role: "user", content: shown ?? text, timestamp: Date().timeIntervalSince1970, messageId: promptID,
+            attachments: files.isEmpty ? nil : files.map {
+                MessageAttachment(name: $0.name, mime: $0.mime, size: $0.size, isImage: $0.isImage)
+            }
+        )
+        attachmentCoordinator.keepLocalPreviews(of: files, forMessageID: promptID)
+        if mode == .send {
+            isStartingChat = true
+            archiveLiveActivityForNewTurn()
+            messages.append(prompt)
+        }
+        defer { if mode == .send { isStartingChat = false } }
+
+        // #508: from just before the prompt goes out until the host answers, the draft and
+        // its files are on disk with the submission marked unresolved. A lost answer keeps
+        // all three and holds Send while the chat reattaches; that attach clears only the
+        // mark, and nothing is sent again.
+        var marked = false
+        let outcome: BotPromptOutcome
+        do {
+            isSubmittingHermesPrompt = true
+            defer { isSubmittingHermesPrompt = false }
+            outcome = try await hermes.submit(text, mode: mode, attachments: attachmentCoordinator.outgoingAttachments(files)) {
+                [drafts] in
+                let key = hermes.currentDraftKey
+                // Loaded first, so the mark never stands in for the saved draft.
+                _ = await drafts.draft(for: key)
+                drafts.setBotSubmissionUncertain(true, for: key)
+                marked = true
+                try await drafts.flush()
+            }
+        } catch {
+            rollbackOptimisticMessage(id: promptID)
+            if let notSent = error as? HermesChatTurnCoordinator.NotSent {
+                if marked { drafts.setBotSubmissionUncertain(false, for: hermes.currentDraftKey) }
+                sendErrorMessage = notSent.duringUpload
+                    ? Self.uploadFailureMessage(notSent.underlying)
+                    : String(localized: "Reconnect to the server to send a message.")
+            } else if mode.definitelyRejected(error) {
+                drafts.setBotSubmissionUncertain(false, for: hermes.currentDraftKey)
+                sendErrorMessage = String(localized: "Hermes did not accept this message. Your draft is still here.")
+            } else {
+                sendErrorMessage = String(localized: "Hermes did not confirm this message. Your draft is still here.")
+                holdForLostAnswer(hermes)
+            }
+            return false
+        }
+        if outcome != .unknown { drafts.setBotSubmissionUncertain(false, for: hermes.currentDraftKey) }
+
+        switch outcome {
+        case .started:
+            // A queued send that found the host idle ran at once.
+            if mode != .send { messages.append(prompt) }
+        case .voiceStopped:
+            // The host took a stop phrase: it stopped the work and started no turn.
+            rollbackOptimisticMessage(id: promptID)
+        case .followUpQueued, .redirectQueued:
+            // The host runs it as a later turn, whose start shows it.
+            rollbackOptimisticMessage(id: promptID)
+        case .guidanceQueued:
+            appendLocalSteerEcho(text)
+            showSteeringConfirmation(String(localized: "Steering hint delivered."))
+        case .redirected:
+            // The turn carries on from the new prompt, and the reply after it gets its own row.
+            flushPendingStreamingContent()
+            streamingAssistantMessageID = nil
+            messages.append(prompt)
+        case .rejected:
+            rollbackOptimisticMessage(id: promptID)
+            // A refused steer leaves the run going (#856).
+            if mode == .steer {
+                steerFailureMessage = String(localized: "Couldn't steer")
+            } else {
+                sendErrorMessage = String(localized: "Hermes did not accept this message. Your draft is still here.")
+            }
+            return false
+        case .unknown:
+            rollbackOptimisticMessage(id: promptID)
+            sendErrorMessage = String(localized: "Hermes did not confirm this message. Your draft is still here.")
+            holdForLostAnswer(hermes)
+            return false
+        }
+        // Accepted: the host holds the files now, so their local copies go.
+        await attachmentCoordinator.consumeSentAttachments(files)
+        return true
+    }
+
+    /// A prompt's answer was lost: Send waits, and the chat reattaches so the snapshot
+    /// shows whether it ran (#508). Its connect releases the hold.
+    private func holdForLostAnswer(_ hermes: HermesChatTurnCoordinator) {
+        isHermesSubmissionUncertain = true
+        hermes.recoverAfterLostAnswer()
+    }
+
+    /// A Hermes draft reopened with its submission still marked unresolved holds Send until
+    /// the chat attaches, as a lost answer does (#508).
+    func restoreSubmissionMark(_ uncertain: Bool) {
+        // Attached already: that attach's snapshot was read after the lost answer.
+        guard uncertain, let hermesTurn, hermesTurn.engine.connectionState != .connected else { return }
+        isHermesSubmissionUncertain = true
+    }
+
+    /// Attached again: the host's snapshot now shows whether a prompt whose answer was lost
+    /// ran, so Send is free again and its unresolved mark goes. The draft and its files stay
+    /// as they are (#508).
+    private func releaseSubmissionMark() {
+        guard let key = hermesDraftKey, !isSubmittingHermesPrompt else { return }
+        isHermesSubmissionUncertain = false
+        submissionMarkRelease = Task { [weak self, drafts] in
+            guard await drafts.draft(for: key)?.botSubmissionUncertain == true,
+                  self?.isSubmittingHermesPrompt == false else { return }
+            drafts.setBotSubmissionUncertain(false, for: key)
+        }
+    }
+
+    /// Why a Hermes send's files did not upload; the text and files stay in the composer.
+    private static func uploadFailureMessage(_ error: Error) -> String {
+        if error is CancellationError || error as? BotFailure == .stale {
+            return String(localized: "Upload cancelled. Your message and attachments are still here.")
+        }
+        if let error = error as? BotAttachmentFailure { return error.localizedDescription }
+        return String(localized: "Couldn't upload the attachments. Your message and attachments are still here.")
+    }
+
+    /// Stops a Hermes send's uploads before its prompt goes out (#1012).
+    func cancelAttachmentUpload() {
+        hermesTurn?.cancelAttachmentUpload()
+    }
+
+    /// A send while a Hermes turn runs: Steer is `session.steer`, Queue the host's queue,
+    /// and Stop & send `session.redirect` (#858). With files staged a Steer queues, since
+    /// only a fresh turn takes them, and Stop & send goes text-only, leaving them staged
+    /// (#1012). A turn that ended meanwhile takes a plain send.
+    private func submitHermesStreamingMessage(
+        _ draft: String,
+        behavior: StreamingSendBehavior,
+        to hermes: HermesChatTurnCoordinator
+    ) async -> SlashCommandExecutionResult {
+        let mode: BotPromptMode
+        switch behavior == .steer && !attachmentCoordinator.pendingAttachments.isEmpty ? .queue : behavior {
+        case .steer: mode = activeStreamID == nil ? .send : .steer
+        case .queue: mode = activeStreamID == nil ? .send : .queue
+        case .interrupt: mode = activeStreamID == nil ? .send : .redirect
+        }
+        return await submitHermesPrompt(draft, mode: mode, to: hermes) ? .executed(message: nil) : .notDelivered
+    }
+
+    /// Records → transcribes → uploads → sends a server-transcribed voice note
+    /// (Telegram-style). The sent message's text is the transcript and its sole
+    /// attachment is the audio clip, rendered as a playable note by the inline
+    /// audio player. Aborts (toast, no partial send) if transcription fails or
+    /// returns nothing. Returns true only if the chat send started.
+    @discardableResult
+    func sendVoiceNote(audioData: Data, filename: String, modelContext: ModelContext? = nil) async -> Bool {
+        // Voice notes ride on webui transcription, which a Hermes host does not offer.
+        guard hermesTurn == nil else { return false }
+        // Reentrancy guard: bail if a voice note OR a regular chat send is already
+        // in flight. `performChatSend` has no internal guard, so two overlapping
+        // sends would both flip `isStartingChat`/`isSendingVoiceNote` and race their
+        // `defer { … = false }` (clearing the flag while the other still runs, and
+        // firing two concurrent `startChat`s). The UI already blocks this; the guard
+        // keeps a future caller (accessibility shortcut, test harness) safe too.
+        guard !isSendingVoiceNote, !isStartingChat else { return false }
+        guard !isViewingCachedData else {
+            setUploadAttachmentError(String(localized: "Reconnect to the server to send a voice note."))
+            return false
+        }
+        guard !audioData.isEmpty else { return false }
+        guard audioData.count <= PendingAttachment.maximumUploadBytes else {
+            setUploadAttachmentError(PendingAttachment.uploadTooLargeMessage(filename: filename))
+            return false
+        }
+        guard let sessionID else {
+            setUploadAttachmentError(String(localized: "The server did not provide a session ID."))
+            return false
+        }
+
+        isSendingVoiceNote = true
+        setUploadAttachmentError(nil)
+        sendErrorMessage = nil
+        lastError = nil
+        defer { isSendingVoiceNote = false }
+
+        // 1. Transcribe via server STT. Any error or empty transcript aborts the
+        //    whole send — no fallback, no partial message (per the issue).
+        let transcript: String
+        do {
+            let response = try await client.transcribeAudio(data: audioData, filename: filename)
+            if let serverError = response.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !serverError.isEmpty {
+                setUploadAttachmentError(serverError)
+                return false
+            }
+            let text = (response.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                setUploadAttachmentError(String(localized: "Couldn't transcribe that voice note. Try recording again."))
+                return false
+            }
+            transcript = text
+        } catch {
+            lastError = error
+            setUploadAttachmentError(error.localizedDescription)
+            return false
+        }
+
+        // 2. Upload the clip as a standalone attachment (kept out of the composer's
+        //    pending list). On failure the coordinator already surfaced the error.
+        guard let pending = await attachmentCoordinator.uploadStandaloneAttachment(
+            data: audioData,
+            filename: filename
+        ) else {
+            return false
+        }
+
+        // 3. Send a chat message: text = transcript, attachments = [the clip].
+        let messageAttachment = MessageAttachment(
+            name: pending.name,
+            path: pending.path,
+            mime: pending.mime,
+            size: pending.size,
+            isImage: pending.isImage
+        )
+        let localMessageID = "local-\(UUID().uuidString)"
+        // The API message text is the bare transcript — NOT chatMessageText(…),
+        // which would append a "[Attached files: <clip>.m4a]" suffix. That suffix
+        // is the agent's only signal about a non-image attachment (the server
+        // strips attachment metadata before the model call and never embeds audio),
+        // so it makes the agent try to "inspect" / transcribe the clip itself
+        // instead of just answering the transcript. The clip still rides along in
+        // `messageAttachments` / `apiPayloads` purely so the inline player renders
+        // and persists; it's display-only and never reaches the model. (#330)
+        return await performChatSend(
+            sessionID: sessionID,
+            localMessageID: localMessageID,
+            displayContent: transcript,
+            messageForAPI: transcript,
+            messageAttachments: [messageAttachment],
+            apiPayloads: [pending.toJSONValue()],
+            attachmentsToRestoreOnFailure: [],
+            modelContext: modelContext
+        )
+    }
+
+    /// Shared optimistic-append + `startChat` + rollback core used by both the
+    /// text composer (`sendMessage`) and the voice-note flow (`sendVoiceNote`).
+    /// `attachmentsToRestoreOnFailure` is re-staged into the composer if the send
+    /// fails — empty for voice notes, whose clip isn't a composer attachment.
+    private func performChatSend(
+        sessionID: String,
+        localMessageID: String,
+        displayContent: String,
+        messageForAPI: String,
+        messageAttachments: [MessageAttachment],
+        apiPayloads: [JSONValue]?,
+        attachmentsToRestoreOnFailure: [PendingAttachment],
+        modelContext: ModelContext?,
+        allowsCompressionContinuation: Bool = false
+    ) async -> Bool {
+        guard !isCompressionRotated else {
+            restorePendingAttachments(attachmentsToRestoreOnFailure)
+            sendErrorMessage = compressionRejectionMessage
+            return false
+        }
+        chatSendGeneration += 1
+        let generation = chatSendGeneration
+        let profile = Self.compressionProfile(currentProfile)
+        isStartingChat = true
+        sendErrorMessage = nil
+        lastError = nil
+        archiveLiveActivityForNewTurn()
+        streamCoordinator.prepareForNewResponse()
+        responseCompletionNeedsTranscriptRefresh = false
+        defer { if generation == chatSendGeneration { isStartingChat = false } }
+
+        let optimisticMessage = ChatMessage(
+            role: "user",
+            content: displayContent,
+            timestamp: Date().timeIntervalSince1970,
+            messageId: localMessageID,
+            attachments: messageAttachments.isEmpty ? nil : messageAttachments
+        )
+        messages.append(optimisticMessage)
+
+        cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+
+        do {
+            #if DEBUG
+            if let failure = APIError.takeLaunchArgumentStaleRuntimeFailure() { throw failure }
+            #endif
+            let explicitModelPick = explicitModelPickForChatStart()
+            let sentAt = Date()
+            let response = try await client.startChat(
+                sessionID: sessionID,
+                message: messageForAPI,
+                workspace: currentWorkspace,
+                model: currentModel,
+                modelProvider: requestModelProvider,
+                profile: requestProfileName,
+                explicitModelPick: explicitModelPick,
+                attachments: apiPayloads
+            )
+
+            guard let streamID = response.streamId else {
+                rollbackOptimisticMessage(id: localMessageID)
+                cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+                restorePendingAttachments(attachmentsToRestoreOnFailure)
+                if allowsCompressionContinuation {
+                    drafts.retainRejectedAttachments(attachmentsToRestoreOnFailure.map(ChatDraftAttachment.init(pending:)),
+                                                     for: .session(server: server, sessionID: sessionID))
+                }
+                guard generation == chatSendGeneration, !Task.isCancelled else { return false }
+                sendErrorMessage = response.error ?? String(localized: "The server did not return a stream ID.")
+                return false
+            }
+
+            completeExplicitModelPickForChatStart(explicitModelPick)
+            streamCoordinator.start(
+                streamID: streamID,
+                runStartedAt: response.runStartedAt(sentAt: sentAt)
+            )
+            return true
+        } catch {
+            // Submission-owned cleanup survives navigation/cancellation. Roll
+            // back only this message and merge attachments with newer work.
+            rollbackOptimisticMessage(id: localMessageID)
+            cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+            restorePendingAttachments(attachmentsToRestoreOnFailure)
+            if allowsCompressionContinuation {
+                drafts.retainRejectedAttachments(attachmentsToRestoreOnFailure.map(ChatDraftAttachment.init(pending:)),
+                                                 for: .session(server: server, sessionID: sessionID))
+            }
+            if case .http(409, _) = error as? APIError,
+               (error as? APIError)?.serverCode == "session_rotated" {
+                isCompressionRotated = true
+                compressionRejectionMessage = error.localizedDescription
+            }
+            guard generation == chatSendGeneration, !Task.isCancelled else { return false }
+            if allowsCompressionContinuation,
+               let rotation = (error as? APIError)?.sessionRotation,
+               rotation.continuationSessionID != sessionID {
+                // This POST was rejected. GET may resolve a newer tip, but never replay it.
+                lastError = error
+                sendErrorMessage = error.localizedDescription
+                compressionContinuationID = rotation.continuationSessionID
+                await resolveCompressionContinuation(id: rotation.continuationSessionID, from: sessionID,
+                                                     profile: profile, generation: generation)
+                return false
+            }
+            if let apiError = error as? APIError, apiError.serverCode != "session_rotated",
+               let streamID = apiError.activeStreamID {
+                // The existing run may have started outside this view model. Reconcile
+                // the server transcript first so the SSE tokens attach to the persisted
+                // assistant turn instead of creating a second bubble with only the tail.
+                await loadMessages(modelContext: modelContext)
+                guard generation == chatSendGeneration, !Task.isCancelled else { return false }
+                _ = restoreActiveStreamSnapshotIfAvailable(streamID: streamID)
+                streamingAssistantMessageID = TranscriptTurnClassifier
+                    .currentTurnAssistantAnchorIDs(in: messages, messageOffset: messagesOffset)
+                    .first
+                streamCoordinator.start(streamID: streamID)
+                // The server kept the earlier run, not this newly submitted text.
+                // Report an unaccepted send so ChatView restores the draft while
+                // the coordinator reconnects to the existing response.
+                return false
+            }
+            lastError = error
+            sendErrorMessage = error.localizedDescription
+            sendErrorRuntimeStale = (error as? APIError)?.agentRuntimeStale
+            return false
+        }
+    }
+
+    /// Loads the continuation a `session_rotated` 409 named, for
+    /// `compressionContinuationForNavigation`. The rejected send's catch calls it
+    /// first; a later Send on the sealed parent retries it after a failed load.
+    /// Neither path posts the message again.
+    private func resolveCompressionContinuation(id: String, from sessionID: String,
+                                                profile: String, generation: Int) async {
+        do {
+            let response = try await client.session(id: id, includeMessages: false, messageLimit: nil)
+            guard generation == chatSendGeneration, !Task.isCancelled else { return }
+            if let detail = response.session,
+               let id = detail.sessionId, id != sessionID,
+               APIError.SessionRotation(continuationSessionID: id) != nil,
+               Self.compressionProfile(detail.profile) == profile,
+               Self.compressionProfile(currentProfile) == profile {
+                compressionContinuation = SessionSummary(from: detail)
+            }
+        } catch {
+            guard generation == chatSendGeneration, !Task.isCancelled else { return }
+            lastError = error
+            sendErrorMessage = error.localizedDescription
+        }
+    }
+
+    private static func compressionProfile(_ profile: String?) -> String {
+        nonEmpty(profile) ?? "default"
+    }
+
+    func submitGoal(args rawArgs: String, modelContext: ModelContext? = nil) async -> Bool {
+        guard !isViewingCachedData else {
+            goalErrorMessage = String(localized: "Reconnect to the server to manage goals.")
+            sendErrorMessage = goalErrorMessage
+            return false
+        }
+
+        let args = rawArgs.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !args.isEmpty else { return false }
+
+        if let hermesTurn {
+            return await submitHermesGoal(args, to: hermesTurn)
+        }
+
+        guard let sessionID else {
+            goalErrorMessage = String(localized: "The server did not provide a session ID.")
+            sendErrorMessage = goalErrorMessage
+            return false
+        }
+
+        guard activeStreamID == nil else {
+            goalErrorMessage = String(localized: "Wait for the current response to finish before changing goals.")
+            sendErrorMessage = goalErrorMessage
+            return false
+        }
+
+        isSubmittingGoal = true
+        goalErrorMessage = nil
+        sendErrorMessage = nil
+        lastError = nil
+        defer { isSubmittingGoal = false }
+
+        do {
+            let response = try await client.submitGoal(
+                sessionID: sessionID,
+                args: args,
+                workspace: currentWorkspace,
+                model: currentModel,
+                modelProvider: requestModelProvider,
+                profile: requestProfileName
+            )
+
+            currentGoal = response.goal
+
+            if response.ok == false || response.action?.lowercased() == "error" {
+                goalErrorMessage = response.displayMessage ?? String(localized: "Goal request failed.")
+                sendErrorMessage = goalErrorMessage
+                return false
+            }
+
+            hasActivatedGoalCommand = true
+
+            guard response.kickoffPromptText != nil else {
+                if let message = response.displayMessage {
+                    appendLocalNoticeMessage(message)
+                }
+                return true
+            }
+
+            return await attachGoalKickoffStream(
+                noticeMessage: response.displayMessage,
+                modelContext: modelContext
+            )
+        } catch {
+            lastError = error
+            goalErrorMessage = error.localizedDescription
+            sendErrorMessage = goalErrorMessage
+            return false
+        }
+    }
+
+    /// A `/goal` command in a Hermes session (#1013), through the host's own `/goal`: `exec`
+    /// output shows as a notice, and a `send` message goes out once (#508), shown as the
+    /// host's `display` when it names one; mid-turn the host queues it. A new goal waits for
+    /// a running turn to finish, as on webui; the control verbs do not, since a goal's own
+    /// turns keep the session busy.
+    private func submitHermesGoal(_ args: String, to hermes: HermesChatTurnCoordinator) async -> Bool {
+        func fail(_ message: String) -> Bool {
+            goalErrorMessage = message
+            sendErrorMessage = message
+            return false
+        }
+        guard activeStreamID == nil || HermesChatSideTasks.isGoalControl(args) else {
+            return fail(String(localized: "Wait for the current response to finish before changing goals."))
+        }
+        // A lost prompt holds every send until the chat reattaches, and a goal's message is one.
+        guard !isHermesSubmissionUncertain else {
+            return fail(String(localized: "Wait for Hermes to confirm the last message before changing goals."))
+        }
+
+        isSubmittingGoal = true
+        goalErrorMessage = nil
+        sendErrorMessage = nil
+        lastError = nil
+        defer { isSubmittingGoal = false }
+
+        let reply: HermesGoalReply
+        do {
+            reply = try await hermes.sideTasks.dispatchGoal(args)
+        } catch let error where error is HermesChatTurnCoordinator.NotSent || HermesChatSideTasks.isReaped(error) {
+            // Never sent, or the runtime was reaped and the chat is reattaching.
+            return fail(String(localized: "Reconnect to the server to manage goals."))
+        } catch let refusal as BotSettingFailure {
+            // The host's own reason, such as an invalid `/goal wait`.
+            return fail(refusal.localizedDescription)
+        } catch {
+            return fail(String(localized: "Hermes did not confirm the goal command. Check the goal before trying again."))
+        }
+
+        hasActivatedGoalCommand = true
+        // Mid-turn a notice is pinned above the composer until the turn ends, as on webui.
+        func notify(_ text: String) {
+            if activeStreamID == nil { appendLocalNoticeMessage(text) } else { pinLocalNoticeMessage(text) }
+        }
+        switch reply {
+        case .exec(let output):
+            notify(output)
+            return true
+        case .send(let notice, let message, let display):
+            if let notice { notify(notice) }
+            let mode: BotPromptMode = activeStreamID == nil ? .send : .queue
+            // The goal is set either way; its message is never sent again by itself (#508).
+            guard await submitHermesPrompt(message, mode: mode, to: hermes, shown: display ?? message) else {
+                return fail(String(localized: "Hermes did not confirm the goal command. Check the goal before trying again."))
+            }
+            return true
+        }
+    }
+
+    private func attachGoalKickoffStream(noticeMessage: String?, modelContext: ModelContext?) async -> Bool {
+        await loadMessages(modelContext: modelContext)
+
+        if let errorMessage {
+            goalErrorMessage = errorMessage
+            sendErrorMessage = errorMessage
+            return false
+        }
+
+        guard let streamID = activeStreamID else {
+            if let noticeMessage {
+                appendLocalNoticeMessage(noticeMessage)
+            }
+            return true
+        }
+
+        if streamingAssistantMessageID == nil {
+            restoreActiveStreamSnapshotIfAvailable(streamID: streamID)
+        }
+        if streamingAssistantMessageID == nil {
+            streamingAssistantMessageID = Self.latestAssistantMessageID(in: messages)
+        }
+        if let noticeMessage {
+            pinLocalNoticeMessage(noticeMessage)
+        }
+
+        streamCoordinator.start(streamID: streamID)
+        return true
+    }
+
+    private func rollbackOptimisticMessage(id: String) {
+        messages.removeAll { $0.messageId == id }
+        attachmentCoordinator.removeLocalPreviews(messageID: id)
+    }
+
+    private func restorePendingAttachments(_ attachments: [PendingAttachment]) {
+        attachmentCoordinator.restorePendingAttachments(attachments)
+    }
+
+    private func cacheCurrentMessages(sessionID: String, modelContext: ModelContext?) {
+        guard let modelContext else { return }
+
+        do {
+            try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
+    }
+
+    func cacheCompletedResponse(modelContext: ModelContext) {
+        guard let sessionID else { return }
+        cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+    }
+
+    func clearTranscript() {
+        cancelPendingStreamingScrollTrigger()
+        resetPendingStreamingContentBuffers()
+        clearCompressionAnchorMetadata()
+        messages = []
+        transcriptRevision &+= 1
+        messagesOffset = 0
+        hasOlderMessages = false
+        setCompletedToolCallGroups([])
+        completedReasoningGroups = []
+        liveToolCalls = []
+        liveReasoningText = ""
+        pinnedLocalNotices = []
+        dismissSteeringConfirmation()
+        streamingAssistantMessageID = nil
+        toolCallAnchorMessageID = nil
+        reasoningAnchorMessageID = nil
+        attachmentCoordinator.removeAllLocalPreviews()
+        sendErrorMessage = nil
+    }
+
+    /// `modelContext` is only needed by commands that rewrite the offline cache
+    /// (`/clear`); every other command ignores it.
+    func executeSlashCommand(
+        _ command: SlashCommand,
+        args: String = "",
+        modelContext: ModelContext? = nil
+    ) async -> SlashCommandExecutionResult {
+        switch command.handler {
+        case .clientSide(let action):
+            switch action {
+            case .clear:
+                return await clearConversationFromSlashCommand(modelContext: modelContext)
+            case .stop:
+                await cancelActiveStream()
+                return .executed(message: nil)
+            case .new:
+                if let hermesTurn {
+                    return newHermesSessionChat(profile: hermesTurn.settings.profile).map { .openedHermesSession($0) } ?? .notDelivered
+                }
+                return await createSessionFromSlashCommand()
+            case .help:
+                return .executed(message: Self.slashCommandHelpText)
+            case .sessions:
+                return hermesSessionList(searching: "")
+            case .resume:
+                return await resumeHermesSession(named: args)
+            }
+        case .serverSide(let action):
+            return await executeServerSideSlashCommand(action, args: args)
+        case .unsupported:
+            return .unsupported(friendlyMessage: SlashCommandExecutor.unsupportedMessage(for: command.name))
+        }
+    }
+
+    private func executeServerSideSlashCommand(
+        _ action: ServerSideAction,
+        args: String
+    ) async -> SlashCommandExecutionResult {
+        switch action {
+        case .model:
+            return await switchModelFromSlashCommand(args)
+        case .workspace:
+            return await switchWorkspaceFromSlashCommand(args)
+        case .reasoning:
+            return await switchReasoningFromSlashCommand(args)
+        case .title:
+            return await renameSessionFromSlashCommand(args)
+        case .personality:
+            return await setPersonalityFromSlashCommand(args)
+        case .skills:
+            return await searchSkillsFromSlashCommand(args)
+        case .branch:
+            return await branchSessionFromSlashCommand(args)
+        case .undo:
+            return await undoLastExchangeFromSlashCommand()
+        case .retry:
+            return await retryLastTurnFromSlashCommand()
+        case .compress:
+            return await compressSessionFromSlashCommand(args)
+        case .queue:
+            return await queueMessageFromSlashCommand(args)
+        case .steer:
+            return await steerResponseFromSlashCommand(args)
+        case .interrupt:
+            return await interruptResponseFromSlashCommand(args)
+        case .status:
+            return .executed(message: statusMessageFromSlashCommand())
+        case .btw:
+            return await askBtwFromSlashCommand(args)
+        case .background:
+            return await startBackgroundFromSlashCommand(args)
+        case .goal:
+            return await submitGoalFromSlashCommand(args)
+        case .yolo:
+            return await toggleHermesApprovalBypassFromSlashCommand()
+        }
+    }
+
+    func submitStreamingMessage(
+        _ draft: String,
+        behavior: StreamingSendBehavior
+    ) async -> SlashCommandExecutionResult {
+        if let hermesTurn {
+            return await submitHermesStreamingMessage(draft, behavior: behavior, to: hermesTurn)
+        }
+        switch behavior {
+        case .steer:
+            return await steerResponseFromSlashCommand(draft)
+        case .interrupt:
+            return await interruptResponseFromSlashCommand(draft)
+        case .queue:
+            return await queueMessageFromSlashCommand(draft)
+        }
+    }
+
+    private func queueMessageFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let message = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /queue <message>"))
+        }
+
+        guard activeStreamID != nil else {
+            let sent = await sendMessage(message)
+            return sent ? .executed(message: nil) : .unsupported(friendlyMessage: sendErrorMessage ?? String(localized: "Could not send the queued message."))
+        }
+
+        // `queuedMessagesReceipt` says it's queued.
+        enqueueQueuedSlashMessage(message, attachments: attachmentCoordinator.consumePendingAttachments())
+        return .executed(message: nil)
+    }
+
+    private func steerResponseFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let message = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /steer <message>"))
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        guard let steeredStreamID = activeStreamID else {
+            let sent = await sendMessage(message)
+            return sent ? .executed(message: nil) : .unsupported(friendlyMessage: sendErrorMessage ?? String(localized: "Could not send the steering message."))
+        }
+
+        // Staged attachments ride along as an attached-files note. No outcome
+        // stops the run: the server's steer contract leaves Queue and Stop &
+        // send to the user.
+        let steeredAttachments = attachmentCoordinator.pendingAttachments
+        let steerText = PendingAttachment.steerMessageText(draft: message, attachments: steeredAttachments)
+
+        switch await client.steerChat(sessionID: sessionID, text: steerText) {
+        case .delivered:
+            appendLocalSteerEcho(steerText)
+            showSteeringConfirmation(String(localized: "Steering hint delivered."))
+            // Delete the durable copies of the files that rode along, as
+            // `sendMessage` does.
+            takeSteeredAttachments(steeredAttachments)
+            for attachment in steeredAttachments {
+                guard let fileName = attachment.draftFileName else { continue }
+                await attachmentCoordinator.deleteDraftCopy(named: fileName, attachmentID: attachment.id)
+            }
+            return .executed(message: nil)
+        case .refused(let transportError):
+            if let transportError {
+                lastError = transportError
+            }
+            if activeStreamID == steeredStreamID {
+                let title = String(localized: "Couldn't steer")
+                steerFailureMessage = transportError.map { "\(title)\n\($0.localizedDescription)" } ?? title
+                return .notDelivered
+            }
+            // The run ended while the steer was in flight, so "Couldn't steer"
+            // and its Retry would outlive it. A network failure is now a failed
+            // send; a server refusal goes out as a normal turn, like `.runEnded`.
+            if let transportError {
+                sendErrorMessage = transportError.localizedDescription
+                return .notDelivered
+            }
+            enqueueQueuedSlashMessage(message, attachments: takeSteeredAttachments(steeredAttachments), atFront: true)
+        case .serverQueued:
+            enqueueQueuedSlashMessage(message, attachments: takeSteeredAttachments(steeredAttachments))
+        case .runEnded:
+            // Queue first, then ask the server whether the run is over. When it
+            // is and the transcript has the reply, the coordinator finishes the
+            // run, which drains the queue as a normal send. Otherwise the live
+            // stream still owns the ending, and its own finish drains the queue.
+            enqueueQueuedSlashMessage(message, attachments: takeSteeredAttachments(steeredAttachments), atFront: true)
+            await streamCoordinator.refreshTranscriptIfCompleted(streamID: steeredStreamID)
+        }
+
+        // The run may have finished while the steer was in flight, after its
+        // own drain found the queue empty. While it runs, `queuedMessagesReceipt`
+        // says the message is queued.
+        drainQueuedSlashMessageIfIdle()
+        return .executed(message: nil)
+    }
+
+    /// Takes the files that rode along on a steer out of the composer and
+    /// returns the ones still staged. Files staged while the steer was in
+    /// flight stay for the next message.
+    @discardableResult
+    private func takeSteeredAttachments(_ steered: [PendingAttachment]) -> [PendingAttachment] {
+        guard !steered.isEmpty else { return [] }
+        let steeredIDs = Set(steered.map(\.id))
+        let staged = attachmentCoordinator.pendingAttachments
+        attachmentCoordinator.replacePendingAttachments(staged.filter { !steeredIDs.contains($0.id) })
+        return staged.filter { steeredIDs.contains($0.id) }
+    }
+
+    /// Clears "Couldn't steer" once the user moves on: the next send, a draft
+    /// edit, or the end of the run.
+    func clearSteerFailure() {
+        // Guarded: draft edits call this on every keystroke, and an
+        // `@Observable` write notifies even when the value is unchanged.
+        guard steerFailureMessage != nil else { return }
+        steerFailureMessage = nil
+    }
+
+    /// Appends the local echo of an accepted steer immediately, so the hint is
+    /// visible before the server persists it. The `local-steer-` id marks it as
+    /// optimistic: when the persisted row arrives in `.done` or a reload, the
+    /// steer-aware merge drops this echo instead of duplicating it.
+    private func appendLocalSteerEcho(_ text: String) {
+        messages.append(ChatMessage(
+            role: "user",
+            content: text,
+            timestamp: Date().timeIntervalSince1970,
+            messageId: "local-steer-\(UUID().uuidString)",
+            displayKind: ChatMessage.steerDisplayKind
+        ))
+    }
+
+    private func interruptResponseFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let message = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /interrupt <message>"))
+        }
+
+        guard activeStreamID != nil else {
+            let sent = await sendMessage(message)
+            return sent ? .executed(message: nil) : .unsupported(friendlyMessage: sendErrorMessage ?? String(localized: "Could not send the interrupt message."))
+        }
+
+        enqueueQueuedSlashMessage(message, attachments: attachmentCoordinator.consumePendingAttachments(), atFront: true)
+        let handOverCount = queueHandOverCount
+        await cancelActiveStream()
+
+        // The chat was left while the cancel was in flight, so the message is
+        // in the draft now (#857) and nothing is queued to report.
+        guard queueHandOverCount == handOverCount else { return .executed(message: nil) }
+
+        if activeStreamID != nil {
+            return .executed(message: Self.interruptQueuedFallbackNotice)
+        }
+
+        return .executed(message: String(localized: "Interrupted the current response and queued your message to send next."))
+    }
+
+    /// Pinned when an interrupt couldn't stop the run. It describes the queue,
+    /// so `takeQueuedMessages()` unpins it.
+    private static var interruptQueuedFallbackNotice: String {
+        String(localized: "Could not stop the current response yet, so the interrupt message was queued for the next turn.")
+    }
+
+    private func statusMessageFromSlashCommand() -> String {
+        let running = activeStreamID == nil ? String(localized: "No") : String(localized: "Yes")
+        let queued = queuedSlashMessages.count
+        let backgroundTasks = backgroundPromptsByTaskID.count
+        let profile = selectedProfileName ?? currentProfile ?? "default"
+        let workspace = currentWorkspace ?? String(localized: "Unknown")
+        let model = currentModel ?? String(localized: "Unknown")
+        let provider = currentModelProvider ?? providerFromModel(model) ?? String(localized: "Unknown")
+        let messageCount = messages.filter { $0.role != "tool" }.count
+        let tokens = statusTokenLine()
+
+        return String(localized: """
+        Session status:
+
+        - Session ID: \(sessionID ?? "Unknown")
+        - Title: \(displayTitle)
+        - Model: \(model)
+        - Provider: \(provider)
+        - Profile: \(profile)
+        - Workspace: \(workspace)
+        - Agent running: \(running)
+        - Queued messages: \(queued)
+        - Background tasks: \(backgroundTasks)
+        - Messages loaded: \(messageCount)
+        - Tokens: \(tokens)
+        """)
+    }
+
+    private func askBtwFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let question = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /btw <question>"))
+        }
+
+        if let hermesTurn {
+            return await askHermesBtw(question, sideTasks: hermesTurn.sideTasks)
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        guard !isViewingCachedData else {
+            return .unsupported(friendlyMessage: String(localized: "Reconnect to the server to ask a side question."))
+        }
+
+        guard !isCLISession else {
+            return .unsupported(friendlyMessage: String(localized: "/btw is available for WebUI sessions only."))
+        }
+
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before using /btw."))
+        }
+
+        guard activeBtwStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current /btw answer to finish first."))
+        }
+
+        do {
+            let response = try await client.startBtw(sessionID: sessionID, question: question)
+            if let error = response.error, !error.isEmpty {
+                return .unsupported(friendlyMessage: error)
+            }
+
+            guard let streamID = response.streamId, !streamID.isEmpty else {
+                return .unsupported(friendlyMessage: String(localized: "The server did not return a /btw stream."))
+            }
+
+            startBtwStream(streamID: streamID, question: question)
+            return .executed(message: nil)
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func startBackgroundFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let prompt = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /background <prompt>"))
+        }
+
+        if let hermesTurn {
+            return await startHermesBackground(prompt, sideTasks: hermesTurn.sideTasks)
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        guard !isViewingCachedData else {
+            return .unsupported(friendlyMessage: String(localized: "Reconnect to the server to start a background task."))
+        }
+
+        guard !isCLISession else {
+            return .unsupported(friendlyMessage: String(localized: "/background is available for WebUI sessions only."))
+        }
+
+        do {
+            let response = try await client.startBackground(sessionID: sessionID, prompt: prompt)
+            if let error = response.error, !error.isEmpty {
+                return .unsupported(friendlyMessage: error)
+            }
+
+            guard let taskID = response.taskId, !taskID.isEmpty else {
+                return .unsupported(friendlyMessage: String(localized: "The server did not return a background task."))
+            }
+
+            backgroundPromptsByTaskID[taskID] = prompt
+            startBackgroundPollingIfNeeded(parentSessionID: sessionID)
+            return .executed(message: String(localized: "Background task started. I'll add the result here when it completes."))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    /// `/btw` in a Hermes session (#1013): asked even while a turn runs, and answered in the
+    /// panel, never the transcript. One at a time. A question that was not sent or was
+    /// refused keeps its draft.
+    private func askHermesBtw(_ question: String, sideTasks: HermesChatSideTasks) async -> SlashCommandExecutionResult {
+        guard !sideTasks.isAsking else {
+            return notDelivered(String(localized: "Wait for the current /btw answer to finish first."))
+        }
+        do {
+            try await sideTasks.ask(question)
+        } catch HermesSideTaskFailure.notSent {
+            return notDelivered(String(localized: "Reconnect to the server to ask a side question."))
+        } catch {
+            return notDelivered(String(localized: "Hermes did not accept this side question."))
+        }
+        return .executed(message: nil)
+    }
+
+    /// `/background` in a Hermes session (#1013): its card shows the task running until the
+    /// result replaces it. A task that did not start, or whose start was not confirmed,
+    /// keeps its draft and is never sent again by itself.
+    private func startHermesBackground(_ prompt: String, sideTasks: HermesChatSideTasks) async -> SlashCommandExecutionResult {
+        do {
+            try await sideTasks.startBackground(prompt)
+        } catch HermesSideTaskFailure.notSent {
+            return notDelivered(String(localized: "Reconnect to the server to start a background task."))
+        } catch HermesSideTaskFailure.refused {
+            return notDelivered(String(localized: "Hermes did not start the background task."))
+        } catch {
+            return notDelivered(String(localized: "Hermes did not confirm the background task. It may still run, but its result can't show here."))
+        }
+        return .executed(message: nil)
+    }
+
+    /// Keeps the draft, and says why on the composer's status line.
+    private func notDelivered(_ message: String) -> SlashCommandExecutionResult {
+        sendErrorMessage = message
+        return .notDelivered
+    }
+
+    // MARK: Hermes slash commands
+
+    /// The host's slash commands in a Hermes chat (#1036); nil on webui.
+    var hermesSlashCommands: HermesSlashCommands? { hermesTurn?.slashCommands }
+
+    /// The agent commands the composer offers: a Hermes host's catalog, less what the chat
+    /// refuses (#1145), or webui's list.
+    var composerAgentCommands: [AgentCommand] {
+        hermesTurn?.slashCommands.commands ?? agentCommands
+    }
+
+    /// The skills the composer offers: a Hermes host's catalog, or webui's list.
+    var composerSkillSuggestions: [SkillSlashSuggestion] {
+        hermesTurn?.slashCommands.catalog.skills ?? skillSlashSuggestions
+    }
+
+    /// Runs a Hermes chat's draft that opens with `/name` (#1036): Hermex's own command, the
+    /// #702 notice for a held one, a skill's expansion, or the host's `slash.exec`. Nil when
+    /// the name is no command this chat or its host knows, so the draft is sent as typed.
+    func runHermesSlashCommand(_ draft: String, modelContext: ModelContext? = nil) async -> SlashCommandExecutionResult? {
+        guard let hermesTurn, let invocation = BotSlashCatalog.invocation(in: draft) else { return nil }
+        return await runHermesSlashCommand(invocation, line: draft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                           on: hermesTurn, followsAlias: false, modelContext: modelContext)
+    }
+
+    private func runHermesSlashCommand(
+        _ invocation: BotSlashInvocation,
+        line: String,
+        on hermes: HermesChatTurnCoordinator,
+        followsAlias: Bool,
+        modelContext: ModelContext?
+    ) async -> SlashCommandExecutionResult? {
+        let slash = hermes.slashCommands
+        let name = invocation.name
+        let reply: HermesSlashReply
+        do {
+            switch slash.route(name) {
+            case .refused(let message):
+                return .unsupported(friendlyMessage: message)
+            case .appOwned(let command):
+                return await executeSlashCommand(command, args: invocation.argument, modelContext: modelContext)
+            case .held:
+                return .unsupported(friendlyMessage: String(localized: "Hermex can't run /\(name) in a Hermes chat yet (#702)."))
+            case .skill(let skill):
+                reply = try await slash.expand(skill, argument: invocation.argument, typed: line)
+            case .text where !followsAlias:
+                return nil
+            case .host, .text:
+                guard !line.contains(where: \.isNewline) else {
+                    return notDelivered(String(localized: "Run /\(name) on one line."))
+                }
+                reply = try await slash.run(line)
+            }
+        } catch {
+            return hermesSlashFailure(error, name: name)
+        }
+
+        switch reply {
+        case .notice(let text):
+            notifyLocally(text)
+            return .executed(message: nil)
+        case .send(let message, let shown, let notice):
+            if let notice { notifyLocally(notice) }
+            // A running turn queues it, as any send does.
+            let mode: BotPromptMode = activeStreamID == nil ? .send : .queue
+            return await submitHermesPrompt(message, mode: mode, to: hermes, shown: shown) ? .executed(message: nil) : .notDelivered
+        case .prefill(let message, let notice):
+            if let notice { notifyLocally(notice) }
+            return .prefill(message)
+        case .alias(let target):
+            // Run once, with the typed argument; an alias to another alias is refused.
+            let line = invocation.argument.isEmpty ? "/\(target)" : "/\(target) \(invocation.argument)"
+            guard !followsAlias, let next = BotSlashCatalog.invocation(in: line) else {
+                return notDelivered(String(localized: "/\(name) points to another alias, so Hermex didn't run it."))
+            }
+            return await runHermesSlashCommand(next, line: line, on: hermes, followsAlias: true, modelContext: modelContext)
+        }
+    }
+
+    /// Why a Hermes slash command did not run. The draft stays. A refusal is the host's own
+    /// message, except in a chat with nothing sent yet, where there is nothing to run it on.
+    private func hermesSlashFailure(_ error: Error, name: String) -> SlashCommandExecutionResult {
+        switch error {
+        case is HermesChatTurnCoordinator.NotSent:
+            return notDelivered(String(localized: "Reconnect to the server to run /\(name)."))
+        case BotSettingFailure.rejected(_, let message):
+            guard messages.contains(where: { $0.role == "user" }) else {
+                return notDelivered(String(localized: "Send a message first, then run /\(name)."))
+            }
+            return notDelivered(message)
+        case BotFailure.rejected:
+            return notDelivered(String(localized: "Hermes did not accept /\(name)."))
+        default:
+            return notDelivered(String(localized: "Hermes did not confirm /\(name). Check before running it again."))
+        }
+    }
+
+    /// A notice in the transcript, or pinned above the composer while a turn runs.
+    private func notifyLocally(_ text: String) {
+        if activeStreamID == nil { appendLocalNoticeMessage(text) } else { pinLocalNoticeMessage(text) }
+    }
+
+    /// `/yolo` in a Hermes chat (#1036): this session's approval bypass, through the same
+    /// `config.set yolo` as the approval card's Skip all and the bypass pill.
+    private func toggleHermesApprovalBypassFromSlashCommand() async -> SlashCommandExecutionResult {
+        guard let requests = hermesRequests else {
+            return .unsupported(friendlyMessage: SlashCommandExecutor.unsupportedMessage(for: "yolo"))
+        }
+        if requests.approvalBypass, !requests.mayTurnOffApprovalBypass {
+            return notDelivered(String(localized: "This Hermes host approves every command itself, so approvals can't be turned back on from here."))
+        }
+        sendErrorMessage = nil
+        guard let enabled = await requests.toggleApprovalBypass() else {
+            return sendErrorMessage == nil
+                ? notDelivered(String(localized: "Reconnect to the server to run /\("yolo")."))
+                : .notDelivered
+        }
+        notifyLocally(enabled
+                      ? String(localized: "Approvals are skipped in this chat. Run /yolo again to turn them back on.")
+                      : String(localized: "Approvals are back on in this chat."))
+        return .executed(message: nil)
+    }
+
+    /// A typed `/goal`. On failure a Hermes session keeps the draft, as its sends do (#1013),
+    /// with the status line `submitGoal` set; nothing is sent again by itself. Webui clears it.
+    private func submitGoalFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let goalArgs = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        let didSubmit = await submitGoal(args: goalArgs.isEmpty ? "status" : goalArgs)
+        if didSubmit { return .executed(message: nil) }
+        if hermesTurn != nil { return .notDelivered }
+        return .unsupported(friendlyMessage: goalErrorMessage ?? String(localized: "Could not submit the goal command."))
+    }
+
+    private func switchModelFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let requestedModel = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !requestedModel.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /model <id>"))
+        }
+
+        if let hermesSettings {
+            return await switchHermesModelFromSlashCommand(requestedModel, settings: hermesSettings)
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        guard canRunConfigurationSlashCommand(String(localized: "change models")) else {
+            return .unsupported(friendlyMessage: composerConfigurationErrorMessage ?? String(localized: "Model switching is unavailable."))
+        }
+
+        let match = modelOption(matching: requestedModel)
+
+        isUpdatingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        sendErrorMessage = nil
+        lastError = nil
+        defer { isUpdatingComposerConfiguration = false }
+
+        do {
+            let response = try await client.updateSession(
+                id: sessionID,
+                workspace: currentWorkspace,
+                model: match?.id ?? requestedModel,
+                modelProvider: match?.providerID
+            )
+
+            currentModel = response.session?.model ?? match?.id ?? requestedModel
+            currentModelProvider = response.session?.modelProvider ?? match?.providerID ?? currentModelProvider
+            currentWorkspace = response.session?.workspace ?? currentWorkspace
+            pendingExplicitModelPick = true
+            await refreshReasoningEffortGating()
+            return .executed(message: nil)
+        } catch {
+            lastError = error
+            composerConfigurationErrorMessage = error.localizedDescription
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    /// `/model` in a Hermes session (#1015): the name resolves against `model.options` and
+    /// goes through the chip's pick, its expensive-model confirm included. A name the
+    /// catalog lacks is refused here rather than sent to the host as a guess.
+    private func switchHermesModelFromSlashCommand(_ requestedModel: String,
+                                                   settings: HermesChatSettings) async -> SlashCommandExecutionResult {
+        guard let option = settings.model(matching: requestedModel) else {
+            return .unsupported(friendlyMessage: String(localized: "This host doesn't offer a model named \(requestedModel)."))
+        }
+        guard !option.matchesSelection(modelID: selectedModelID, providerID: selectedModelProviderID) else {
+            return .executed(message: nil)
+        }
+        if await settings.select(option) || settings.controls.confirmation != nil { return .executed(message: nil) }
+        return .unsupported(friendlyMessage: settings.controls.errorMessage
+                            ?? String(localized: "Wait for this chat to connect before changing models."))
+    }
+
+    private func switchWorkspaceFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let requestedWorkspace = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !requestedWorkspace.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /workspace <path>"))
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        guard canRunConfigurationSlashCommand(String(localized: "change workspace")) else {
+            return .unsupported(friendlyMessage: composerConfigurationErrorMessage ?? String(localized: "Workspace switching is unavailable."))
+        }
+
+        let workspace = workspacePath(matching: requestedWorkspace) ?? requestedWorkspace
+
+        isUpdatingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        sendErrorMessage = nil
+        lastError = nil
+        defer { isUpdatingComposerConfiguration = false }
+
+        do {
+            let response = try await client.updateSession(
+                id: sessionID,
+                workspace: workspace,
+                model: currentModel,
+                modelProvider: currentModelProvider
+            )
+
+            currentWorkspace = response.session?.workspace ?? workspace
+            currentModel = response.session?.model ?? currentModel
+            currentModelProvider = response.session?.modelProvider ?? currentModelProvider
+            workspaceSuggestions = workspaceRoots.compactMap(\.path)
+            return .executed(message: nil)
+        } catch {
+            lastError = error
+            composerConfigurationErrorMessage = error.localizedDescription
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func switchReasoningFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let reasoning = args.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let hermesSettings {
+            return await switchHermesReasoningFromSlashCommand(reasoning, settings: hermesSettings)
+        }
+        guard !reasoning.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /reasoning show|hide|none|minimal|low|medium|high|xhigh"))
+        }
+
+        guard canRunConfigurationSlashCommand(String(localized: "change reasoning")) else {
+            return .unsupported(friendlyMessage: composerConfigurationErrorMessage ?? String(localized: "Reasoning changes are unavailable."))
+        }
+
+        isUpdatingComposerConfiguration = true
+        composerConfigurationErrorMessage = nil
+        sendErrorMessage = nil
+        lastError = nil
+        defer { isUpdatingComposerConfiguration = false }
+
+        do {
+            if Self.reasoningDisplayArgs.contains(reasoning) {
+                _ = try await client.saveReasoningDisplay(reasoning)
+            } else if Self.reasoningEffortArgs.contains(reasoning) {
+                guard let sessionID = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !sessionID.isEmpty else {
+                    let message = String(localized: "The server did not provide a session ID.")
+                    composerConfigurationErrorMessage = message
+                    return .unsupported(friendlyMessage: message)
+                }
+                let response = try await client.saveReasoningEffort(
+                    reasoning,
+                    sessionID: sessionID
+                )
+                selectedReasoningEffort = response.effectiveEffort ?? reasoning
+            } else {
+                return .unsupported(friendlyMessage: String(localized: "Unknown reasoning level: \(reasoning)."))
+            }
+            return .executed(message: nil)
+        } catch {
+            lastError = error
+            composerConfigurationErrorMessage = error.localizedDescription
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func renameSessionFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let title = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            return .executed(message: String(localized: "Current title: **\(displayTitle)**\n\nUse `/title <text>` to rename this session."))
+        }
+        if let hermesTurn { return await renameHermesSessionFromSlashCommand(title, on: hermesTurn) }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before renaming the session."))
+        }
+
+        lastError = nil
+        sendErrorMessage = nil
+
+        do {
+            let response = try await client.renameSession(id: sessionID, title: title)
+            if let error = response.error {
+                return .unsupported(friendlyMessage: error)
+            }
+            displayTitle = Self.displayTitle(from: response.session?.title ?? title)
+            return .executed(message: String(localized: "Title set to **\(displayTitle)**."))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    /// `/title` in a Hermes chat (#1048): `session.title` on the chat's runtime, so Desktop and the
+    /// list see it at once. The host's refusal (a title in use, too long) keeps the draft.
+    private func renameHermesSessionFromSlashCommand(
+        _ title: String,
+        on hermes: HermesChatTurnCoordinator
+    ) async -> SlashCommandExecutionResult {
+        sendErrorMessage = nil
+        do {
+            let kept = try await hermes.slashCommands.rename(title)
+            applyLiveActivitySessionTitle(kept)
+            return .executed(message: String(localized: "Title set to **\(displayTitle)**."))
+        } catch let error where HermesChatSideTasks.isReaped(error) {
+            // The chat is reattaching to a new runtime; nothing was renamed.
+            return notDelivered(String(localized: "Reconnect to the server to run /\("title")."))
+        } catch BotSettingFailure.rejected(_, let message) {
+            return notDelivered(message)
+        } catch {
+            return hermesSlashFailure(error, name: "title")
+        }
+    }
+
+    private func setPersonalityFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        let requestedPersonality = args.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let hermesSettings {
+            return await askHermesPersonalityFromSlashCommand(requestedPersonality, settings: hermesSettings)
+        }
+        guard !requestedPersonality.isEmpty else {
+            return await personalityListMessage()
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before changing personality."))
+        }
+
+        let normalized = requestedPersonality.lowercased()
+        let name = Self.personalityClearArgs.contains(normalized) ? "" : requestedPersonality
+
+        lastError = nil
+        sendErrorMessage = nil
+
+        do {
+            let response = try await client.setPersonality(sessionID: sessionID, name: name)
+            if let error = response.error {
+                return .unsupported(friendlyMessage: error)
+            }
+
+            if name.isEmpty || response.personality == nil {
+                return .executed(message: String(localized: "Personality cleared."))
+            }
+
+            return .executed(message: String(localized: "Personality set to **\(response.personality ?? name)**."))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func personalityListMessage() async -> SlashCommandExecutionResult {
+        do {
+            let personalities = (try await client.personalities()).personalities ?? []
+            return Self.personalityListMessage(personalities.compactMap { personality in
+                guard let name = personality.name, !name.isEmpty else { return nil }
+                return (name, personality.description ?? "")
+            })
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    /// The `/personality` list a webui server or Hermes host answered, with how to pick one.
+    private static func personalityListMessage(
+        _ personalities: [(name: String, description: String)]
+    ) -> SlashCommandExecutionResult {
+        guard !personalities.isEmpty else {
+            return .executed(message: String(localized: "No personalities are configured on the server."))
+        }
+        let list = personalities.map { personality in
+            personality.description.isEmpty
+                ? "- **\(personality.name)**"
+                : "- **\(personality.name)** - \(personality.description)"
+        }
+        .joined(separator: "\n")
+        return .executed(message: String(localized: "Available personalities:\n\n\(list)\n\nUse `/personality <name>` or `/personality none`."))
+    }
+
+    /// `/reasoning` in a Hermes session (#1016): a level goes through the effort chip's pick,
+    /// for this chat only. Display words are refused before anything is sent: on the host they
+    /// rewrite the display settings every client shares.
+    private func switchHermesReasoningFromSlashCommand(
+        _ level: String,
+        settings: HermesChatSettings
+    ) async -> SlashCommandExecutionResult {
+        let ladder = settings.effortLevels
+        guard !level.isEmpty else {
+            return .unsupported(friendlyMessage: String(localized: "Usage: /reasoning \(ladder.joined(separator: "|"))"))
+        }
+        guard HermesModelCatalog.effortLevels.contains(level) else {
+            if Self.hermesReasoningDisplayArgs.contains(level) {
+                return .unsupported(friendlyMessage: String(localized: "On a Hermes host, /reasoning \(level) changes display settings for every client, so Hermex doesn't send it."))
+            }
+            return .unsupported(friendlyMessage: String(localized: "Unknown reasoning level: \(level)."))
+        }
+        guard settings.showsEffort else {
+            return .unsupported(friendlyMessage: String(localized: "This model doesn't take a reasoning level."))
+        }
+        guard ladder.contains(level) else {
+            return .unsupported(friendlyMessage: String(localized: "This model can't turn reasoning off."))
+        }
+        guard level != settings.controls.effort else { return .executed(message: nil) }
+        // As the effort menu is, while a reply runs.
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before changing reasoning."))
+        }
+        if await settings.select(effort: level) { return .executed(message: nil) }
+        return .unsupported(friendlyMessage: settings.controls.errorMessage
+                            ?? String(localized: "Wait for this chat to connect before changing reasoning."))
+    }
+
+    /// `/personality` in a Hermes session (#1016). Bare, it lists the host's personalities. A
+    /// name waits for the user to confirm it (`HermesChatSettings.pendingPersonality`), because
+    /// the host writes it to the Profile's default; `none`, `default` and `clear` clear it.
+    private func askHermesPersonalityFromSlashCommand(
+        _ requested: String,
+        settings: HermesChatSettings
+    ) async -> SlashCommandExecutionResult {
+        guard !requested.isEmpty else {
+            do {
+                return Self.personalityListMessage(try await settings.personalities())
+            } catch {
+                return .unsupported(friendlyMessage: error.localizedDescription)
+            }
+        }
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before changing personality."))
+        }
+        settings.ask(personality: Self.personalityClearArgs.contains(requested.lowercased()) ? "none" : requested)
+        return .executed(message: nil)
+    }
+
+    /// Sends the `/personality` change the user confirmed. The notice names the Profile it changed.
+    func confirmHermesPersonality(_ name: String) async -> SlashCommandExecutionResult {
+        guard let settings = hermesSettings else { return .notDelivered }
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before changing personality."))
+        }
+        let profile = selectedProfileTitle
+        do {
+            try await settings.setPersonality(name)
+            return .executed(message: name == "none"
+                             ? String(localized: "Personality cleared for **\(profile)**.")
+                             : String(localized: "Personality for **\(profile)** set to **\(name)**."))
+        } catch {
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func searchSkillsFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        do {
+            let suggestions = try await skillSuggestionsForSlashCommand()
+            if let invocation = SlashSkillFormatter.invocation(from: args, suggestions: suggestions) {
+                let sent = await sendMessage(SlashSkillFormatter.messageText(for: invocation))
+                if sent {
+                    return .executed(message: nil)
+                }
+                return .unsupported(friendlyMessage: sendErrorMessage ?? String(localized: "Could not send the skill message."))
+            }
+
+            return .executed(message: SlashSkillFormatter.message(for: suggestions, query: SlashSkillFormatter.skillQuery(from: args)))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    func executeSkillShortcutCommand(name: String, args: String) async -> SlashCommandExecutionResult? {
+        do {
+            let suggestions = try await skillSuggestionsForSlashCommand()
+            guard let skill = SlashSkillFormatter.skill(named: name, in: suggestions) else {
+                return nil
+            }
+
+            let message = args.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !message.isEmpty else {
+                return .executed(message: SlashSkillFormatter.detailMessage(for: skill))
+            }
+
+            let commandText = "/\(skill.slashName) \(message)"
+            let sent = await sendMessage(commandText)
+            if sent {
+                return .executed(message: nil)
+            }
+            return .unsupported(friendlyMessage: sendErrorMessage ?? String(localized: "Could not send the skill message."))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func skillSuggestionsForSlashCommand() async throws -> [SkillSlashSuggestion] {
+        if hasLoadedSkillSlashSuggestions {
+            return skillSlashSuggestions
+        }
+
+        let response = try await client.skills()
+        let suggestions = SlashSkillFormatter.suggestions(from: response.skills ?? [])
+        applySkillSlashSuggestions(suggestions)
+        hasLoadedSkillSlashSuggestions = true
+        return suggestions
+    }
+
+    /// The one way the skill list changes, so the chip catalog can never fall
+    /// out of step with it.
+    private func applySkillSlashSuggestions(_ suggestions: [SkillSlashSuggestion]) {
+        let previousCatalog = skillChipCatalog
+        skillSlashSuggestions = suggestions
+        skillChipCatalog = ComposerChipCatalog(skills: suggestions)
+        composerChipCatalog = skillChipCatalog.withFilePaths(fileChipPaths)
+
+        // A catalog that draws differently redraws the transcript: sent `/slug`
+        // text becomes a chip, or an existing chip changes size or goes away.
+        // Signal the relayout so a reader pinned to the bottom stays there. A
+        // list that came back the same changes nothing and says nothing.
+        if skillChipCatalog != previousCatalog {
+            transcriptRelayoutScrollToken += 1
+        }
+    }
+
+    /// Where this chat's `@` panel and `@path` chips look files up: a webui session's workspace
+    /// listings, or a Hermes chat's `complete.path` while its folder is on a `local` backend,
+    /// the same gate as Files (#1113). Nil closes the panel and leaves `@…` as text.
+    private enum FileReferenceSource {
+        case webui(sessionID: String)
+        case hermes(HermesChatTurnCoordinator)
+    }
+
+    private var fileReferenceSource: FileReferenceSource? {
+        if let hermesTurn { return hermesTurn.workspace?.isLocal == true ? .hermes(hermesTurn) : nil }
+        guard let sessionID, !sessionID.isEmpty else { return nil }
+        return .webui(sessionID: sessionID)
+    }
+
+    /// Whether the composer opens its `@` panel for this chat.
+    var offersFilePathSearch: Bool { fileReferenceSource != nil }
+
+    /// One query's rows for the composer's `@` panel, into `filePathSearch`. A Hermes chat's
+    /// host ranks its own rows; a webui chat's folder is listed and ranked here.
+    func searchFilePaths(_ query: String) async {
+        switch fileReferenceSource {
+        case .webui(let sessionID):
+            await filePathSearch.search(query, sessionID: sessionID, apiClient: client)
+        case .hermes(let turn):
+            await filePathSearch.search(query) { try await turn.completeFilePaths($0) }
+        case nil:
+            return
+        }
+    }
+
+    /// Remembers a workspace file the user picked in the composer, so its
+    /// `@path` draws as a chip there and in the sent message.
+    ///
+    /// Recorded straight away rather than waiting on the server: the panel only
+    /// ever offers paths a listing just returned, so the chip appears with the
+    /// insertion instead of a beat later.
+    func recordFileChipReference(_ path: String) {
+        let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return }
+
+        checkedFileChipCandidates.insert(path)
+        guard !fileChipPaths.contains(path) else { return }
+
+        fileChipPaths.insert(path)
+        composerChipCatalog = skillChipCatalog.withFilePaths(fileChipPaths)
+        // A wider catalog can turn sent `@path` text into a chip, which changes
+        // the height of a bubble already on screen.
+        transcriptRelayoutScrollToken += 1
+    }
+
+    /// Confirms the `@path` candidates in `draft` and in the transcript's user
+    /// messages against the session's workspace.
+    ///
+    /// What the composer picked lives in this view model, and this view model
+    /// dies when the chat is left — so on the way back in, and on any other
+    /// device, the only thing that knows a `@word` is a file is the server. Each
+    /// candidate's parent folder is listed once, through the same cache the `@`
+    /// panel fills (a Hermes chat asks `complete.path` instead), and every
+    /// candidate the listing contains becomes a chip in both the composer and
+    /// the transcript.
+    ///
+    /// The work lives on a task this view model owns, like the skill loader: a
+    /// caller cancelled by an unrelated view update cannot take the listings
+    /// down with it, and a caller arriving mid-pass waits for that pass rather
+    /// than starting a second one over the same folders.
+    func loadFileChipReferences(draft: String) async {
+        while let existing = fileChipReferenceLoad {
+            await existing.value
+        }
+
+        // Resolved after the wait: the workspace may have moved meanwhile, such as a Hermes
+        // folder leaving the `local` backend, which closes the source.
+        guard let source = fileReferenceSource else { return }
+        let candidates = fileChipReferenceCandidates(draft: draft)
+        guard !candidates.isEmpty else { return }
+
+        let scope = fileChipScopeRevision
+        fileChipReferenceLoadGeneration &+= 1
+        let loadGeneration = fileChipReferenceLoadGeneration
+        let load = Task { [weak self] in
+            guard let self else { return }
+            await self.confirmFileChipReferences(candidates, source: source, scope: scope)
+            guard loadGeneration == self.fileChipReferenceLoadGeneration else { return }
+            self.fileChipReferenceLoad = nil
+        }
+        fileChipReferenceLoad = load
+        await load.value
+    }
+
+    /// Forgets every confirmed `@path` because the workspace moved.
+    ///
+    /// A path is only a file inside the workspace it was found in, so switching
+    /// one has to take the chips with it — including the ones accepted from the
+    /// panel, which were never checked against anything else. The revision bump
+    /// is what asks the chat for a fresh pass, so a file that exists under the
+    /// new root as well comes straight back. `reloadingOpenQuery` also reloads an
+    /// open `@` panel (`ComposerFilePathSearch.reset(reloadingOpenQuery:)`).
+    private func resetFileChipReferences(reloadingOpenQuery: Bool = false) {
+        filePathSearch.reset(reloadingOpenQuery: reloadingOpenQuery)
+        checkedFileChipCandidates.removeAll()
+        // Cancelling, not just forgetting: a pass left running would keep
+        // listing the old root's folders, and every folder it had already
+        // listed would settle candidates against a workspace that is gone.
+        fileChipReferenceLoad?.cancel()
+        fileChipReferenceLoad = nil
+        fileChipReferenceLoadGeneration &+= 1
+
+        fileChipScopeRevision &+= 1
+        guard !fileChipPaths.isEmpty else { return }
+
+        fileChipPaths.removeAll()
+        composerChipCatalog = skillChipCatalog.withFilePaths(fileChipPaths)
+        transcriptRelayoutScrollToken += 1
+    }
+
+    /// Every `@…` the chat still has no answer for, draft first: what the user
+    /// is looking at while typing is worth confirming before the backlog.
+    private func fileChipReferenceCandidates(draft: String) -> [String] {
+        var candidates: [String] = []
+        var seen: Set<String> = []
+
+        // The draft's own trailing reference counts as finished here: a chip
+        // whose trailing space was backspaced is still a reference, and by the
+        // time a pass runs the user has moved on to whatever changed the token.
+        for text in [draft] + messages.filter({ $0.role == "user" }).map({ $0.content ?? "" }) {
+            for candidate in ComposerChipTokenizer.fileReferenceCandidates(in: text, isComplete: true) {
+                guard !checkedFileChipCandidates.contains(candidate),
+                      !fileChipPaths.contains(candidate),
+                      seen.insert(candidate).inserted
+                else {
+                    continue
+                }
+                candidates.append(candidate)
+            }
+        }
+
+        return candidates
+    }
+
+    /// Lists each candidate's parent folder once and keeps the candidates that
+    /// folder actually holds.
+    ///
+    /// A folder whose listing failed leaves its candidates unanswered rather
+    /// than answered "no", so the next pass retries them; a folder that answered
+    /// marks its candidates settled, which is what keeps a `@word` that is not a
+    /// file from costing a request on every transcript update. `scope` is the
+    /// `fileChipScopeRevision` the pass started under; nothing applies once it moves.
+    private func confirmFileChipReferences(
+        _ candidates: [String],
+        source: FileReferenceSource,
+        scope: Int
+    ) async {
+        var wantedByDirectory: [String: Set<String>] = [:]
+        var directories: [String] = []
+        for candidate in candidates {
+            let directory = FileTree.parentPath(of: candidate)
+            if wantedByDirectory[directory] == nil { directories.append(directory) }
+            wantedByDirectory[directory, default: []].insert(candidate)
+        }
+
+        var start = directories.startIndex
+        while start < directories.endIndex {
+            let end = directories.index(
+                start,
+                offsetBy: Self.fileChipDirectoryLimit,
+                limitedBy: directories.endIndex
+            ) ?? directories.endIndex
+            let batch = directories[start..<end]
+            start = end
+
+            var confirmed: Set<String> = []
+            var settled: Set<String> = []
+
+            for directory in batch {
+                // Between folders, not just between batches: a workspace switch
+                // part-way through a pass must stop it before the next request,
+                // and nothing it has learned since may be applied.
+                guard !Task.isCancelled else { return }
+                guard let wanted = wantedByDirectory[directory] else { continue }
+                guard let lookup = try? await listedFileReferences(wanted, in: directory, source: source) else {
+                    // A listing that failed is not an answer. Leaving the
+                    // candidates open is what lets the next pass retry them.
+                    continue
+                }
+
+                confirmed.formUnion(lookup.listed)
+                settled.formUnion(lookup.answered)
+            }
+
+            // Checked between batches as well as at the end: the chat can be
+            // left, or its workspace switched, part-way through a long pass, and
+            // a listing taken against the old root must never widen the new
+            // one's catalog.
+            guard !Task.isCancelled, scope == fileChipScopeRevision else { return }
+
+            apply(confirmed: confirmed, settled: settled)
+        }
+    }
+
+    /// Which of `wanted`, all in `directory`, the source lists there (`listed`), and which of
+    /// them it gave an answer for at all (`answered`).
+    ///
+    /// A webui folder is listed once, through the cache the `@` panel fills, so it answers all
+    /// of `wanted` or throws. A Hermes chat asks `complete.path` for each candidate's own path:
+    /// the host lists the folder's entries that start with the name, so a folder past its
+    /// 30-row cap still confirms one. One candidate's failed lookup leaves only that candidate
+    /// unanswered; its siblings keep their answers.
+    private func listedFileReferences(
+        _ wanted: Set<String>,
+        in directory: String,
+        source: FileReferenceSource
+    ) async throws -> (listed: Set<String>, answered: Set<String>) {
+        switch source {
+        case .webui(let sessionID):
+            let entries = try await filePathSearch.entries(in: directory, sessionID: sessionID, apiClient: client)
+            return (wanted.intersection(entries.map(\.path)), wanted)
+        case .hermes(let turn):
+            var listed: Set<String> = []
+            var answered: Set<String> = []
+            for candidate in wanted.sorted() {
+                guard !Task.isCancelled else { throw CancellationError() }
+                guard let entries = try? await turn.completeFilePaths(candidate) else { continue }
+                answered.insert(candidate)
+                if entries.contains(where: { $0.path == candidate }) {
+                    listed.insert(candidate)
+                }
+            }
+            return (listed, answered)
+        }
+    }
+
+    /// Folds one batch's answers into the catalog, drawing whatever it confirmed
+    /// straight away rather than making the reader wait for the last folder.
+    private func apply(confirmed: Set<String>, settled: Set<String>) {
+        checkedFileChipCandidates.formUnion(settled)
+
+        let recovered = confirmed.subtracting(fileChipPaths)
+        guard !recovered.isEmpty else { return }
+
+        fileChipPaths.formUnion(recovered)
+        composerChipCatalog = skillChipCatalog.withFilePaths(fileChipPaths)
+        transcriptRelayoutScrollToken += 1
+    }
+
+    private func branchSessionFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        if let hermesTurn { return await branchHermesSession(named: args, on: hermesTurn) }
+        guard !isViewingCachedData else {
+            return .unsupported(friendlyMessage: String(localized: "Reconnect to the server to fork a conversation."))
+        }
+
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before forking."))
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        let title = args.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        isForkingMessage = true
+        messageActionErrorMessage = nil
+        lastError = nil
+        sendErrorMessage = nil
+        defer { isForkingMessage = false }
+
+        do {
+            let response = try await client.branchSession(
+                id: sessionID,
+                title: title.isEmpty ? nil : title
+            )
+
+            guard let forkedSessionID = response.sessionId else {
+                return .unsupported(
+                    friendlyMessage: response.error ?? String(localized: "The server did not return the forked session ID.")
+                )
+            }
+
+            let forkedResponse = try await client.session(
+                id: forkedSessionID,
+                includeMessages: false,
+                messageLimit: nil
+            )
+
+            guard let forkedSessionDetail = forkedResponse.session else {
+                return .unsupported(friendlyMessage: String(localized: "The server did not return the forked session."))
+            }
+
+            return .openedSession(SessionSummary(from: forkedSessionDetail))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func createSessionFromSlashCommand() async -> SlashCommandExecutionResult {
+        guard !isViewingCachedData else {
+            return .unsupported(friendlyMessage: String(localized: "Reconnect to the server to start a new session."))
+        }
+
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before starting a new session."))
+        }
+
+        isUpdatingComposerConfiguration = true
+        lastError = nil
+        sendErrorMessage = nil
+        composerConfigurationErrorMessage = nil
+        defer { isUpdatingComposerConfiguration = false }
+
+        do {
+            let response = try await client.createSession(
+                workspace: currentWorkspace,
+                model: currentModel,
+                modelProvider: requestModelProvider,
+                profile: requestProfileName
+            )
+
+            guard let session = response.session else {
+                return .unsupported(friendlyMessage: String(localized: "The server did not return the new session."))
+            }
+
+            return .openedSession(SessionSummary(from: session))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func compressSessionFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
+        if let hermesTurn { return await compressHermesSession(focus: args, on: hermesTurn) }
+
+        guard !isViewingCachedData else {
+            return .unsupported(friendlyMessage: String(localized: "Reconnect to the server to compress context."))
+        }
+
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before compressing context."))
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        let focusTopic = args.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        isCompressingSession = true
+        lastError = nil
+        sendErrorMessage = nil
+        messageActionErrorMessage = nil
+        defer { isCompressingSession = false }
+
+        do {
+            let response = try await client.compressSession(
+                id: sessionID,
+                focusTopic: focusTopic.isEmpty ? nil : focusTopic
+            )
+
+            if let error = response.error {
+                return .unsupported(friendlyMessage: error)
+            }
+
+            guard let session = response.session else {
+                return .unsupported(friendlyMessage: String(localized: "The server did not return the compressed session."))
+            }
+
+            applyCompressionAnchorMetadata(from: session)
+            messages = session.messages ?? []
+            transcriptRevision &+= 1
+            updateOlderMessagePagination(from: session, loadedMessageCount: messages.count)
+            isViewingCachedData = false
+            let snapshot = ContextWindowSnapshot(
+                contextLength: session.contextLength,
+                thresholdTokens: session.thresholdTokens,
+                lastPromptTokens: session.lastPromptTokens,
+                inputTokens: session.inputTokens,
+                outputTokens: session.outputTokens,
+                estimatedCost: session.estimatedCost
+            )
+            contextWindowSnapshot = snapshot.replacingTokensUsed(response.summary?.compressedTokenEstimate)
+            if let title = session.title {
+                displayTitle = Self.displayTitle(from: title)
+            }
+            currentWorkspace = session.workspace ?? currentWorkspace
+            currentModel = session.model ?? currentModel
+            currentModelProvider = session.modelProvider ?? currentModelProvider
+            currentProfile = session.profile ?? currentProfile
+            setCompletedToolCallGroups(ToolCallGroup.groups(
+                persistedToolCalls: session.toolCalls ?? [],
+                messages: messages,
+                messageOffset: messagesOffset
+            ))
+            completedReasoningGroups = []
+            liveToolCalls = []
+            liveReasoningText = ""
+            streamingAssistantMessageID = nil
+            toolCallAnchorMessageID = nil
+            reasoningAnchorMessageID = nil
+            streamCoordinator.prepareForNewResponse()
+            responseCompletionNeedsTranscriptRefresh = false
+            attachmentCoordinator.removeAllLocalPreviews()
+
+            return .executed(message: Self.compressionNote(
+                headline: response.summary?.headline, tokenLine: response.summary?.tokenLine, focus: response.focusTopic
+            ))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    /// The note a finished compression posts, on webui and on Hermes: the host's summary
+    /// headline and token line, and the focus, each when present.
+    static func compressionNote(headline: String?, tokenLine: String?, focus: String?) -> String {
+        let focus = focus?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let details = [headline, tokenLine, focus.flatMap { $0.isEmpty ? nil : String(localized: "Focus: \($0)") }]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        return details.isEmpty ? String(localized: "Context compressed.") : String(localized: "Context compressed.\n\n\(details)")
+    }
+
+    /// Why `/clear` cannot run right now, or `nil` when it can. These are the
+    /// same refusals `/undo` uses, and they never touch the network. `ChatView`
+    /// reads this before showing the destructive confirmation so a refusal is
+    /// never hidden behind an alert the user has to answer first.
+    var clearConversationRefusal: String? {
+        if isViewingCachedData {
+            return String(localized: "Reconnect to the server to clear the conversation.")
+        }
+
+        if isCLISession {
+            return String(localized: "Clearing the conversation is available for WebUI sessions only.")
+        }
+
+        if activeStreamID != nil {
+            return String(localized: "Wait for the current response to finish before clearing the conversation.")
+        }
+
+        if isClearingConversation {
+            return String(localized: "Wait for the conversation to finish clearing.")
+        }
+
+        if sessionID == nil {
+            return String(localized: "The server did not provide a session ID.")
+        }
+
+        return nil
+    }
+
+    /// Clears the conversation on the server, then locally. Destructive and
+    /// irreversible, so `ChatView` confirms before calling this. Pass the
+    /// `ModelContext` so the offline cache is emptied too — otherwise a cold
+    /// open would repaint the history this just deleted. A Hermes chat deletes nothing: it
+    /// opens a new chat in this one's place (`clearedHermesChat`, #1050), unconfirmed.
+    func clearConversationFromSlashCommand(modelContext: ModelContext?) async -> SlashCommandExecutionResult {
+        if let hermesTurn { return .replacedHermesSession(clearedHermesChat(hermesTurn)) }
+
+        if let refusal = clearConversationRefusal {
+            return .unsupported(friendlyMessage: refusal)
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        lastError = nil
+        sendErrorMessage = nil
+        isClearingConversation = true
+        defer { isClearingConversation = false }
+
+        do {
+            let response = try await client.clearSession(id: sessionID)
+            if let error = response.error {
+                return .unsupported(friendlyMessage: error)
+            }
+
+            clearTranscript()
+            displayTitle = Self.displayTitle(from: response.session?.title)
+            liveActivityManager.update(.sessionTitle(displayTitle))
+
+            if let modelContext {
+                do {
+                    try CacheStore.cacheMessages([], serverURL: server, sessionID: sessionID, in: modelContext)
+                } catch {
+                    // The server history is gone but the offline copy still
+                    // holds it, so a later cold open would repaint messages the
+                    // user just deleted. Say so where they will see it.
+                    cacheErrorMessage = error.localizedDescription
+                    sendErrorMessage = String(localized: "Cleared on the server, but the offline copy of this conversation could not be updated.")
+                }
+            }
+
+            return .executed(message: nil)
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func undoLastExchangeFromSlashCommand() async -> SlashCommandExecutionResult {
+        guard !isViewingCachedData else {
+            return .unsupported(friendlyMessage: String(localized: "Reconnect to the server to undo messages."))
+        }
+
+        guard !isCLISession else {
+            return .unsupported(friendlyMessage: String(localized: "Undo is available for WebUI sessions only."))
+        }
+
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before undoing messages."))
+        }
+
+        if let hermesTurn { return await undoHermesExchange(on: hermesTurn) }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        lastError = nil
+        sendErrorMessage = nil
+
+        do {
+            let response = try await client.undoSession(id: sessionID)
+            if let error = response.error {
+                return .unsupported(friendlyMessage: error)
+            }
+
+            await loadMessages()
+            if let lastError {
+                return .unsupported(friendlyMessage: lastError.localizedDescription)
+            }
+
+            return .executed(message: nil)
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func retryLastTurnFromSlashCommand() async -> SlashCommandExecutionResult {
+        guard !isViewingCachedData else {
+            return .unsupported(friendlyMessage: String(localized: "Reconnect to the server to retry messages."))
+        }
+
+        guard !isCLISession else {
+            return .unsupported(friendlyMessage: String(localized: "Retry is available for WebUI sessions only."))
+        }
+
+        guard activeStreamID == nil else {
+            return .unsupported(friendlyMessage: String(localized: "Wait for the current response to finish before retrying messages."))
+        }
+
+        if let hermesTurn { return await retryHermesTurn(on: hermesTurn) }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        isStartingChat = true
+        lastError = nil
+        sendErrorMessage = nil
+        archiveLiveReasoningIfNeeded()
+        archiveLiveToolCallsIfNeeded()
+        liveReasoningText = ""
+        liveToolCalls = []
+        reasoningAnchorMessageID = nil
+        toolCallAnchorMessageID = nil
+        streamCoordinator.prepareForNewResponse()
+        responseCompletionNeedsTranscriptRefresh = false
+        defer { isStartingChat = false }
+
+        do {
+            let retryResponse = try await client.retrySession(id: sessionID)
+            if let error = retryResponse.error {
+                return .unsupported(friendlyMessage: error)
+            }
+
+            let lastUserText = retryResponse.lastUserText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !lastUserText.isEmpty else {
+                return .unsupported(friendlyMessage: String(localized: "The server did not return a message to retry."))
+            }
+
+            // Post-retry reload is NOT treated as a cold load (issue #168 non-goal): the
+            // user already has the transcript in view, so keep the raw msg_limit cap and
+            // leave expandRenderable at its default false.
+            let sessionResponse = try await client.session(
+                id: sessionID,
+                includeMessages: true,
+                messageLimit: Self.messagePageLimit
+            )
+            if let session = sessionResponse.session {
+                messages = session.messages ?? []
+                updateOlderMessagePagination(from: session, loadedMessageCount: messages.count)
+                setCompletedToolCallGroups(ToolCallGroup.groups(
+                    persistedToolCalls: session.toolCalls ?? [],
+                    messages: messages,
+                    messageOffset: messagesOffset
+                ))
+                completedReasoningGroups = []
+            } else {
+                await loadMessages()
+                if let lastError {
+                    return .unsupported(friendlyMessage: lastError.localizedDescription)
+                }
+            }
+
+            liveToolCalls = []
+            liveReasoningText = ""
+            toolCallAnchorMessageID = nil
+            reasoningAnchorMessageID = nil
+            attachmentCoordinator.removeAllLocalPreviews()
+
+            let explicitModelPick = explicitModelPickForChatStart()
+            let sentAt = Date()
+            let chatResponse = try await client.startChat(
+                sessionID: sessionID,
+                message: lastUserText,
+                workspace: currentWorkspace,
+                model: currentModel,
+                modelProvider: requestModelProvider,
+                profile: requestProfileName,
+                explicitModelPick: explicitModelPick
+            )
+
+            guard let streamID = chatResponse.streamId else {
+                return .unsupported(friendlyMessage: chatResponse.error ?? String(localized: "The server did not return a stream ID after retrying."))
+            }
+
+            completeExplicitModelPickForChatStart(explicitModelPick)
+            messages.append(
+                ChatMessage(
+                    role: "user",
+                    content: lastUserText,
+                    timestamp: Date().timeIntervalSince1970,
+                    messageId: "local-\(UUID().uuidString)"
+                )
+            )
+
+            streamCoordinator.start(
+                streamID: streamID,
+                runStartedAt: chatResponse.runStartedAt(sentAt: sentAt)
+            )
+            return .executed(message: nil)
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    private func canRunConfigurationSlashCommand(_ actionDescription: String) -> Bool {
+        if isViewingCachedData {
+            composerConfigurationErrorMessage = String(localized: "Reconnect to the server to \(actionDescription).")
+            return false
+        }
+
+        if activeStreamID != nil {
+            composerConfigurationErrorMessage = String(localized: "Wait for the current response to finish before you \(actionDescription).")
+            return false
+        }
+
+        return true
+    }
+
+    private func modelOption(matching query: String) -> ModelCatalogOption? {
+        let normalizedQuery = query.lowercased()
+        let options = modelCatalogGroups.flatMap(\.allModels)
+
+        if let exact = options.first(where: { $0.id.lowercased() == normalizedQuery }) {
+            return exact
+        }
+
+        return options.first {
+            $0.id.lowercased().contains(normalizedQuery) ||
+            $0.displayName.lowercased().contains(normalizedQuery)
+        }
+    }
+
+    private func workspacePath(matching query: String) -> String? {
+        let normalizedQuery = query.lowercased()
+        let roots = workspaceRoots.compactMap { root -> (path: String, name: String?)? in
+            guard let path = root.path, !path.isEmpty else { return nil }
+            return (path, root.name)
+        }
+
+        if let exact = roots.first(where: { $0.path.lowercased() == normalizedQuery }) {
+            return exact.path
+        }
+
+        return roots.first {
+            $0.path.lowercased().contains(normalizedQuery) ||
+            ($0.name?.lowercased().contains(normalizedQuery) == true)
+        }?.path
+    }
+
+    @discardableResult
+    func appendLocalAssistantMessage(_ text: String) -> String? {
+        appendLocalMessage(text, role: "local_assistant", idPrefix: "local-slash")
+    }
+
+    @discardableResult
+    func appendLocalNoticeMessage(_ text: String) -> String? {
+        appendLocalMessage(text, role: "local_notice", idPrefix: "local-notice")
+    }
+
+    func pinLocalNoticeMessage(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        pinnedLocalNotices.append(trimmed)
+    }
+
+    private func showSteeringConfirmation(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        steeringConfirmationDismissTask?.cancel()
+        steeringConfirmationNotice = trimmed
+        let dismissDelay = steeringConfirmationDismissDelay
+        steeringConfirmationDismissTask = Task { @MainActor [weak self] in
+            do {
+                try await dismissDelay()
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.dismissSteeringConfirmation()
+        }
+    }
+
+    private func dismissSteeringConfirmation() {
+        steeringConfirmationDismissTask?.cancel()
+        steeringConfirmationDismissTask = nil
+        steeringConfirmationNotice = nil
+    }
+
+    private func appendLocalMessage(_ text: String, role: String, idPrefix: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let messageID = "\(idPrefix)-\(UUID().uuidString)"
+        messages.append(
+            ChatMessage(
+                role: role,
+                content: trimmed,
+                timestamp: Date().timeIntervalSince1970,
+                messageId: messageID
+            )
+        )
+        scheduleStreamingScrollTrigger()
+        return messageID
+    }
+
+    private func updateLocalMessage(id: String, content: String) {
+        guard let index = messages.firstIndex(where: { $0.messageId == id }) else { return }
+        let existing = messages[index]
+        messages[index] = ChatMessage(
+            role: existing.role,
+            content: content,
+            timestamp: existing.timestamp,
+            messageId: existing.messageId,
+            name: existing.name,
+            toolCallId: existing.toolCallId,
+            toolUseId: existing.toolUseId,
+            toolCalls: existing.toolCalls,
+            contentParts: existing.contentParts,
+            reasoning: existing.reasoning,
+            attachments: existing.attachments,
+            turnTps: existing.turnTps
+        )
+        scheduleStreamingScrollTrigger()
+    }
+
+    func setSendErrorMessage(_ message: String?) {
+        sendErrorMessage = message
+    }
+
+    func forkFromMessage(_ context: MessageActionContext, modelContext: ModelContext? = nil) async -> SessionSummary? {
+        guard !isViewingCachedData else {
+            messageActionErrorMessage = String(localized: "Reconnect to the server to fork a conversation.")
+            return nil
+        }
+
+        guard activeStreamID == nil else {
+            messageActionErrorMessage = String(localized: "Wait for the current response to finish before forking.")
+            return nil
+        }
+
+        guard let sessionID else {
+            messageActionErrorMessage = String(localized: "The server did not provide a session ID.")
+            return nil
+        }
+
+        isForkingMessage = true
+        messageActionErrorMessage = nil
+        lastError = nil
+        defer { isForkingMessage = false }
+
+        do {
+            let response = try await client.branchSession(
+                id: sessionID,
+                keepCount: context.keepCountThroughMessage
+            )
+
+            guard let forkedSessionID = response.sessionId else {
+                messageActionErrorMessage = response.error ?? String(localized: "The server did not return the forked session ID.")
+                return nil
+            }
+
+            let forkedResponse = try await client.session(
+                id: forkedSessionID,
+                includeMessages: false,
+                messageLimit: nil
+            )
+
+            guard let forkedSessionDetail = forkedResponse.session else {
+                messageActionErrorMessage = String(localized: "The server did not return the forked session.")
+                return nil
+            }
+
+            let forkedSession = SessionSummary(from: forkedSessionDetail)
+            if let modelContext {
+                do {
+                    try CacheStore.cacheSession(forkedSession, serverURL: server, in: modelContext)
+                } catch {
+                    cacheErrorMessage = error.localizedDescription
+                }
+            }
+            return forkedSession
+        } catch {
+            lastError = error
+            messageActionErrorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    // MARK: Hermes branches (#1051)
+
+    /// Fork From Here in a Hermes session: a branch through `context`'s row, to open on top of
+    /// this chat. Nil after saying why in the message-action error.
+    func forkHermesSession(from context: MessageActionContext) async -> HermesSessionChat? {
+        guard let hermesTurn else { return nil }
+        guard !isViewingCachedData else {
+            messageActionErrorMessage = String(localized: "Reconnect to the server to fork a conversation.")
+            return nil
+        }
+        guard activeStreamID == nil else {
+            messageActionErrorMessage = String(localized: "Wait for the current response to finish before forking.")
+            return nil
+        }
+        guard let rowID = messages.first(where: { $0.id == context.messageID })?.rowID else {
+            messageActionErrorMessage = String(localized: "This message can’t be changed any more.")
+            return nil
+        }
+        isForkingMessage = true
+        messageActionErrorMessage = nil
+        defer { isForkingMessage = false }
+        do {
+            return hermesBranchChat(try await hermesTurn.branch(through: rowID, name: nil), on: hermesTurn)
+        } catch {
+            messageActionErrorMessage = hermesBranchFailure(error)
+            return nil
+        }
+    }
+
+    /// `/branch [name]` and `/fork [name]` in a Hermes session: the whole history, under `name`
+    /// when given, opened on top. A refusal keeps the draft and says why.
+    private func branchHermesSession(named rawName: String, on hermes: HermesChatTurnCoordinator) async -> SlashCommandExecutionResult {
+        guard !isViewingCachedData else { return notDelivered(String(localized: "Reconnect to the server to fork a conversation.")) }
+        guard activeStreamID == nil else {
+            return notDelivered(String(localized: "Wait for the current response to finish before forking."))
+        }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        isForkingMessage = true
+        sendErrorMessage = nil
+        defer { isForkingMessage = false }
+        do {
+            return .openedHermesSession(hermesBranchChat(try await hermes.branch(through: nil, name: name.isEmpty ? nil : name),
+                                                         on: hermes))
+        } catch {
+            return notDelivered(hermesBranchFailure(error))
+        }
+    }
+
+    /// The branch `key` as a chat on this one's connection, whose parent is this session.
+    private func hermesBranchChat(_ key: String, on hermes: HermesChatTurnCoordinator) -> HermesSessionChat {
+        HermesSessionChat(server: hermes.engine.server, connection: hermes.engine.connection,
+                          target: .session(profile: hermes.engine.target.profile, key: key), parentKey: hermes.engine.storedKey)
+    }
+
+    /// Why a Hermes branch failed: nothing to copy yet (4008), the host's own words for any
+    /// other refusal, such as a name in use, a fork in a session that continues another, or
+    /// what to do when it did not go out or answer.
+    private func hermesBranchFailure(_ error: Error) -> String {
+        switch error {
+        case is HermesChatTurnCoordinator.NotSent, BotSettingFailure.rejected(4001, _):
+            return String(localized: "Reconnect to the server to fork a conversation.")
+        case BotSettingFailure.rejected(4008, _):
+            return String(localized: "Send a message first, then run /\("branch").")
+        case BotSettingFailure.rejected(_, let message):
+            return message
+        case is HermesChatTurnCoordinator.BranchRowGone:
+            return String(localized: "This message can’t be changed any more.")
+        case is HermesChatTurnCoordinator.BranchContinuesEarlierSession:
+            return String(localized: "This session continues an earlier one, so Fork From Here isn’t available. Run /\("branch") to copy the whole conversation.")
+        default:
+            return String(localized: "The server did not return the forked session ID.")
+        }
+    }
+
+    /// Asks this Hermes chat's host whether its session is a branch of `parentKey`, the parent
+    /// the row it opened from named, and shows the answer as `hermesForkOrigin`
+    /// (`HermesBranchParent`). It asks now when the chat is attached, and otherwise, or after a
+    /// read that failed, on the next connect. A chat opened without a parent asks nothing.
+    func checkHermesForkParent(_ parentKey: String?) async {
+        needsHermesForkCheck = parentKey != nil
+        await resolveHermesForkOrigin()
+    }
+
+    private func resolveHermesForkOrigin() async {
+        guard let hermesTurn, needsHermesForkCheck, !isCheckingHermesForkParent,
+              hermesTurn.engine.connectionState == .connected, let key = hermesTurn.engine.storedKey else { return }
+        let engine = hermesTurn.engine
+        isCheckingHermesForkParent = true
+        defer { isCheckingHermesForkParent = false }
+        do {
+            let parent = try await HermesBranchParent.row(of: key, profile: engine.target.profile, on: engine.wire)
+            needsHermesForkCheck = false
+            hermesForkOrigin = parent.map { ForkOrigin(parentSessionID: $0.id, parent: $0.summary(in: engine.target.profile)) }
+        } catch {
+            // Left to ask on the next connect.
+        }
+    }
+
+    /// The Hermes chat that opens `session` on this chat's connection: a "Forked from" row's parent.
+    func hermesChat(opening session: SessionSummary) -> HermesSessionChat? {
+        guard let hermesTurn else { return nil }
+        let engine = hermesTurn.engine
+        return session.hermesChat(on: engine.server, connection: engine.connection, listedIn: engine.target.profile)
+    }
+
+    /// Fetches a fork's parent from the active server so the "Forked from" row
+    /// can open it when the session list never cached it. A parent the server
+    /// no longer shows this profile (deleted: 404; owned by another profile:
+    /// 409 `session_profile_mismatch`) reports that through the message-action
+    /// error; any other failure reports its own message.
+    func loadForkParent(id parentSessionID: String) async -> SessionSummary? {
+        messageActionErrorMessage = nil
+        lastError = nil
+        let missingMessage = String(localized: "The original chat is no longer on this server.")
+
+        do {
+            let response = try await client.session(id: parentSessionID, includeMessages: false, messageLimit: nil)
+            guard let parentDetail = response.session else {
+                messageActionErrorMessage = missingMessage
+                return nil
+            }
+            return SessionSummary(from: parentDetail)
+        } catch {
+            if let apiError = error as? APIError, Self.isMissingForkParent(apiError) {
+                messageActionErrorMessage = missingMessage
+            } else {
+                lastError = error
+                messageActionErrorMessage = error.localizedDescription
+            }
+            return nil
+        }
+    }
+
+    private static func isMissingForkParent(_ error: APIError) -> Bool {
+        guard case .http(let statusCode, _) = error else { return false }
+        return statusCode == 404 || (statusCode == 409 && error.serverCode == "session_profile_mismatch")
+    }
+
+    /// Edit a user message: truncate to just before the selected message, then send the edited text.
+    /// A Hermes session cuts and resends in one call (#1049), and an edit that fails there waits in
+    /// `takeUnsentHermesEdit()` for the composer.
+    func editMessage(_ context: MessageActionContext, newText: String, modelContext: ModelContext? = nil) async -> Bool {
+        var edited = false
+        defer {
+            let text = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if hermesTurn != nil, !edited, !text.isEmpty { unsentHermesEdit = text }
+        }
+
+        guard context.role == .user else {
+            messageActionErrorMessage = String(localized: "Only user messages can be edited.")
+            return false
+        }
+
+        guard !isViewingCachedData else {
+            messageActionErrorMessage = String(localized: "Reconnect to the server to edit a message.")
+            return false
+        }
+
+        guard activeStreamID == nil else {
+            messageActionErrorMessage = String(localized: "Wait for the current response to finish before editing.")
+            return false
+        }
+
+        if let hermesTurn {
+            edited = await editHermesMessage(context, newText: newText, on: hermesTurn)
+            return edited
+        }
+
+        guard let sessionID else {
+            messageActionErrorMessage = String(localized: "The server did not provide a session ID.")
+            return false
+        }
+
+        let editedText = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !editedText.isEmpty else {
+            messageActionErrorMessage = String(localized: "The edited message cannot be empty.")
+            return false
+        }
+
+        isEditingMessage = true
+        messageActionErrorMessage = nil
+        lastError = nil
+        defer { isEditingMessage = false }
+
+        do {
+            // Truncate to remove the selected user message and everything after it
+            let truncateResponse = try await client.truncateSession(
+                id: sessionID,
+                keepCount: context.fullHistoryIndex
+            )
+
+            // Update local state from the truncated response
+            if let session = truncateResponse.session {
+                messages = session.messages ?? []
+                updateOlderMessagePagination(from: session, loadedMessageCount: messages.count)
+                setCompletedToolCallGroups(ToolCallGroup.groups(
+                    persistedToolCalls: session.toolCalls ?? [],
+                    messages: messages,
+                    messageOffset: messagesOffset
+                ))
+                completedReasoningGroups = []
+                liveToolCalls = []
+                liveReasoningText = ""
+                toolCallAnchorMessageID = nil
+                reasoningAnchorMessageID = nil
+
+                if let modelContext {
+                    do {
+                        try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
+                    } catch {
+                        cacheErrorMessage = error.localizedDescription
+                    }
+                }
+            }
+
+            // Now send the edited text through the normal chat flow
+            let explicitModelPick = explicitModelPickForChatStart()
+            let sentAt = Date()
+            let chatResponse = try await client.startChat(
+                sessionID: sessionID,
+                message: editedText,
+                workspace: currentWorkspace,
+                model: currentModel,
+                modelProvider: requestModelProvider,
+                profile: requestProfileName,
+                explicitModelPick: explicitModelPick
+            )
+
+            guard let streamID = chatResponse.streamId else {
+                messageActionErrorMessage = chatResponse.error ?? String(localized: "The server did not return a stream ID after editing.")
+                return false
+            }
+
+            completeExplicitModelPickForChatStart(explicitModelPick)
+            // Append the optimistic user message
+            messages.append(
+                ChatMessage(
+                    role: "user",
+                    content: editedText,
+                    timestamp: Date().timeIntervalSince1970,
+                    messageId: "local-\(UUID().uuidString)"
+                )
+            )
+
+            streamCoordinator.prepareForNewResponse()
+            responseCompletionNeedsTranscriptRefresh = false
+            streamCoordinator.start(
+                streamID: streamID,
+                runStartedAt: chatResponse.runStartedAt(sentAt: sentAt)
+            )
+            return true
+        } catch {
+            lastError = error
+            messageActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func regenerateAssistantResponse(
+        _ context: MessageActionContext,
+        modelContext: ModelContext? = nil
+    ) async -> Bool {
+        guard context.role == .assistant else {
+            messageActionErrorMessage = String(localized: "Only assistant messages can be regenerated.")
+            return false
+        }
+
+        guard !isViewingCachedData else {
+            messageActionErrorMessage = String(localized: "Reconnect to the server to regenerate a response.")
+            return false
+        }
+
+        guard activeStreamID == nil else {
+            messageActionErrorMessage = String(localized: "Wait for the current response to finish before regenerating.")
+            return false
+        }
+
+        if let hermesTurn { return await regenerateHermesResponse(context, on: hermesTurn) }
+
+        guard let sessionID else {
+            messageActionErrorMessage = String(localized: "The server did not provide a session ID.")
+            return false
+        }
+
+        guard let userText = Self.precedingUserMessageText(in: messages, beforeVisibleIndex: context.visibleIndex) else {
+            messageActionErrorMessage = String(localized: "Load older messages before regenerating this response.")
+            return false
+        }
+
+        isRegeneratingMessage = true
+        messageActionErrorMessage = nil
+        lastError = nil
+        stopListening()
+        defer { isRegeneratingMessage = false }
+
+        do {
+            let truncateResponse = try await client.truncateSession(
+                id: sessionID,
+                keepCount: context.fullHistoryIndex
+            )
+
+            if let session = truncateResponse.session {
+                messages = session.messages ?? []
+                updateOlderMessagePagination(from: session, loadedMessageCount: messages.count)
+                setCompletedToolCallGroups(ToolCallGroup.groups(
+                    persistedToolCalls: session.toolCalls ?? [],
+                    messages: messages,
+                    messageOffset: messagesOffset
+                ))
+                completedReasoningGroups = []
+                liveToolCalls = []
+                liveReasoningText = ""
+                toolCallAnchorMessageID = nil
+                reasoningAnchorMessageID = nil
+
+                if let modelContext {
+                    do {
+                        try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
+                    } catch {
+                        cacheErrorMessage = error.localizedDescription
+                    }
+                }
+            }
+
+            let explicitModelPick = explicitModelPickForChatStart()
+            let sentAt = Date()
+            let chatResponse = try await client.startChat(
+                sessionID: sessionID,
+                message: userText,
+                workspace: currentWorkspace,
+                model: currentModel,
+                modelProvider: requestModelProvider,
+                profile: requestProfileName,
+                explicitModelPick: explicitModelPick
+            )
+
+            guard let streamID = chatResponse.streamId else {
+                messageActionErrorMessage = chatResponse.error ?? String(localized: "The server did not return a stream ID after regenerating.")
+                return false
+            }
+
+            completeExplicitModelPickForChatStart(explicitModelPick)
+            streamCoordinator.prepareForNewResponse()
+            responseCompletionNeedsTranscriptRefresh = false
+            streamCoordinator.start(
+                streamID: streamID,
+                runStartedAt: chatResponse.runStartedAt(sentAt: sentAt)
+            )
+            return true
+        } catch {
+            lastError = error
+            messageActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    // MARK: Hermes compress and clear (#1050)
+
+    /// `/compress` and `/compact` in a Hermes session: the composer says "Compressing context..."
+    /// until the host answers, then one note says what the compaction removed, as on webui, and
+    /// the transcript shows the compaction card. Whatever the host left as it was says why on
+    /// the status line, and the draft stays.
+    private func compressHermesSession(focus: String, on hermes: HermesChatTurnCoordinator) async -> SlashCommandExecutionResult {
+        let reconnect = String(localized: "Reconnect to the server to compress context.")
+        let busy = String(localized: "Already compressing; try again shortly.")
+        guard !isHermesSubmissionUncertain else { return notDelivered(reconnect) }
+        guard activeStreamID == nil else { return notDelivered(String(localized: "Wait for the current reply to finish.")) }
+        guard !isCompressingSession else { return notDelivered(busy) }
+        let focus = focus.trimmingCharacters(in: .whitespacesAndNewlines)
+        isCompressingSession = true
+        defer { isCompressingSession = false }
+        sendErrorMessage = nil
+        do {
+            switch try await hermes.compress(focus: focus.isEmpty ? nil : focus) {
+            case .compacted(let headline, let tokenLine):
+                return .executed(message: Self.compressionNote(headline: headline, tokenLine: tokenLine, focus: focus))
+            case .unchanged(let reason):
+                return notDelivered(reason ?? busy)
+            }
+        } catch {
+            return notDelivered(hermesHistoryFailure(error, on: hermes, reconnect: reconnect))
+        }
+    }
+
+    /// `/clear` in a Hermes session: a new chat in this one's place, in its Profile, on the
+    /// model its chip shows (the one the host reported while the chip's catalog is unread or
+    /// failed) and in its working folder. The old chat stays as it is, in the list and with
+    /// its draft, so nothing asks first.
+    private func clearedHermesChat(_ hermes: HermesChatTurnCoordinator) -> HermesSessionChat {
+        let chosen = hermes.settings.selectedModel.flatMap { option in
+            option.providerID.map { HermesCall.Model(id: option.id, provider: $0) }
+        }
+        return HermesSessionChat(server: hermes.engine.server, connection: hermes.engine.connection,
+                                 target: .new(profile: hermes.settings.profile, cwd: hermes.cwd,
+                                              model: chosen ?? hermes.reportedModel))
+    }
+
+    // MARK: Hermes history rewinds (#1049)
+
+    /// A Hermes edit that did not go through, until `ChatView` puts it back in the composer.
+    @ObservationIgnored private var unsentHermesEdit: String?
+
+    /// Takes the text of a Hermes edit that did not go through, so the composer keeps it.
+    func takeUnsentHermesEdit() -> String? {
+        defer { unsentHermesEdit = nil }
+        return unsentHermesEdit
+    }
+
+    private func editHermesMessage(_ context: MessageActionContext, newText: String,
+                                   on hermes: HermesChatTurnCoordinator) async -> Bool {
+        let text = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            messageActionErrorMessage = String(localized: "The edited message cannot be empty.")
+            return false
+        }
+        guard let rowID = hermesRewindPrompt(for: context)?.rowID else {
+            messageActionErrorMessage = String(localized: "This message can’t be changed any more.")
+            return false
+        }
+        isEditingMessage = true
+        defer { isEditingMessage = false }
+        messageActionErrorMessage = await rewindHermesTranscript(
+            before: rowID, sending: text, on: hermes, reconnect: String(localized: "Reconnect to the server to edit a message.")
+        )
+        return messageActionErrorMessage == nil
+    }
+
+    private func regenerateHermesResponse(_ context: MessageActionContext, on hermes: HermesChatTurnCoordinator) async -> Bool {
+        guard let prompt = hermesRewindPrompt(for: context), let rowID = prompt.rowID else {
+            messageActionErrorMessage = String(localized: "This message can’t be changed any more.")
+            return false
+        }
+        isRegeneratingMessage = true
+        stopListening()
+        defer { isRegeneratingMessage = false }
+        messageActionErrorMessage = await rewindHermesTranscript(
+            before: rowID, sending: Self.hermesPromptText(prompt), on: hermes,
+            reconnect: String(localized: "Reconnect to the server to regenerate a response.")
+        )
+        return messageActionErrorMessage == nil
+    }
+
+    /// `/retry`: the last prompt again, cut at its row, as Regenerate on its reply.
+    private func retryHermesTurn(on hermes: HermesChatTurnCoordinator) async -> SlashCommandExecutionResult {
+        guard let prompt = messages.last(where: Self.opensHermesTurn) else {
+            return notDelivered(String(localized: "Send a message first, then run /\("retry")."))
+        }
+        guard Self.isHermesRewindable(prompt), let rowID = prompt.rowID else {
+            return notDelivered(String(localized: "This message can’t be changed any more."))
+        }
+        isRegeneratingMessage = true
+        stopListening()
+        defer { isRegeneratingMessage = false }
+        if let failure = await rewindHermesTranscript(before: rowID, sending: Self.hermesPromptText(prompt), on: hermes,
+                                                      reconnect: String(localized: "Reconnect to the server to retry messages.")) {
+            return notDelivered(failure)
+        }
+        return .executed(message: nil)
+    }
+
+    /// Retry on a failed Hermes turn's outcome row (#1139) can go now: the chat is connected and
+    /// idle, and nothing else is on its way.
+    var mayRetryHermesTurn: Bool {
+        guard let hermesTurn, hermesTurn.activity.retryTarget != nil else { return false }
+        return hermesTurn.engine.connectionState == .connected && activeStreamID == nil && !isStartingChat
+            && !isHermesSubmissionUncertain && !isViewingCachedData
+    }
+
+    /// Retry on the outcome row: the host's raw prompt (`inflight.user`) again, cut at the
+    /// failed prompt's row, once, from a tap (#937). It never touches the draft. A refusal says
+    /// why; one the host can't cut (4018) also hides Retry for that row and rereads.
+    func retryHermesFailedTurn() async {
+        guard mayRetryHermesTurn, let hermes = hermesTurn, let target = hermes.activity.retryTarget else { return }
+        stopListening()
+        sendErrorMessage = await rewindHermesTranscript(
+            before: target.rowID, sending: target.text, on: hermes,
+            reconnect: String(localized: "Reconnect to the server to retry messages."), retrying: target
+        )
+    }
+
+    /// `/undo`: `session.undo` on the runtime, then the newest rows replace the transcript.
+    private func undoHermesExchange(on hermes: HermesChatTurnCoordinator) async -> SlashCommandExecutionResult {
+        let reconnect = String(localized: "Reconnect to the server to undo messages.")
+        guard !isHermesSubmissionUncertain else { return notDelivered(reconnect) }
+        guard !isUndoingExchange else { return notDelivered(String(localized: "Wait for the current reply to finish.")) }
+        isUndoingExchange = true
+        defer { isUndoingExchange = false }
+        sendErrorMessage = nil
+        do {
+            try await hermes.undo()
+            return .executed(message: nil)
+        } catch {
+            return notDelivered(hermesHistoryFailure(error, on: hermes, reconnect: reconnect))
+        }
+    }
+
+    /// Cuts a Hermes session's transcript before the saved prompt `rowID` and sends `text` in
+    /// its place, once. Once the host takes it, the prompt shows where the cut was, the rows and
+    /// cards it replaced go, and the turn streams after it; the turn's end re-reads the newest
+    /// rows. `retrying` is Retry on the last turn, which failed: when the chat showed that turn's
+    /// prompt and it is still unsaved as the last one, it is cut as its row, and a 4018 hides
+    /// Retry. Returns why it failed, with nothing cut, or nil.
+    private func rewindHermesTranscript(before rowID: Int, sending text: String, on hermes: HermesChatTurnCoordinator,
+                                        reconnect: String, retrying: HermesChatActivity.RetryTarget? = nil) async -> String? {
+        guard !isHermesSubmissionUncertain else { return reconnect }
+        sendErrorMessage = nil
+        lastError = nil
+        // A failed turn whose prompt the chat never showed leaves the last one an earlier
+        // turn's: the host's cut takes no row the chat shows.
+        let first = messages.firstIndex { $0.rowID == rowID } ?? messages.lastIndex(where: Self.opensHermesTurn).flatMap {
+            retrying?.showsPrompt == true && messages[$0].rowID == nil ? $0 : nil
+        }
+        let cut = first.map { Set(messages[$0...].map(\.id)) } ?? []
+        // A later prompt means the chat already asked to discard later messages.
+        let discardsLaterPrompts = first.map { messages[$0...].dropFirst().contains(where: Self.opensHermesTurn) } ?? false
+        isStartingChat = true
+        defer { isStartingChat = false }
+        do {
+            try await hermes.rewind(before: rowID, text: text, discardsLaterPrompts: discardsLaterPrompts)
+        } catch {
+            if retrying != nil, case BotSettingFailure.rejected(4018, _) = error { hermes.retryWasRefused(at: rowID) }
+            return hermesHistoryFailure(error, on: hermes, reconnect: reconnect)
+        }
+        // Rows the turn's first frames added stay after the prompt.
+        let start = messages.firstIndex { cut.contains($0.id) } ?? messages.endIndex
+        var next = messages.filter { !cut.contains($0.id) }
+        next.insert(HermesChatTurnCoordinator.displayed(ChatMessage(role: "user", content: text, timestamp: Date().timeIntervalSince1970,
+                                                                    messageId: "local-\(UUID().uuidString)")),
+                    at: min(start, next.endIndex))
+        messages = next
+        transcriptRevision &+= 1
+        // A card without an anchor follows the last row, which the cut always takes.
+        setCompletedToolCallGroups(completedToolCallGroups.filter { $0.anchorMessageID.map { !cut.contains($0) } ?? false })
+        completedReasoningGroups = completedReasoningGroups.filter { $0.anchorMessageID.map { !cut.contains($0) } ?? false }
+        return nil
+    }
+
+    /// Why a Hermes rewind or `/undo` failed. A refusal is the host's own message, except busy
+    /// (4009) and a row it can no longer cut (4018). An answer that was lost or unreadable may
+    /// have been taken, and an `/undo` whose re-read failed still shows the exchange: Send
+    /// waits while the chat reattaches, so the transcript shows what happened, and nothing is
+    /// sent again (#508).
+    private func hermesHistoryFailure(_ error: Error, on hermes: HermesChatTurnCoordinator, reconnect: String) -> String {
+        switch error {
+        case is HermesChatTurnCoordinator.NotSent, BotSettingFailure.rejected(4001, _):
+            return reconnect
+        case BotSettingFailure.rejected(4009, _):
+            return String(localized: "Wait for the current reply to finish.")
+        case BotSettingFailure.rejected(4018, _):
+            return String(localized: "This message can’t be changed any more.")
+        case BotSettingFailure.rejected(4033, _):
+            // The host's history has prompts after the cut that this chat doesn't show.
+            return String(localized: "This chat changed on the server. Reopen it and try again.")
+        case BotSettingFailure.rejected(_, let message):
+            return message
+        default:
+            holdForLostAnswer(hermes)
+            return String(localized: "The server did not confirm the change.")
+        }
+    }
+
+    /// The prompt a rewind from `context`'s row resends: the row itself for a prompt, its
+    /// turn's prompt for a reply. Nil when the host can't cut there.
+    private func hermesRewindPrompt(for context: MessageActionContext) -> ChatMessage? {
+        let index = messages.indices.contains(context.visibleIndex) && messages[context.visibleIndex].id == context.messageID
+            ? context.visibleIndex : messages.firstIndex { $0.id == context.messageID }
+        guard let index, let prompt = messages[...index].last(where: Self.opensHermesTurn),
+              Self.isHermesRewindable(prompt) else { return nil }
+        return prompt
+    }
+
+    private func updateHermesRewindableMessageIDs() {
+        var ids = Set<String>()
+        var rewindable = false
+        for message in messages {
+            if Self.opensHermesTurn(message) { rewindable = Self.isHermesRewindable(message) }
+            if rewindable, message.role == "assistant" || Self.opensHermesTurn(message) { ids.insert(message.id) }
+        }
+        if ids != hermesRewindableMessageIDs { hermesRewindableMessageIDs = ids }
+    }
+
+    /// Whether only replies' text changed, row for row, as a stream tick does. A reply offers
+    /// Regenerate by its id and its prompt alone, so the rewindable rows stay as they were.
+    private nonisolated static func onlyRepliesChanged(from old: [ChatMessage], to new: [ChatMessage]) -> Bool {
+        guard old.count == new.count else { return false }
+        for (before, after) in zip(old, new) where before != after {
+            let sameReply = before.role == "assistant" && after.role == "assistant"
+            guard sameReply, let id = before.messageId, id == after.messageId else { return false }
+        }
+        return true
+    }
+
+    /// A user row that opens a turn; a steer belongs to the turn it steers.
+    private nonisolated static func opensHermesTurn(_ message: ChatMessage) -> Bool {
+        message.role == "user" && !message.isSteerMessage
+    }
+
+    /// A prompt the host can cut at and resend: it has the host's `rowID`, compaction has not
+    /// archived it (the host cuts only in its live history), and it has no attachments, which a
+    /// text-only resend would drop.
+    private nonisolated static func isHermesRewindable(_ prompt: ChatMessage) -> Bool {
+        prompt.rowID != nil && !prompt.isCompacted && prompt.attachments?.isEmpty != false
+            && !hermesPromptText(prompt).isEmpty
+    }
+
+    /// A prompt's text as it shows, which a skill turn's host expands again.
+    private nonisolated static func hermesPromptText(_ prompt: ChatMessage) -> String {
+        (prompt.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @discardableResult
+    func cancelActiveStream() async -> Bool {
+        guard activeStreamID != nil else { return false }
+
+        isCancellingStream = true
+        sendErrorMessage = nil
+        lastError = nil
+        defer { isCancellingStream = false }
+
+        if let hermesTurn {
+            // Accepted is not idle: the turn's own ending frames settle it.
+            do {
+                return try await hermesTurn.interrupt()
+            } catch {
+                sendErrorMessage = String(localized: "The server could not stop the current response.")
+                return false
+            }
+        }
+
+        do {
+            guard let response = try await streamCoordinator.cancelActiveStream() else { return false }
+            if response.ok == false {
+                sendErrorMessage = response.error ?? String(localized: "The server could not stop the current response.")
+                return false
+            }
+
+            return true
+        } catch {
+            lastError = error
+            sendErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func clearMessageActionError() {
+        messageActionErrorMessage = nil
+    }
+
+    func toggleListening(to context: MessageActionContext) {
+        guard context.role == .assistant else { return }
+
+        guard let listenText = context.listenText else {
+            messageActionErrorMessage = String(localized: "There is no assistant text to listen to.")
+            return
+        }
+
+        // Tapping the message that is already listening — fetching server audio or
+        // playing on either engine — toggles it off. Matching on `listeningMessageID`
+        // alone (not `isSpeaking`) also debounces rapid double-taps: the second tap
+        // stops cleanly instead of firing a second speech request (into webui's ~2 s
+        // `/api/tts` rate limit) or stacking audio (#15).
+        if listeningMessageID == context.messageID {
+            stopListening()
+            return
+        }
+
+        stopListening()
+        // The audio session is NOT activated here: server speech can be slow or
+        // unreachable, and activating the non-mixable playback session before the
+        // fetch would silence other audio while Hermex has nothing to play (review
+        // on #35). Activation happens at the two playback-start points instead —
+        // `startServerAudioPlayback` and `speakWithOnDeviceSynthesizer`.
+        listeningMessageID = context.messageID
+        beginListenPlaybackPreparation(for: context)
+
+        guard ServerTTSPolicy.shouldUseServerTTS(for: listenText, onHermes: hermesTurn != nil) else {
+            // Over the server's ceiling: go straight to the on-device path (chunking
+            // is a non-goal of #15).
+            clearListenPlaybackState()
+            speakWithOnDeviceSynthesizer(listenText)
+            return
+        }
+
+        // Prefer the server's speech; on any failure (offline, 4xx/5xx, rate
+        // limit, undecodable audio) fall back silently to the on-device
+        // synthesizer — no error alert (#15).
+        let requestID = UUID()
+        activeListenRequestID = requestID
+        listenPreparationTask = Task { [weak self, synthesizeListenAudio] in
+            guard !Task.isCancelled else {
+                // Stopped before the fetch began (e.g. a rapid second tap): skip
+                // the request entirely instead of issuing one whose response
+                // would be dropped anyway.
+                return
+            }
+            let audioData = try? await synthesizeListenAudio(listenText)
+
+            guard let self, !Task.isCancelled, self.activeListenRequestID == requestID else {
+                // Stopped or superseded while the fetch was in flight — the user no
+                // longer wants this audio; never start playback from a stale response.
+                return
+            }
+
+            if let audioData, self.startServerAudioPlayback(audioData, title: self.listenPlaybackTitle) {
+                return
+            }
+            self.clearListenPlaybackState()
+            self.speakWithOnDeviceSynthesizer(listenText)
+        }
+    }
+
+    func stopListening() {
+        // Cancel any in-flight server-TTS fetch so a late response can't start
+        // audio after the user asked to stop (or switched messages).
+        listenPreparationTask?.cancel()
+        listenPreparationTask = nil
+        activeListenRequestID = nil
+
+        // `AVAudioPlayer.stop()` does not fire the finish delegate, so no stale
+        // callback follows; state is torn down synchronously in `finishListening()`.
+        listenAudioPlayer?.stop()
+
+        if let speechSynthesizer, speechSynthesizer.isSpeaking || speechSynthesizer.isPaused {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
+        finishListening()
+    }
+
+    func toggleListenPlaybackPlayPause() {
+        switch listenPlaybackPhase {
+        case .playing:
+            pauseListenPlayback()
+        case .paused:
+            resumeListenPlayback()
+        case .idle, .loading:
+            break
+        }
+    }
+
+    func setListenPlaybackSpeed(_ speed: ListenPlaybackSpeed) {
+        guard listenPlaybackSpeed != speed else { return }
+        listenPlaybackSpeed = speed
+        userDefaults.set(speed.rawValue, forKey: ListenPlaybackSpeed.storageKey)
+        listenAudioPlayer?.rate = Float(speed.rawValue)
+        updateListenNowPlaying()
+    }
+
+    func scrubListenPlayback(to time: TimeInterval) {
+        listenPlaybackScrubTime = boundedListenPlaybackTime(time)
+    }
+
+    func setListenPlaybackScrubbing(_ scrubbing: Bool) {
+        if scrubbing {
+            listenPlaybackScrubTime = listenPlaybackElapsedTime
+        } else if let target = listenPlaybackScrubTime {
+            seekListenPlayback(to: target)
+            listenPlaybackScrubTime = nil
+        }
+    }
+
+    func refreshListenPlaybackProgressAfterSceneActivation() {
+        guard listenPlaybackPhase == .playing || listenPlaybackPhase == .paused else { return }
+
+        updateListenPlaybackProgressFromPlayer()
+        if listenPlaybackPhase == .playing {
+            startListenPlaybackTicker()
+        }
+    }
+
+    func suspendStreamForBackground() {
+        suspendActiveStreamConnection()
+    }
+
+    func suspendStreamForNavigation() {
+        suspendActiveStreamConnection()
+    }
+
+    func cleanupPollingTasks() {
+        stopBackgroundPolling(clearTrackedPrompts: true)
+        pendingActionCoordinator.stopMonitoring(clearPrompt: true)
+        takeInitialSessionPrefetch(usable: false)
+    }
+
+    private func suspendActiveStreamConnection() {
+        turn.suspendActiveStreamConnection()
+    }
+
+    /// `ChatView` reconnects as it appears, before its first load, so a Hermes chat's attach can
+    /// start here: it takes the offline cache first, to write what that attach reads (#1144).
+    func reconnectStreamIfNeeded(modelContext: ModelContext? = nil) async {
+        if hermesTurn != nil, let modelContext { hermesCache = modelContext }
+        await turn.reconnectIfNeeded(modelContext: modelContext)
+    }
+
+    /// Retries a suspended stream, or clears a stale "Waiting for network",
+    /// when the device's network path changes (#869).
+    func networkPathDidChange(modelContext: ModelContext? = nil) async {
+        if hermesTurn != nil, let modelContext { hermesCache = modelContext }
+        await turn.networkPathDidChange(modelContext: modelContext)
+    }
+
+    func refreshTranscriptIfActiveStreamCompleted(
+        streamID expectedStreamID: String,
+        modelContext: ModelContext? = nil
+    ) async {
+        await streamCoordinator.refreshTranscriptIfCompleted(
+            streamID: expectedStreamID,
+            modelContext: modelContext
+        )
+    }
+
+    func recoverStaleActiveStreamIfNeeded(
+        now: Date = Date(),
+        modelContext: ModelContext? = nil
+    ) async {
+        await turn.recoverStaleStreamIfNeeded(now: now, modelContext: modelContext)
+    }
+
+    private var hasRunningLiveToolCall: Bool {
+        liveToolCalls.contains { !$0.isCompleted }
+    }
+
+    private func saveActiveStreamSnapshotIfNeeded() {
+        guard let sessionID,
+              let activeStreamID,
+              !hasCompletedCurrentResponse
+        else { return }
+
+        ActiveChatStreamSnapshotStore.shared.save(
+            ActiveChatStreamSnapshot(
+                messages: messages,
+                messagesOffset: messagesOffset,
+                displayTitle: displayTitle,
+                completedToolCallGroups: completedToolCallGroups,
+                completedReasoningGroups: completedReasoningGroups,
+                liveToolCalls: liveToolCalls,
+                liveReasoningText: liveReasoningText,
+                activeStreamLastEventID: streamCoordinator.lastEventID,
+                streamingAssistantMessageID: streamingAssistantMessageID,
+                toolCallAnchorMessageID: toolCallAnchorMessageID,
+                reasoningAnchorMessageID: reasoningAnchorMessageID,
+                contextWindowSnapshot: contextWindowSnapshot,
+                localAttachmentPreviews: attachmentCoordinator.localAttachmentPreviews,
+                pinnedLocalNotices: pinnedLocalNotices
+            ),
+            server: server,
+            sessionID: sessionID,
+            streamID: activeStreamID
+        )
+    }
+
+    @discardableResult
+    private func restoreActiveStreamSnapshotIfAvailable(streamID: String) -> ChatStreamSnapshotRestoreResult {
+        guard let sessionID,
+              let snapshot = ActiveChatStreamSnapshotStore.shared.snapshot(
+                server: server,
+                sessionID: sessionID,
+                streamID: streamID
+              )
+        else { return .notRestored }
+
+        let merge = Self.mergingLoadedMessages(messages, withActiveStreamSnapshot: snapshot)
+        messages = merge.messages
+        if merge.usedSnapshotMessagesOffset {
+            messagesOffset = snapshot.messagesOffset
+            hasOlderMessages = snapshot.messagesOffset > 0
+        }
+        displayTitle = displayTitle.isEmpty ? snapshot.displayTitle : displayTitle
+        setCompletedToolCallGroups(snapshot.completedToolCallGroups)
+        completedReasoningGroups = snapshot.completedReasoningGroups
+        liveToolCalls = snapshot.liveToolCalls
+        liveReasoningText = snapshot.liveReasoningText
+        streamingAssistantMessageID = merge.streamingAssistantMessageID ?? snapshot.streamingAssistantMessageID
+        toolCallAnchorMessageID = Self.remappedAnchorMessageID(
+            snapshot.toolCallAnchorMessageID,
+            from: snapshot.streamingAssistantMessageID,
+            to: streamingAssistantMessageID
+        )
+        reasoningAnchorMessageID = Self.remappedAnchorMessageID(
+            snapshot.reasoningAnchorMessageID,
+            from: snapshot.streamingAssistantMessageID,
+            to: streamingAssistantMessageID
+        )
+        contextWindowSnapshot = contextWindowSnapshot ?? snapshot.contextWindowSnapshot
+        attachmentCoordinator.mergeLocalAttachmentPreviews(snapshot.localAttachmentPreviews)
+        pinnedLocalNotices = snapshot.pinnedLocalNotices
+        scheduleStreamingScrollTrigger()
+        return ChatStreamSnapshotRestoreResult(
+            didRestoreSnapshot: true,
+            lastEventID: snapshot.activeStreamLastEventID
+        )
+    }
+
+    private func removeActiveStreamSnapshot(streamID: String?) {
+        guard let sessionID,
+              let streamID
+        else { return }
+
+        ActiveChatStreamSnapshotStore.shared.remove(
+            server: server,
+            sessionID: sessionID,
+            streamID: streamID
+        )
+    }
+
+    @discardableResult
+    func respondToApproval(_ choice: ApprovalChoice) async -> Bool {
+        await pendingActionCoordinator.respondToApproval(choice)
+    }
+
+    @discardableResult
+    func skipApprovalsForCurrentSession() async -> Bool {
+        await pendingActionCoordinator.skipApprovalsForCurrentSession()
+    }
+
+    func applyApprovalUpdate(_ update: ApprovalPendingResponse, sessionID: String) {
+        pendingActionCoordinator.applyApprovalUpdate(update, sessionID: sessionID)
+    }
+
+    @discardableResult
+    func respondToClarification(_ responseText: String) async -> Bool {
+        await pendingActionCoordinator.respondToClarification(responseText)
+    }
+
+    func applyClarificationUpdate(_ update: ClarificationPendingResponse, sessionID: String) {
+        pendingActionCoordinator.applyClarificationUpdate(update, sessionID: sessionID)
+    }
+
+    private func startBtwStream(streamID: String, question: String) {
+        activeBtwStreamID = streamID
+        activeBtwQuestion = question
+        activeBtwAnswer = ""
+        activeBtwMessageID = appendLocalAssistantMessage(Self.btwMessageText(question: question, answer: nil, isLoading: true))
+
+        btwStreamClient.start(url: client.chatStreamURL(streamID: streamID)) { [weak self] event in
+            self?.handleBtwStreamEvent(event)
+        }
+    }
+
+    private func handleBtwStreamEvent(_ event: SSEEvent) {
+        switch event {
+        case .token(let text):
+            activeBtwAnswer += text
+            updateActiveBtwMessage(isLoading: true)
+        case .interimAssistant(let payload):
+            guard payload.alreadyStreamed != true else { break }
+            let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !text.isEmpty else { break }
+            if activeBtwAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                activeBtwAnswer = text
+            } else {
+                activeBtwAnswer += "\n\n\(text)"
+            }
+            updateActiveBtwMessage(isLoading: true)
+        case .done:
+            updateActiveBtwMessage(isLoading: false)
+        case .approvalPending, .clarificationPending:
+            break
+        case .streamEnd, .cancelled:
+            finishBtwStream()
+        case .error(let message):
+            activeBtwAnswer = "Error: \(message)"
+            updateActiveBtwMessage(isLoading: false)
+            finishBtwStream()
+        case .transportError(let message):
+            activeBtwAnswer = "Error: \(message)"
+            updateActiveBtwMessage(isLoading: false)
+            finishBtwStream()
+        case .heartbeat, .ignored, .reasoning, .toolStarted, .toolCompleted, .title, .metering, .pendingSteerLeftover:
+            break
+        }
+    }
+
+    private func updateActiveBtwMessage(isLoading: Bool) {
+        guard let activeBtwMessageID, let activeBtwQuestion else { return }
+        updateLocalMessage(
+            id: activeBtwMessageID,
+            content: Self.btwMessageText(
+                question: activeBtwQuestion,
+                answer: activeBtwAnswer,
+                isLoading: isLoading
+            )
+        )
+    }
+
+    private func finishBtwStream() {
+        btwStreamClient.stop()
+        activeBtwStreamID = nil
+        activeBtwMessageID = nil
+        activeBtwQuestion = nil
+        activeBtwAnswer = ""
+    }
+
+    private func stopBackgroundPolling(clearTrackedPrompts: Bool) {
+        backgroundPollTask?.cancel()
+        backgroundPollTask = nil
+        if clearTrackedPrompts {
+            backgroundPromptsByTaskID.removeAll()
+        }
+    }
+
+    private func startBackgroundPollingIfNeeded(parentSessionID: String) {
+        guard backgroundPollTask == nil else { return }
+
+        let pollingInterval = pollingIntervals.backgroundNanoseconds, waitInterval = pollingIntervals.sleep
+        backgroundPollTask = Task { @MainActor [weak self] in
+            pollingLoop: while !Task.isCancelled {
+                do {
+                    guard let self,
+                          !self.backgroundPromptsByTaskID.isEmpty
+                    else { break pollingLoop }
+
+                    do {
+                        let response = try await self.client.backgroundStatus(sessionID: parentSessionID)
+                        self.handleBackgroundResults(response.results ?? [])
+                    } catch {
+                        self.lastError = error
+                    }
+
+                    guard !Task.isCancelled, !self.backgroundPromptsByTaskID.isEmpty else {
+                        break pollingLoop
+                    }
+                }
+
+                await waitInterval(pollingInterval)
+            }
+
+            if !Task.isCancelled {
+                self?.backgroundPollTask = nil
+            }
+        }
+    }
+
+    private func handleBackgroundResults(_ results: [BackgroundResult]) {
+        for result in results {
+            let prompt: String
+            if let taskID = result.taskId,
+               let trackedPrompt = backgroundPromptsByTaskID.removeValue(forKey: taskID) {
+                prompt = trackedPrompt
+            } else if let resultPrompt = result.prompt, !resultPrompt.isEmpty {
+                prompt = resultPrompt
+            } else {
+                prompt = "Background task"
+            }
+
+            appendLocalAssistantMessage(
+                Self.backgroundResultText(
+                    prompt: prompt,
+                    answer: result.answer
+                )
+            )
+        }
+    }
+
+    @discardableResult
+    private func appendInterimAssistant(_ payload: InterimAssistantStreamEvent) -> Bool {
+        guard payload.alreadyStreamed != true else { return false }
+
+        let text = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else { return false }
+
+        flushPendingStreamingContent()
+
+        if let streamingAssistantMessageID,
+           let index = messages.firstIndex(where: { $0.messageId == streamingAssistantMessageID }) {
+            let existing = messages[index]
+            let currentContent = existing.content ?? ""
+            let textToAppend = deduplicatedReplayText(
+                text,
+                existingContent: currentContent,
+                matchedPrefixLength: &activeStreamReplayMatchedInterimLength
+            )
+            guard !textToAppend.isEmpty else { return false }
+
+            let shouldAppendReplaySuffixDirectly = isActiveStreamReplayConnection && textToAppend != text
+            let shouldUseSeparator = currentContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                && !shouldAppendReplaySuffixDirectly
+            let separator = shouldUseSeparator ? "\n\n" : ""
+            messages[index] = ChatMessage(
+                role: existing.role,
+                content: currentContent + separator + textToAppend,
+                timestamp: existing.timestamp,
+                messageId: existing.messageId,
+                name: existing.name,
+                toolCallId: existing.toolCallId,
+                toolUseId: existing.toolUseId,
+                toolCalls: existing.toolCalls,
+                contentParts: existing.contentParts,
+                reasoning: existing.reasoning,
+                attachments: existing.attachments,
+                turnTps: existing.turnTps
+            )
+            scheduleStreamingScrollTrigger()
+            return true
+        }
+
+        return appendAssistantToken(text)
+    }
+
+    private func applyCompletedStreamSession(_ completedSession: SessionDetail) {
+        if let completedSessionID = completedSession.sessionId,
+           let sessionID,
+           completedSessionID != sessionID {
+            return
+        }
+
+        applyCompressionAnchorMetadata(from: completedSession)
+
+        var didApplyCompletedTranscript = false
+        if let completedMessages = completedSession.messages,
+           !completedMessages.isEmpty {
+            let previousMessages = messages
+            let previousMessagesOffset = messagesOffset
+            let reloadedMessages = Self.mergingLoadedMessages(
+                completedMessages,
+                withLocalOptimisticMessages: messages
+            )
+            applyReloadedMessages(
+                reloadedMessages,
+                from: completedSession,
+                previousMessages: previousMessages,
+                previousMessagesOffset: previousMessagesOffset
+            )
+            didApplyCompletedTranscript = true
+        }
+
+        if let title = completedSession.title {
+            applyLiveActivitySessionTitle(title)
+        }
+
+        currentWorkspace = completedSession.workspace ?? currentWorkspace
+        currentModel = completedSession.model ?? currentModel
+        currentModelProvider = completedSession.modelProvider ?? currentModelProvider
+        currentProfile = completedSession.profile ?? currentProfile
+
+        contextWindowSnapshot = ContextWindowSnapshot(
+            contextLength: completedSession.contextLength,
+            thresholdTokens: completedSession.thresholdTokens,
+            lastPromptTokens: completedSession.lastPromptTokens,
+            inputTokens: completedSession.inputTokens,
+            outputTokens: completedSession.outputTokens,
+            estimatedCost: completedSession.estimatedCost
+        )
+        if didApplyCompletedTranscript || completedSession.toolCalls != nil {
+            let rebuiltToolCallGroups = ToolCallGroup.groups(
+                persistedToolCalls: completedSession.toolCalls ?? [],
+                messages: messages,
+                messageOffset: messagesOffset
+            )
+            if !liveToolCalls.isEmpty {
+                let fallbackAnchorMessageID = currentTurnToolCallFallbackAnchorMessageID()
+                setCompletedToolCallGroups(ToolCallGroup.coalescingByAssistantTurn(
+                    ToolCallGroup.merging(
+                        primaryGroups: rebuiltToolCallGroups,
+                        fallbackGroups: [
+                            ToolCallGroup(
+                                id: "completed-live-tools-\(fallbackAnchorMessageID ?? "unanchored")",
+                                anchorMessageID: fallbackAnchorMessageID,
+                                toolCalls: liveToolCalls
+                            )
+                        ]
+                    ),
+                    messages: messages,
+                    messageOffset: messagesOffset
+                ))
+            } else {
+                setCompletedToolCallGroups(rebuiltToolCallGroups)
+            }
+            liveToolCalls = []
+        }
+
+        if didApplyCompletedTranscript {
+            completedReasoningGroups = []
+            liveReasoningText = ""
+            toolCallAnchorMessageID = nil
+            reasoningAnchorMessageID = nil
+            attachmentCoordinator.removeAllLocalPreviews()
+            scheduleStreamingScrollTrigger()
+        }
+    }
+
+    private func setCompletedToolCallGroups(_ groups: [ToolCallGroup]) {
+        let lookup = ToolCallGroupAnchorLookup(groups: groups)
+        guard completedToolCallGroups != groups else { return }
+
+        completedToolCallGroups = groups
+        completedToolCallGroupLookup = lookup
+        recomputeDisplayedTranscriptMessages()
+    }
+
+    private func appendCompletedToolCallGroup(_ group: ToolCallGroup) {
+        setCompletedToolCallGroups(completedToolCallGroups + [group])
+    }
+
+    private func archiveLiveToolCallsIfNeeded() {
+        guard !liveToolCalls.isEmpty else { return }
+
+        appendCompletedToolCallGroup(
+            ToolCallGroup(
+                anchorMessageID: toolCallAnchorMessageID,
+                toolCalls: liveToolCalls
+            )
+        )
+    }
+
+    private func currentTurnToolCallFallbackAnchorMessageID() -> String? {
+        if let toolCallAnchorMessageID,
+           messages.enumerated().contains(where: { index, message in
+               TranscriptTurnClassifier.anchorID(for: message, at: index, messageOffset: messagesOffset) == toolCallAnchorMessageID
+           }) {
+            return toolCallAnchorMessageID
+        }
+
+        return TranscriptTurnClassifier.currentTurnAssistantAnchorIDs(in: messages, messageOffset: messagesOffset).first
+            ?? Self.latestAssistantAnchorID(in: messages, messageOffset: messagesOffset)
+    }
+
+    /// Moves the last turn's live reasoning and tools into the transcript, so a new turn
+    /// starts with none.
+    private func archiveLiveActivityForNewTurn() {
+        archiveLiveReasoningIfNeeded()
+        archiveLiveToolCallsIfNeeded()
+        liveReasoningText = ""
+        liveToolCalls = []
+        reasoningAnchorMessageID = nil
+        toolCallAnchorMessageID = nil
+    }
+
+    private func archiveLiveReasoningIfNeeded() {
+        guard !liveReasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        completedReasoningGroups.append(
+            ReasoningGroup(
+                anchorMessageID: reasoningAnchorMessageID,
+                text: liveReasoningText
+            )
+        )
+    }
+
+    @discardableResult
+    private func ensureStreamingAssistantMessage() -> String {
+        if let streamingAssistantMessageID {
+            return streamingAssistantMessageID
+        }
+
+        let messageID = "stream-\(UUID().uuidString)"
+        streamingAssistantMessageID = messageID
+        messages.append(
+            ChatMessage(
+                role: "assistant",
+                content: "",
+                timestamp: Date().timeIntervalSince1970,
+                messageId: messageID
+            )
+        )
+        return messageID
+    }
+
+    @discardableResult
+    private func appendReasoning(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+
+        // As with assistant tokens, normal streams do not need replay matching.
+        // Avoid joining all pending reasoning text unless this is a reconnect
+        // replay where duplicate-event suppression is required.
+        _ = ensureStreamingAssistantMessage()
+        let remainder: String
+        if isActiveStreamReplayConnection {
+            let effectiveContent = activeStreamReplayLoadedReasoningText
+                + liveReasoningText
+                + pendingReasoningChunks.joined()
+            remainder = deduplicatedReplayText(
+                text,
+                existingContent: effectiveContent,
+                matchedPrefixLength: &activeStreamReplayMatchedReasoningLength
+            )
+        } else {
+            remainder = text
+        }
+        guard !remainder.isEmpty else { return false }
+
+        pendingReasoningChunks.append(remainder)
+        scheduleStreamingContentFlush()
+        return true
+    }
+
+    @discardableResult
+    private func flushReasoningChunks() -> Bool {
+        guard !pendingReasoningChunks.isEmpty else { return false }
+
+        // Chunks were deduplicated at append time, so flushing is pure concatenation.
+        let appendedText = pendingReasoningChunks.joined()
+        pendingReasoningChunks = []
+
+        let messageID = ensureStreamingAssistantMessage()
+        if reasoningAnchorMessageID == nil {
+            reasoningAnchorMessageID = messageID
+        }
+
+        liveReasoningText += appendedText
+        return true
+    }
+
+    @discardableResult
+    private func appendToolCall(_ payload: ToolStreamEvent) -> Bool {
+        let messageID = ensureStreamingAssistantMessage()
+        if toolCallAnchorMessageID == nil {
+            toolCallAnchorMessageID = messageID
+        }
+
+        if let duplicateLoadedIndex = duplicateLoadedReplayToolStartIndex(for: payload) {
+            activeStreamReplayPendingLoadedToolMatchIndex = duplicateLoadedIndex
+            return false
+        }
+
+        if let duplicateReplayIndex = duplicateReplayToolStartIndex(for: payload) {
+            activeStreamReplayPendingToolMatchIndex = duplicateReplayIndex
+            return false
+        }
+
+        liveToolCalls.append(
+            ToolCall(
+                id: payload.stableID ?? "live-tool-\(UUID().uuidString)",
+                name: payload.name,
+                preview: payload.preview,
+                args: payload.args
+            )
+        )
+        scheduleStreamingScrollTrigger()
+        return true
+    }
+
+    @discardableResult
+    private func completeToolCall(_ payload: ToolStreamEvent) -> Bool {
+        let messageID = ensureStreamingAssistantMessage()
+        if toolCallAnchorMessageID == nil {
+            toolCallAnchorMessageID = messageID
+        }
+
+        if duplicateLoadedReplayToolCompletion(for: payload) {
+            return false
+        }
+
+        if let duplicateReplayIndex = duplicateReplayToolCompletionIndex(for: payload) {
+            let wasAlreadyCompleted = liveToolCalls[duplicateReplayIndex].isCompleted
+            activeStreamReplayToolMatchIndex = duplicateReplayIndex + 1
+            activeStreamReplayPendingToolMatchIndex = nil
+
+            guard !wasAlreadyCompleted else { return false }
+
+            liveToolCalls[duplicateReplayIndex] = liveToolCalls[duplicateReplayIndex].applyingCompletionPayload(payload)
+            scheduleStreamingScrollTrigger()
+            return true
+        }
+
+        activeStreamReplayPendingToolMatchIndex = nil
+
+        guard let index = liveToolCallCompletionIndex(for: payload) else {
+            liveToolCalls.append(
+                ToolCall(
+                    id: payload.stableID ?? "live-tool-\(UUID().uuidString)",
+                    name: payload.name,
+                    preview: payload.preview,
+                    args: payload.args,
+                    duration: payload.duration,
+                    isError: payload.isError,
+                    isCompleted: true
+                )
+            )
+            scheduleStreamingScrollTrigger()
+            return true
+        }
+
+        liveToolCalls[index] = liveToolCalls[index].applyingCompletionPayload(payload)
+        scheduleStreamingScrollTrigger()
+        return true
+    }
+
+    private func duplicateReplayToolStartIndex(for payload: ToolStreamEvent) -> Int? {
+        guard isActiveStreamReplayConnection else { return nil }
+
+        if let stableIndex = stableReplayToolIndex(for: payload) {
+            return stableIndex
+        }
+
+        guard activeStreamReplayToolMatchIndex < liveToolCalls.count else { return nil }
+
+        let index = activeStreamReplayToolMatchIndex
+        return liveToolCalls[index].matchesReplayToolStart(payload) ? index : nil
+    }
+
+    private func duplicateReplayToolCompletionIndex(for payload: ToolStreamEvent) -> Int? {
+        guard isActiveStreamReplayConnection else { return nil }
+
+        if let stableIndex = stableReplayToolIndex(for: payload) {
+            return stableIndex
+        }
+
+        if let pendingIndex = activeStreamReplayPendingToolMatchIndex,
+           pendingIndex < liveToolCalls.count,
+           liveToolCalls[pendingIndex].matchesReplayToolCompletion(payload) {
+            return pendingIndex
+        }
+
+        guard activeStreamReplayToolMatchIndex < liveToolCalls.count else { return nil }
+
+        let index = activeStreamReplayToolMatchIndex
+        guard liveToolCalls[index].isCompleted,
+              liveToolCalls[index].matchesReplayToolCompletion(payload)
+        else {
+            return nil
+        }
+
+        return index
+    }
+
+    private func duplicateLoadedReplayToolStartIndex(for payload: ToolStreamEvent) -> Int? {
+        guard isActiveStreamReplayConnection else { return nil }
+
+        if let stableID = payload.stableID?.nonEmptyReplayMatchText,
+           let index = activeStreamReplayLoadedToolCalls.firstIndex(where: { $0.matchesStableToolID(stableID) }) {
+            return index
+        }
+
+        guard activeStreamReplayLoadedToolMatchIndex < activeStreamReplayLoadedToolCalls.count else {
+            return nil
+        }
+
+        let index = activeStreamReplayLoadedToolMatchIndex
+        return activeStreamReplayLoadedToolCalls[index].matchesReplayToolStart(payload) ? index : nil
+    }
+
+    private func duplicateLoadedReplayToolCompletion(for payload: ToolStreamEvent) -> Bool {
+        guard isActiveStreamReplayConnection else { return false }
+
+        let index: Int?
+        if let stableID = payload.stableID?.nonEmptyReplayMatchText {
+            index = activeStreamReplayLoadedToolCalls.firstIndex { $0.matchesStableToolID(stableID) }
+        } else if let pendingIndex = activeStreamReplayPendingLoadedToolMatchIndex,
+                  pendingIndex < activeStreamReplayLoadedToolCalls.count,
+                  activeStreamReplayLoadedToolCalls[pendingIndex].matchesReplayToolCompletion(payload) {
+            index = pendingIndex
+        } else if activeStreamReplayLoadedToolMatchIndex < activeStreamReplayLoadedToolCalls.count,
+                  activeStreamReplayLoadedToolCalls[activeStreamReplayLoadedToolMatchIndex]
+                    .matchesReplayToolCompletion(payload) {
+            index = activeStreamReplayLoadedToolMatchIndex
+        } else {
+            index = nil
+        }
+
+        guard let index else { return false }
+        activeStreamReplayLoadedToolMatchIndex = max(activeStreamReplayLoadedToolMatchIndex, index + 1)
+        activeStreamReplayPendingLoadedToolMatchIndex = nil
+        return true
+    }
+
+    private func loadedReplayReasoningText() -> String {
+        guard let streamingAssistantMessageID,
+              let message = messages.first(where: { $0.messageId == streamingAssistantMessageID })
+        else { return "" }
+
+        return Self.reasoningTexts(from: message).joined(separator: "\n")
+    }
+
+    private func loadedReplayToolCalls() -> [ToolCall] {
+        let currentTurnAnchors = Set(
+            TranscriptTurnClassifier.currentTurnAssistantAnchorIDs(
+                in: messages,
+                messageOffset: messagesOffset
+            )
+        )
+        return completedToolCallGroups
+            .filter { group in
+                group.anchorMessageID.map(currentTurnAnchors.contains) ?? false
+            }
+            .flatMap(\.toolCalls)
+    }
+
+    private func stableReplayToolIndex(for payload: ToolStreamEvent) -> Int? {
+        guard let stableID = payload.stableID?.nonEmptyReplayMatchText else { return nil }
+
+        return liveToolCalls.firstIndex { toolCall in
+            toolCall.matchesStableToolID(stableID)
+        }
+    }
+
+    private func liveToolCallCompletionIndex(for payload: ToolStreamEvent) -> Int? {
+        if let stableID = payload.stableID?.nonEmptyReplayMatchText,
+           let stableIndex = liveToolCalls.lastIndex(where: { toolCall in
+               !toolCall.isCompleted && toolCall.matchesStableToolID(stableID)
+           }) {
+            return stableIndex
+        }
+
+        return liveToolCalls.lastIndex { toolCall in
+            !toolCall.isCompleted && (payload.name == nil || toolCall.name == payload.name)
+        }
+    }
+
+    @discardableResult
+    private func appendAssistantToken(_ token: String) -> Bool {
+        guard !token.isEmpty else { return false }
+
+        // Normal streams cannot contain replayed content, so constructing the
+        // full flushed + pending transcript before appending every token is
+        // unnecessary. Keep the expensive effective-content comparison only on
+        // reconnect replay paths, where it protects against duplicated events.
+        let remainder: String
+        if isActiveStreamReplayConnection {
+            let messageID = ensureStreamingAssistantMessage()
+            let flushedContent = messages.first(where: { $0.messageId == messageID })?.content ?? ""
+            let effectiveContent = flushedContent + pendingAssistantText
+            remainder = deduplicatedReplayToken(token, existingContent: effectiveContent)
+        } else {
+            _ = ensureStreamingAssistantMessage()
+            remainder = token
+        }
+        guard !remainder.isEmpty else { return false }
+
+        pendingAssistantText += remainder
+        scheduleStreamingContentFlush()
+        // Replayed text is catch-up, not new work: reattaching to a running
+        // stream must not pulse for every token that already happened.
+        if !isActiveStreamReplayConnection,
+           streamingHapticPulseThrottle.shouldPulse(at: Date().timeIntervalSinceReferenceDate) {
+            streamingHapticPulseTrigger += 1
+        }
+        return true
+    }
+
+    @discardableResult
+    private func flushAssistantTokens(throughRevealGate: Bool = false) -> Bool {
+        guard !pendingAssistantText.isEmpty else { return false }
+
+        // Tokens were deduplicated at append time, so flushing is pure concatenation.
+        // The reveal gate moves only the head of the buffer into the visible
+        // message; the held fragment stays pending, keeping the replay-dedup
+        // invariant that flushed + pending text is the full received content.
+        let appendedContent: String
+        if throughRevealGate {
+            let (shown, held) = StreamingRevealGate.cut(
+                pendingAssistantText,
+                heldPreviousTick: heldStreamingFragmentLastTick
+            )
+            pendingAssistantText = held
+            heldStreamingFragmentLastTick = !held.isEmpty
+            guard !shown.isEmpty else { return false }
+            appendedContent = shown
+        } else {
+            appendedContent = pendingAssistantText
+            pendingAssistantText = ""
+            heldStreamingFragmentLastTick = false
+        }
+
+        let messageID = ensureStreamingAssistantMessage()
+        if !liveReasoningText.isEmpty && reasoningAnchorMessageID == nil {
+            reasoningAnchorMessageID = messageID
+        }
+        if !liveToolCalls.isEmpty && toolCallAnchorMessageID == nil {
+            toolCallAnchorMessageID = messageID
+        }
+
+        if let index = messages.firstIndex(where: { $0.messageId == messageID }) {
+            let existing = messages[index]
+            messages[index] = ChatMessage(
+                role: existing.role,
+                content: (existing.content ?? "") + appendedContent,
+                timestamp: existing.timestamp,
+                messageId: existing.messageId,
+                name: existing.name,
+                toolCallId: existing.toolCallId,
+                toolUseId: existing.toolUseId,
+                toolCalls: existing.toolCalls,
+                contentParts: existing.contentParts,
+                reasoning: existing.reasoning,
+                attachments: existing.attachments,
+                turnTps: existing.turnTps
+            )
+            return true
+        }
+
+        messages.append(
+            ChatMessage(
+                role: "assistant",
+                content: appendedContent,
+                timestamp: Date().timeIntervalSince1970,
+                messageId: messageID
+            )
+        )
+        return true
+    }
+
+    private func deduplicatedReplayToken(_ token: String, existingContent: String) -> String {
+        guard isActiveStreamReplayConnection, !existingContent.isEmpty else {
+            resetActiveStreamReplayTokenState()
+            return token
+        }
+
+        let matchedPrefixLength = min(activeStreamReplayMatchedPrefixLength, existingContent.count)
+        let expectedReplayRemainder = String(existingContent.dropFirst(matchedPrefixLength))
+        if expectedReplayRemainder.hasPrefix(token) {
+            activeStreamReplayMatchedPrefixLength = matchedPrefixLength + token.count
+            if activeStreamReplayMatchedPrefixLength >= existingContent.count {
+                resetActiveStreamReplayTokenState()
+            }
+            return ""
+        }
+
+        if token.hasPrefix(expectedReplayRemainder) {
+            resetActiveStreamReplayTokenState()
+            return String(token.dropFirst(expectedReplayRemainder.count))
+        }
+
+        if existingContent.hasSuffix(token) || existingContent.hasPrefix(token) {
+            resetActiveStreamReplayTokenState()
+            return ""
+        }
+
+        if token.hasPrefix(existingContent) {
+            resetActiveStreamReplayTokenState()
+            return String(token.dropFirst(existingContent.count))
+        }
+
+        let maximumOverlap = min(existingContent.count, token.count)
+        guard maximumOverlap > 0 else {
+            resetActiveStreamReplayTokenState()
+            return token
+        }
+
+        for overlapLength in stride(from: maximumOverlap, through: 1, by: -1) {
+            let contentSuffix = existingContent.suffix(overlapLength)
+            let tokenPrefix = token.prefix(overlapLength)
+            if contentSuffix == tokenPrefix {
+                resetActiveStreamReplayTokenState()
+                return String(token.dropFirst(overlapLength))
+            }
+        }
+
+        resetActiveStreamReplayTokenState()
+        return token
+    }
+
+    private func deduplicatedReplayText(
+        _ text: String,
+        existingContent: String,
+        matchedPrefixLength: inout Int
+    ) -> String {
+        guard isActiveStreamReplayConnection, !existingContent.isEmpty else {
+            matchedPrefixLength = 0
+            return text
+        }
+
+        let matchedLength = min(matchedPrefixLength, existingContent.count)
+        let expectedReplayRemainder = String(existingContent.dropFirst(matchedLength))
+        if expectedReplayRemainder.hasPrefix(text) {
+            matchedPrefixLength = matchedLength + text.count
+            if matchedPrefixLength >= existingContent.count {
+                matchedPrefixLength = 0
+            }
+            return ""
+        }
+
+        if text.hasPrefix(expectedReplayRemainder) {
+            matchedPrefixLength = 0
+            return String(text.dropFirst(expectedReplayRemainder.count))
+        }
+
+        if existingContent.hasSuffix(text) || existingContent.hasPrefix(text) {
+            matchedPrefixLength = 0
+            return ""
+        }
+
+        if text.hasPrefix(existingContent) {
+            matchedPrefixLength = 0
+            return String(text.dropFirst(existingContent.count))
+        }
+
+        let maximumOverlap = min(existingContent.count, text.count)
+        guard maximumOverlap > 0 else {
+            matchedPrefixLength = 0
+            return text
+        }
+
+        for overlapLength in stride(from: maximumOverlap, through: 1, by: -1) {
+            let contentSuffix = existingContent.suffix(overlapLength)
+            let textPrefix = text.prefix(overlapLength)
+            if contentSuffix == textPrefix {
+                matchedPrefixLength = 0
+                return String(text.dropFirst(overlapLength))
+            }
+        }
+
+        matchedPrefixLength = 0
+        return text
+    }
+
+    private func resetActiveStreamReplayTokenState() {
+        turn.clearReplayConnection()
+        activeStreamReplayMatchedPrefixLength = 0
+    }
+
+    private func flushPinnedLocalNoticesToTranscript() {
+        let notices = pinnedLocalNotices
+        pinnedLocalNotices.removeAll()
+        for notice in notices {
+            appendLocalNoticeMessage(notice)
+        }
+    }
+
+    private func enqueueQueuedSlashMessage(
+        _ text: String,
+        attachments: [PendingAttachment],
+        atFront: Bool = false
+    ) {
+        let message = QueuedSlashMessage(text: text, attachments: attachments)
+        if atFront {
+            queuedSlashMessages.insert(message, at: 0)
+        } else {
+            queuedSlashMessages.append(message)
+        }
+    }
+
+    /// Hands the messages waiting behind the run to the caller, in queue order,
+    /// and forgets them, so the run's end sends nothing. ChatView parks them in
+    /// the chat's draft when the user leaves mid-run (#857). A message the drain
+    /// already took is in flight and stays with it.
+    func takeQueuedMessages() -> [QueuedSlashMessage] {
+        // Called on every leave: skip the observable writes when there is
+        // nothing to hand over.
+        guard !queuedSlashMessages.isEmpty else { return [] }
+        let queued = queuedSlashMessages
+        queuedSlashMessages.removeAll()
+        queueHandOverCount &+= 1
+        pinnedLocalNotices.removeAll { $0 == Self.interruptQueuedFallbackNotice }
+        return queued
+    }
+
+    private func drainQueuedSlashMessageIfIdle() {
+        guard activeStreamID == nil,
+              !isStartingChat,
+              !isDrainingQueuedSlashMessage,
+              !queuedSlashMessages.isEmpty
+        else { return }
+
+        let next = queuedSlashMessages.removeFirst()
+        isDrainingQueuedSlashMessage = true
+
+        Task { @MainActor in
+            let savedAttachments = attachmentCoordinator.pendingAttachments
+            attachmentCoordinator.replacePendingAttachments(next.attachments)
+            let sent = await sendMessage(next.text)
+            if !sent {
+                queuedSlashMessages.insert(next, at: 0)
+            }
+            // Keep files staged while the send was in flight, such as a parked
+            // queue's (#857); a failed send put `next`'s back, and they are
+            // queued again.
+            let nextAttachmentIDs = Set(next.attachments.map(\.id))
+            let stagedDuringSend = attachmentCoordinator.pendingAttachments.filter {
+                !nextAttachmentIDs.contains($0.id)
+            }
+            attachmentCoordinator.replacePendingAttachments(savedAttachments + stagedDuringSend)
+            isDrainingQueuedSlashMessage = false
+            // Only chain-drain after a *successful* send. A failed send requeues the message and
+            // waits for the next natural trigger (a queue append, stream completion, or an explicit
+            // user send) instead of immediately re-firing the drain — which, with a persistently
+            // failing send, was a tight retry loop hammering the network and CPU (issue #202).
+            if sent, activeStreamID == nil {
+                drainQueuedSlashMessageIfIdle()
+            }
+        }
+    }
+
+    @discardableResult
+    private func updateTitle(_ payload: TitleStreamEvent) -> Bool {
+        if let payloadSessionID = payload.sessionId, payloadSessionID != sessionID {
+            return false
+        }
+
+        guard let title = payload.title else { return false }
+        applyLiveActivitySessionTitle(title)
+        return true
+    }
+
+    private func refreshCompletedResponseTitleIfNeeded() {
+        guard !isRefreshingCompletedResponseTitle else { return }
+        guard let sessionID else { return }
+
+        isRefreshingCompletedResponseTitle = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isRefreshingCompletedResponseTitle = false }
+
+            do {
+                let response = try await client.session(id: sessionID, includeMessages: false, messageLimit: nil)
+                if let title = response.session?.title {
+                    applyLiveActivitySessionTitle(title)
+                }
+            } catch {
+                // Title refresh is opportunistic; the transcript has already completed successfully.
+            }
+        }
+    }
+
+    private func applyLiveActivitySessionTitle(_ title: String) {
+        displayTitle = Self.displayTitle(from: hermesTurn == nil ? title : hermesHeaderTitle(title))
+        // A Hermes session's turns drive their own activity (#1014); the one on screen may be
+        // another session's.
+        guard hermesTurn == nil else { return }
+        liveActivityManager.update(.sessionTitle(displayTitle))
+    }
+
+    /// A Hermes session's title as its header shows it (#1046), without the reference lines a
+    /// Hermex send appends (`MessageAttachment.hermesTitle`). The host's instant title cuts a
+    /// photo's reference before the photo's name, so then the first prompt's first attachment
+    /// names the chat.
+    private func hermesHeaderTitle(_ title: String) -> String? {
+        MessageAttachment.hermesTitle(title)
+            ?? messages.first { $0.role == "user" }?.attachments?.first?.name
+    }
+
+    private func finishListening() {
+        activeListeningUtteranceID = nil
+        activeListenPlayerID = nil
+        activeListenRequestID = nil
+        listenAudioPlayer = nil
+        listeningMessageID = nil
+        clearListenPlaybackState()
+        // Release the shared session so any audio we interrupted can resume. Safe to
+        // call when nothing was speaking: `setActive(false)` no-ops via `try?`.
+        listenAudioSession.deactivate()
+    }
+
+    private func beginListenPlaybackPreparation(for context: MessageActionContext) {
+        listenPlaybackTitle = String(localized: "Hermex response \(context.visibleIndex + 1)")
+        listenPlaybackPhase = .loading
+        listenPlaybackElapsedTime = 0
+        listenPlaybackDuration = 0
+        listenPlaybackScrubTime = nil
+        stopListenPlaybackTicker()
+        listenRemoteControlCenter.clear()
+    }
+
+    private func clearListenPlaybackState() {
+        listenPlaybackPhase = .idle
+        listenPlaybackElapsedTime = 0
+        listenPlaybackDuration = 0
+        listenPlaybackScrubTime = nil
+        stopListenPlaybackTicker()
+        listenRemoteControlCenter.clear()
+    }
+
+    /// Speaks `text` with the on-device `AVSpeechSynthesizer` — the pre-#15 Listen
+    /// path, kept as the offline/failure fallback for server TTS.
+    private func speakWithOnDeviceSynthesizer(_ text: String) {
+        // Route speech to the speaker (not the receiver/earpiece) immediately before
+        // speech starts — not when the Listen tap lands — so a slow `/api/tts` fetch
+        // never interrupts other audio while Hermex is silent (review on #35).
+        // Released again in `finishListening()` once playback ends. See #252.
+        listenAudioSession.activate()
+        let speechSynthesizer = speechSynthesizerForListening()
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        activeListeningUtteranceID = ObjectIdentifier(utterance)
+        speechSynthesizer.speak(utterance)
+    }
+
+    /// Attempts to start playback of server-synthesized audio bytes. Returns
+    /// `false` when the bytes can't be decoded into a player or playback fails to
+    /// start, so the caller can fall back to the on-device synthesizer.
+    private func startServerAudioPlayback(_ audioData: Data, title: String) -> Bool {
+        guard let player = try? serverTTSAudioPlayerFactory(audioData) else {
+            return false
+        }
+
+        let playerID = ObjectIdentifier(player)
+        player.onFinish = { [weak self] in
+            self?.handleListenPlayerCompletion(for: playerID)
+        }
+        player.prepareToPlay()
+        player.rate = Float(listenPlaybackSpeed.rawValue)
+        listenPlaybackTitle = title
+        listenPlaybackElapsedTime = player.currentTime
+        listenPlaybackDuration = player.duration
+        listenPlaybackScrubTime = nil
+        configureListenRemoteControls()
+
+        // Activate the session only once decodable audio is in hand, immediately
+        // before playback, so the network wait never held it (review on #35). If
+        // `play()` still fails, the on-device fallback re-activates for itself —
+        // `activate()` is idempotent, and `finishListening()` releases it either way.
+        listenAudioSession.activate()
+        guard player.play() else {
+            return false
+        }
+
+        listenAudioPlayer = player
+        activeListenPlayerID = playerID
+        listenPlaybackPhase = .playing
+        startListenPlaybackTicker()
+        updateListenPlaybackProgressFromPlayer()
+        updateListenNowPlaying()
+        return true
+    }
+
+    private func pauseListenPlayback() {
+        guard listenPlaybackPhase == .playing, let player = listenAudioPlayer else { return }
+        player.pause()
+        updateListenPlaybackProgressFromPlayer()
+        listenPlaybackPhase = .paused
+        stopListenPlaybackTicker()
+        updateListenNowPlaying()
+    }
+
+    private func resumeListenPlayback() {
+        guard listenPlaybackPhase == .paused, let player = listenAudioPlayer else { return }
+        player.rate = Float(listenPlaybackSpeed.rawValue)
+        listenAudioSession.activate()
+        guard player.play() else { return }
+        listenPlaybackPhase = .playing
+        startListenPlaybackTicker()
+        updateListenPlaybackProgressFromPlayer()
+        updateListenNowPlaying()
+    }
+
+    private func seekListenPlayback(to time: TimeInterval) {
+        guard let player = listenAudioPlayer else { return }
+        let boundedTime = boundedListenPlaybackTime(time)
+        player.currentTime = boundedTime
+        listenPlaybackElapsedTime = boundedTime
+        updateListenNowPlaying()
+    }
+
+    private func boundedListenPlaybackTime(_ time: TimeInterval) -> TimeInterval {
+        guard time.isFinite else { return 0 }
+        let upperBound = listenPlaybackDuration > 0 ? listenPlaybackDuration : max(time, 0)
+        return min(max(0, time), upperBound)
+    }
+
+    private func startListenPlaybackTicker() {
+        stopListenPlaybackTicker()
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateListenPlaybackProgressFromPlayer()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        listenPlaybackTicker = timer
+    }
+
+    private func stopListenPlaybackTicker() {
+        listenPlaybackTicker?.invalidate()
+        listenPlaybackTicker = nil
+    }
+
+    private func updateListenPlaybackProgressFromPlayer() {
+        guard listenPlaybackScrubTime == nil, let player = listenAudioPlayer else { return }
+        listenPlaybackElapsedTime = boundedListenPlaybackTime(player.currentTime)
+        listenPlaybackDuration = max(0, player.duration)
+    }
+
+    private func configureListenRemoteControls() {
+        listenRemoteControlCenter.configure(
+            play: { [weak self] in self?.resumeListenPlayback() },
+            pause: { [weak self] in self?.pauseListenPlayback() },
+            togglePlayPause: { [weak self] in self?.toggleListenPlaybackPlayPause() },
+            changePlaybackPosition: { [weak self] position in self?.seekListenPlayback(to: position) }
+        )
+    }
+
+    private func updateListenNowPlaying() {
+        guard listenPlaybackPhase == .playing || listenPlaybackPhase == .paused else { return }
+        listenRemoteControlCenter.update(ListenNowPlayingSnapshot(
+            title: listenPlaybackTitle,
+            duration: listenPlaybackDuration,
+            elapsedTime: listenPlaybackElapsedTime,
+            speed: listenPlaybackSpeed,
+            isPlaying: listenPlaybackPhase == .playing
+        ))
+    }
+
+    /// Completion routed from the server-TTS audio player. Mirrors
+    /// `handleListenCompletion(for:)`: a stale callback from a superseded player
+    /// must not clear the new listen state or deactivate the session.
+    private func handleListenPlayerCompletion(for playerID: ObjectIdentifier) {
+        guard playerID == activeListenPlayerID else { return }
+        finishListening()
+    }
+
+    /// Completion routed from the speech-synthesizer delegate. Switching messages mid-
+    /// playback cancels the previous utterance, whose `didCancel` arrives asynchronously
+    /// *after* the next utterance has started — ignore that stale callback so we don't
+    /// clear the new listen state or deactivate the session under live speech. See #252.
+    private func handleListenCompletion(for utteranceID: ObjectIdentifier) {
+        guard utteranceID == activeListeningUtteranceID else { return }
+        finishListening()
+    }
+
+    private func speechSynthesizerForListening() -> any ChatSpeechSynthesizing {
+        if let speechSynthesizer {
+            return speechSynthesizer
+        }
+
+        let speechSynthesizer = speechSynthesizerFactory()
+        if speechDelegate == nil {
+            speechDelegate = SpeechSynthesizerDelegate { [weak self] finishedUtteranceID in
+                self?.handleListenCompletion(for: finishedUtteranceID)
+            }
+        }
+        speechSynthesizer.delegate = speechDelegate
+        self.speechSynthesizer = speechSynthesizer
+        return speechSynthesizer
+    }
+
+    private func statusTokenLine() -> String {
+        guard let contextWindowSnapshot else {
+            return String(localized: "Unavailable")
+        }
+
+        let input = contextWindowSnapshot.inputTokens ?? 0
+        let output = contextWindowSnapshot.outputTokens ?? 0
+        let total = input + output
+        let cost = contextWindowSnapshot.estimatedCost ?? 0
+
+        if total == 0 && cost == 0 {
+            return String(localized: "No token usage available")
+        }
+
+        let inputText = Self.formatTokenCount(input)
+        let outputText = Self.formatTokenCount(output)
+        guard cost > 0 else {
+            return String(localized: "\(inputText) in / \(outputText) out")
+        }
+
+        return String(localized: "\(inputText) in / \(outputText) out (~\(cost.formattedCost()))")
+    }
+
+    private func providerFromModel(_ model: String) -> String? {
+        let parts = model.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count > 1 else { return nil }
+        return parts[0]
+    }
+
+    private static func formatTokenCount(_ value: Int) -> String {
+        value.formatted(.number)
+    }
+
+    private static func displayTitle(from title: String?) -> String {
+        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmedTitle, !trimmedTitle.isEmpty else {
+            return String(localized: "Untitled Session")
+        }
+        return trimmedTitle
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private static func compactModelTitle(_ modelID: String) -> String {
+        let raw = modelID.split(separator: ":").last.map(String.init) ?? modelID
+        let suffix = raw.split(separator: "/").last.map(String.init) ?? raw
+        return suffix.replacingOccurrences(of: "gpt-", with: "GPT-", options: [.caseInsensitive])
+    }
+
+    private static let reasoningDisplayArgs: Set<String> = ["show", "hide", "on", "off"]
+    private static let reasoningEffortArgs: Set<String> = ["none", "minimal", "low", "medium", "high", "xhigh"]
+    private static let personalityClearArgs: Set<String> = ["none", "default", "clear"]
+    /// The host's `/reasoning` display words, which write its global display settings (#1016).
+    private static let hermesReasoningDisplayArgs: Set<String> = [
+        "show", "hide", "on", "off", "full", "all", "clamp", "collapse", "short"
+    ]
+
+    private static func btwMessageText(question: String, answer: String?, isLoading: Bool) -> String {
+        let trimmedAnswer = answer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let body: String
+        if trimmedAnswer.isEmpty {
+            body = isLoading ? "..." : String(localized: "No answer produced.")
+        } else {
+            body = trimmedAnswer
+        }
+
+        return """
+        **BTW** \(question)
+
+        \(body)
+        """
+    }
+
+    /// The id prefix of a Hermes background task's transcript card, which a rebuilt
+    /// transcript keeps.
+    private static let hermesBackgroundCardPrefix = "local-background-"
+
+    /// The ids of the tool and reasoning groups the settled history last laid out (#1047): an
+    /// older page replaces exactly these, and keeps the groups the chat archived itself.
+    @ObservationIgnored private var hermesHistoryGroupIDs: Set<String> = []
+
+    /// Where a Hermes transcript's first row counts from. A page never says how many rows come
+    /// before it, so the count starts high and an older page moves it back (#1047).
+    static let hermesTranscriptBase = 1_000_000
+
+    /// The `messagesOffset` that keeps the first row on screen at its position in `next`, and
+    /// so every row's render identity (`transcript:<offset + index>`): rows put in front move
+    /// it back by their count. When `next` no longer holds that row, it starts again from
+    /// `hermesTranscriptBase`.
+    nonisolated static func hermesMessagesOffset(keeping shown: [ChatMessage], at offset: Int, in next: [ChatMessage]) -> Int {
+        guard let first = shown.first?.messageId,
+              let index = next.firstIndex(where: { $0.messageId == first }) else { return hermesTranscriptBase }
+        return max(0, offset - index)
+    }
+
+    /// `rows`, the host's, with this Hermes chat's own rows from `shown` where they sat (#1013):
+    /// background cards and local slash output, such as a goal's notice, which the host's
+    /// history never holds. Each follows the row it followed, comes first when it followed
+    /// none, and comes last when that row is gone, as a streamed row is once it takes its saved
+    /// id. So a turn's end moves no row.
+    private static func hermesKeepingOwnRows(of shown: [ChatMessage], in rows: [ChatMessage]) -> [ChatMessage] {
+        var own: [(after: String?, row: ChatMessage)] = []
+        var previous: String?
+        for message in shown {
+            if message.messageId?.hasPrefix(hermesBackgroundCardPrefix) == true || message.role?.hasPrefix("local_") == true {
+                own.append((previous, message))
+            } else {
+                previous = message.messageId ?? "" // A row without an id is never found again.
+            }
+        }
+        guard !own.isEmpty else { return rows }
+        var following: [String: [ChatMessage]] = [:]
+        for (after, row) in own { if let after { following[after, default: []].append(row) } }
+        var next = own.filter { $0.after == nil }.map(\.row)
+        for row in rows {
+            next.append(row)
+            if let id = row.messageId, let mine = following.removeValue(forKey: id) { next += mine }
+        }
+        return next + own.filter { $0.after.map { following[$0] != nil } == true }.map(\.row)
+    }
+
+    /// A Hermes background task's transcript card (#1013): the webui's result card, saying
+    /// the task runs until its result, or that the result is unavailable.
+    private static func hermesBackgroundCard(_ task: HermesBackgroundTask, timestamp: Double?) -> ChatMessage {
+        let body: String
+        switch task.state {
+        case .running: body = String(localized: "Running in the background…")
+        case .finished(let text): body = text
+        case .unavailable: body = String(localized: "Result unavailable.")
+        }
+        return ChatMessage(role: "local_assistant", content: backgroundResultText(prompt: task.prompt, answer: body),
+                           timestamp: timestamp, messageId: hermesBackgroundCardPrefix + task.id)
+    }
+
+    private static func backgroundResultText(prompt: String, answer: String?) -> String {
+        let trimmedAnswer = answer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let body = trimmedAnswer.isEmpty ? String(localized: "No answer produced.") : trimmedAnswer
+        let summary = prompt.count > 80 ? "\(prompt.prefix(80))..." : prompt
+
+        return """
+        **Background** \(summary)
+
+        \(body)
+        """
+    }
+
+    private static let slashCommandHelpText = String(localized: """
+    Available mobile commands:
+
+    `/help` - Show this command list.
+    `/clear` - Clear this conversation on the server. Asks first.
+    `/stop` - Stop the current response.
+    `/new` - Open a fresh session.
+    `/model <id>` - Switch this session's model.
+    `/workspace <path>` - Switch this session's workspace.
+    `/reasoning <level>` - Set reasoning display or effort.
+    `/title <text>` - Rename this session.
+    `/personality <name>` - Set or clear this session's personality.
+    `/skills [query]` - Search available skills.
+    `/queue <message>` - Queue a message for the next turn.
+    `/steer <message>` - Steer the active response.
+    `/interrupt <message>` - Stop the active response and send a new message.
+    `/status` - Show session status.
+    `/btw <question>` - Ask a side question without changing this chat.
+    `/background <prompt>` - Run a parallel task and post the result here.
+    `/bg <prompt>` - Alias for `/background`.
+    `/branch [name]` - Fork this conversation.
+    `/fork [name]` - Alias for `/branch`.
+    `/compress [focus]` - Compress this session's context.
+    `/compact [focus]` - Alias for `/compress`.
+    `/undo` - Undo the last exchange.
+    `/retry` - Retry the last turn.
+    """)
+}
+
+extension ChatViewModel: ChatPendingActionCoordinatorDelegate {
+    var pendingActionSessionID: String? { sessionID }
+    var pendingActionHasActiveStream: Bool { activeStreamID != nil }
+    var pendingActionIsStreamConnectionSuspended: Bool { isStreamConnectionSuspended }
+
+    func pendingActionCoordinatorWillSubmitAction() {
+        sendErrorMessage = nil
+        lastError = nil
+    }
+
+    func pendingActionCoordinatorDidFailAction(_ error: Error) {
+        lastError = error
+        sendErrorMessage = error.localizedDescription
+    }
+}
+
+extension ChatViewModel: ChatAttachmentCoordinatorDelegate {
+    var attachmentSessionID: String? { sessionID }
+    var attachmentIsViewingCachedData: Bool { isViewingCachedData }
+
+    func attachmentCoordinatorWillUpload() {
+        lastError = nil
+    }
+
+    func attachmentCoordinatorDidFail(_ error: Error) {
+        lastError = error
+    }
+}
+
+extension ChatViewModel: ChatStreamCoordinatorDelegate {
+    var streamCoordinatorSessionID: String? { sessionID }
+    var streamCoordinatorDisplayTitle: String { displayTitle }
+    var streamCoordinatorHasRunningLiveToolCall: Bool { hasRunningLiveToolCall }
+    var streamCoordinatorHasPendingPrompt: Bool {
+        pendingActionCoordinator.hasPendingPrompt
+    }
+    var streamCoordinatorLatestServerLoadHadAssistantResponseAfterLatestUser: Bool {
+        latestServerLoadHadAssistantResponseAfterLatestUser
+    }
+    var streamCoordinatorStreamingAssistantMessageID: String? {
+        get { streamingAssistantMessageID }
+        set {
+            if newValue == nil {
+                flushPendingStreamingContent()
+            }
+            streamingAssistantMessageID = newValue
+        }
+    }
+
+    func streamCoordinatorLoadMessages(modelContext: ModelContext?) async {
+        await loadMessages(modelContext: modelContext)
+    }
+
+    func streamCoordinatorLatestAssistantMessageID() -> String? {
+        Self.latestAssistantMessageID(in: messages)
+    }
+
+    func streamCoordinatorStartAuxiliaryMonitoring() {
+        pendingActionCoordinator.startMonitoring()
+    }
+
+    func streamCoordinatorStopAuxiliaryMonitoring(clearPrompt: Bool) {
+        pendingActionCoordinator.stopMonitoringForStreamTransition(clearClarification: clearPrompt)
+    }
+
+    func streamCoordinatorSaveSnapshotIfNeeded() {
+        flushPendingStreamingContent()
+        saveActiveStreamSnapshotIfNeeded()
+    }
+
+    @discardableResult
+    func streamCoordinatorRestoreSnapshotIfAvailable(streamID: String) -> ChatStreamSnapshotRestoreResult {
+        restoreActiveStreamSnapshotIfAvailable(streamID: streamID)
+    }
+
+    func streamCoordinatorRemoveSnapshot(streamID: String?) {
+        removeActiveStreamSnapshot(streamID: streamID)
+    }
+
+    func streamCoordinatorFlushPinnedLocalNoticesToTranscript() {
+        flushPinnedLocalNoticesToTranscript()
+    }
+
+    func streamCoordinatorDrainQueuedSlashMessageIfIdle() {
+        drainQueuedSlashMessageIfIdle()
+    }
+
+    func streamCoordinatorRefreshCompletedResponseTitleIfNeeded() {
+        refreshCompletedResponseTitleIfNeeded()
+    }
+
+    func streamCoordinatorDidCompleteCurrentResponse(needsTranscriptRefresh: Bool) {
+        responseCompletionNeedsTranscriptRefresh = needsTranscriptRefresh
+        responseCompletionHapticTrigger += 1
+        recordRunEnd(.completed)
+    }
+
+    func streamCoordinatorDidFinishStream() {
+        flushPendingStreamingContent()
+        dismissSteeringConfirmation()
+        clearSteerFailure()
+        responseCompletionNeedsTranscriptRefresh = false
+        if let ending = turn.latestRunEnding {
+            // A `done` completion already counted when it completed, and a late
+            // teardown can find an ending still on record, so each ending counts once.
+            // This catches failures and a `stream_end` that arrives without `done`.
+            if ending.endedAt != runEndRecordedAt, let outcome = ResponseCompletionOutcome(ending: ending.ending) {
+                recordRunEnd(outcome)
+            }
+            latestRunOutcome = TranscriptTurnRunOutcome(
+                turnKey: TranscriptTurnClassifier.latestTurnKey(in: messages, messageOffset: messagesOffset),
+                startedAt: ending.startedAt,
+                endedAt: ending.endedAt,
+                ending: ending.ending
+            )
+        }
+    }
+
+    func streamCoordinatorDidReceiveErrorMessage(_ message: String) {
+        sendErrorMessage = message
+    }
+
+    private func recordRunEnd(_ outcome: ResponseCompletionOutcome) {
+        runEndRecordedAt = turn.latestRunEnding?.endedAt
+        runEndOutcome = outcome
+        runEndTrigger += 1
+    }
+
+    func streamCoordinatorDidReceiveRecoveryError(_ error: Error) {
+        lastError = error
+        sendErrorMessage = error.localizedDescription
+        sendErrorIsFromStreamRecovery = true
+    }
+
+    func streamCoordinatorDidConfirmRecovery() {
+        guard sendErrorIsFromStreamRecovery else { return }
+        sendErrorMessage = nil
+    }
+
+    func streamCoordinatorDidStartConnection(isReplay: Bool) {
+        // A fresh connection re-arms the pulse so a reply's first live token
+        // always ticks, even when the previous reply pulsed less than an interval
+        // ago. A replay continues the same reply, so its window carries over.
+        if !isReplay {
+            streamingHapticPulseThrottle.reset()
+        }
+        activeStreamReplayMatchedPrefixLength = 0
+        activeStreamReplayMatchedInterimLength = 0
+        activeStreamReplayMatchedReasoningLength = 0
+        activeStreamReplayLoadedReasoningText = isReplay ? loadedReplayReasoningText() : ""
+        activeStreamReplayLoadedToolCalls = isReplay ? loadedReplayToolCalls() : []
+        activeStreamReplayLoadedToolMatchIndex = 0
+        activeStreamReplayPendingLoadedToolMatchIndex = nil
+        activeStreamReplayToolMatchIndex = 0
+        activeStreamReplayPendingToolMatchIndex = nil
+    }
+
+    func streamCoordinatorDidResetRecoveryState() {
+        activeStreamReplayMatchedPrefixLength = 0
+        activeStreamReplayMatchedInterimLength = 0
+        activeStreamReplayMatchedReasoningLength = 0
+        activeStreamReplayLoadedReasoningText = ""
+        activeStreamReplayLoadedToolCalls = []
+        activeStreamReplayLoadedToolMatchIndex = 0
+        activeStreamReplayPendingLoadedToolMatchIndex = nil
+        activeStreamReplayToolMatchIndex = 0
+        activeStreamReplayPendingToolMatchIndex = nil
+    }
+
+    @discardableResult
+    func streamCoordinatorAppendToken(_ text: String) -> Bool {
+        appendAssistantToken(text)
+    }
+
+    @discardableResult
+    func streamCoordinatorAppendInterimAssistant(_ payload: InterimAssistantStreamEvent) -> Bool {
+        appendInterimAssistant(payload)
+    }
+
+    @discardableResult
+    func streamCoordinatorAppendReasoning(_ text: String) -> Bool {
+        appendReasoning(text)
+    }
+
+    @discardableResult
+    func streamCoordinatorAppendToolCall(_ payload: ToolStreamEvent) -> Bool {
+        appendToolCall(payload)
+    }
+
+    @discardableResult
+    func streamCoordinatorCompleteToolCall(_ payload: ToolStreamEvent) -> Bool {
+        completeToolCall(payload)
+    }
+
+    @discardableResult
+    func streamCoordinatorUpdateTitle(_ payload: TitleStreamEvent) -> Bool {
+        updateTitle(payload)
+    }
+
+    @discardableResult
+    func streamCoordinatorApplyDone(_ payload: DoneStreamEvent) -> Bool {
+        flushPendingStreamingContent()
+        let currentStreamingAssistantID = streamingAssistantMessageID
+        let hasCompletedTranscript = payload.session?.messages?.isEmpty == false
+        if let completedSession = payload.session {
+            applyCompletedStreamSession(completedSession)
+        }
+        if let usage = payload.usage {
+            contextWindowSnapshot = usage
+        }
+        if let finalTokensPerSecond = payload.usage?.tokensPerSecond,
+           finalTokensPerSecond.isFinite,
+           finalTokensPerSecond > 0,
+           let currentStreamingAssistantID {
+            let currentAssistantIndex = messages.firstIndex(where: { $0.messageId == currentStreamingAssistantID })
+                ?? TranscriptTurnClassifier
+                    .currentTurnAssistantAnchorIDs(in: messages, messageOffset: messagesOffset)
+                    .last
+                    .flatMap { currentAssistantAnchorID in
+                        messages.indices.first { index in
+                            TranscriptTurnClassifier.anchorID(
+                                for: messages[index],
+                                at: index,
+                                messageOffset: messagesOffset
+                            ) == currentAssistantAnchorID
+                        }
+                    }
+            guard let index = currentAssistantIndex else {
+                return hasCompletedTranscript
+            }
+            let message = messages[index]
+            messages[index] = ChatMessage(
+                role: message.role,
+                content: message.content,
+                timestamp: message.timestamp,
+                messageId: message.messageId,
+                name: message.name,
+                toolCallId: message.toolCallId,
+                toolUseId: message.toolUseId,
+                toolCalls: message.toolCalls,
+                contentParts: message.contentParts,
+                reasoning: message.reasoning,
+                attachments: message.attachments,
+                turnTps: finalTokensPerSecond
+            )
+        }
+        return hasCompletedTranscript
+    }
+
+    func streamCoordinatorApplyApprovalUpdate(_ update: ApprovalPendingResponse) {
+        guard let sessionID else { return }
+        applyApprovalUpdate(update, sessionID: sessionID)
+    }
+
+    func streamCoordinatorApplyClarificationUpdate(_ update: ClarificationPendingResponse) {
+        guard let sessionID else { return }
+        applyClarificationUpdate(update, sessionID: sessionID)
+    }
+
+    @discardableResult
+    func streamCoordinatorEnqueuePendingSteerLeftover(_ text: String) -> Bool {
+        let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return false }
+
+        enqueueQueuedSlashMessage(message, attachments: [])
+        appendLocalNoticeMessage(String(localized: "Steering hint was not consumed before the response ended, so it was queued for the next turn."))
+        return true
+    }
+}
+
+extension ChatViewModel: HermesChatTurnDelegate {
+    func hermesTurnDidStart(prompt: String?) {
+        flushPendingStreamingContent()
+        archiveLiveActivityForNewTurn()
+        streamingAssistantMessageID = nil
+        responseCompletionNeedsTranscriptRefresh = false
+        if let prompt {
+            messages.append(HermesChatTurnCoordinator.displayed(ChatMessage(
+                role: "user", content: prompt, timestamp: Date().timeIntervalSince1970,
+                messageId: "local-\(UUID().uuidString)"
+            )))
+        }
+    }
+
+    func hermesTurnDidComplete(reply: String) {
+        flushPendingStreamingContent()
+        let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shown = streamingAssistantMessageID.flatMap { id in messages.first { $0.messageId == id }?.content } ?? ""
+        guard !text.isEmpty, !shown.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix(text) else { return }
+        // A reply the deltas never carried, such as the answer after a tool call: it joins
+        // the turn's row the way an interim reply does.
+        appendInterimAssistant(InterimAssistantStreamEvent(text: text, alreadyStreamed: false))
+        flushPendingStreamingContent()
+    }
+
+    func hermesReplaceTranscript(_ transcript: HermesChatTranscript) {
+        // The host's own rows replace a cached copy, which shares their ids. A rebuild whose
+        // history read failed has none, so the cached copy stays, read-only, until the chat's
+        // retry or a later read succeeds. A session's copy shown while it connects goes even
+        // then: the rebuild holds the running turn the frames it releases next continue, and
+        // the failure, reported after them, shows the cache again where it would offline.
+        if isViewingCachedData {
+            let isBotChat = if case .canonicalChat = hermesTurn?.engine.target { true } else { false }
+            guard transcript.newestCoverage != nil || isCachedCopyProvisional && !isBotChat else { return }
+            isViewingCachedData = false
+        }
+        resetPendingStreamingContentBuffers()
+        let next = Self.hermesKeepingOwnRows(of: messages, in: transcript.messages + transcript.live)
+            + (transcript.streamingReply.map { [$0] } ?? [])
+        messagesOffset = Self.hermesMessagesOffset(keeping: messages, at: messagesOffset, in: next)
+        messages = next
+        transcriptRevision &+= 1
+        hasOlderMessages = transcript.hasOlder
+        setCompletedToolCallGroups(transcript.toolCallGroups)
+        completedReasoningGroups = transcript.reasoningGroups
+        hermesHistoryGroupIDs = Set(transcript.toolCallGroups.map(\.id) + transcript.reasoningGroups.map(\.id))
+        hermesCompaction = transcript.compaction
+        recomputeCompressionReferenceCard()
+        liveToolCalls = []
+        liveReasoningText = ""
+        toolCallAnchorMessageID = nil
+        reasoningAnchorMessageID = nil
+        streamingAssistantMessageID = transcript.streamingReply?.messageId
+        if let title = transcript.title { applyLiveActivitySessionTitle(title) }
+        if !messages.isEmpty { transcriptRelayoutScrollToken += 1 }
+        cacheHermesHistory(transcript)
+    }
+
+    func hermesPrependHistory(_ transcript: HermesChatTranscript) {
+        // Only the older page's rows are new, and they go in front. Every row shown (the
+        // running turn, rows the host has not saved, the chat's own rows) stays as it is, with
+        // the live tool and reasoning cards.
+        let shown = Set(messages.compactMap(\.messageId))
+        let next = Array(transcript.messages.prefix { $0.messageId.map(shown.contains) != true }) + messages
+        messagesOffset = Self.hermesMessagesOffset(keeping: messages, at: messagesOffset, in: next)
+        messages = next
+        transcriptRevision &+= 1
+        hasOlderMessages = transcript.hasOlder
+        setCompletedToolCallGroups(transcript.toolCallGroups
+            + completedToolCallGroups.filter { !hermesHistoryGroupIDs.contains($0.id) })
+        completedReasoningGroups = transcript.reasoningGroups
+            + completedReasoningGroups.filter { !hermesHistoryGroupIDs.contains($0.id) }
+        hermesHistoryGroupIDs = Set(transcript.toolCallGroups.map(\.id) + transcript.reasoningGroups.map(\.id))
+        hermesCompaction = transcript.compaction
+        recomputeCompressionReferenceCard()
+        cacheHermesHistory(transcript)
+    }
+
+    func hermesHistoryDidFail(_ error: Error, message: String) {
+        guard !showCachedHermesTranscript(after: error) else { return }
+        errorMessage = message
+    }
+
+    func hermesAttachDidFail(_ error: Error) {
+        showCachedHermesTranscript(after: error)
+    }
+
+    /// The attach found the chat's root, before its reads: the chat writes to the cache under
+    /// the epoch it takes now. A Bot Chat's canonical root settles its cache's. A cached copy
+    /// shown from another root, a Bot Chat since made again, leaves the screen, and every
+    /// other root's leaves the cache.
+    func hermesDidIdentify(root: String) {
+        guard let engine = hermesTurn?.engine else { return }
+        // Taken even before the chat has its cache, so the writes after it still count.
+        hermesCacheEpoch = CacheStore.hermesCacheEpoch(serverURL: engine.server)
+        guard case .canonicalChat(let profile) = engine.target else { return }
+        if hermesCacheRoot != root, isViewingCachedData {
+            messages = []
+            transcriptRevision &+= 1
+            isViewingCachedData = false
+        }
+        hermesCacheRoot = root
+        guard let hermesCache else { return }
+        do {
+            try CacheStore.removeHermesBotChats(exceptRoot: root, serverURL: engine.server, connectionID: engine.connection.id,
+                                                profile: profile, in: hermesCache)
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// A chat whose host can't be reached, to attach or to read its history, shows its cached
+    /// transcript as the offline state, as a webui chat does offline: the copy shown while it
+    /// connected, else, with nothing on screen, one read now. The engine keeps reattaching, and
+    /// the host's transcript replaces it once a read succeeds, as the chat's retry's does.
+    /// Returns whether it shows the cached copy as the failure's answer.
+    @discardableResult
+    private func showCachedHermesTranscript(after error: Error) -> Bool {
+        let usesCache = CacheFallbackPolicy.shouldUseCache(for: error)
+        guard isCachedCopyProvisional else { return usesCache && showCachedHermesTranscript(provisional: false) }
+        isCachedCopyProvisional = false
+        // A Bot Chat keeps the copy it shows before every attach (#1144), whatever failed. A
+        // session's stays only where a failure shows the cache; otherwise it goes, so the chat
+        // says why with nothing on screen.
+        if case .canonicalChat = hermesTurn?.engine.target { return false }
+        guard !usesCache else { return true }
+        messages = []
+        transcriptRevision &+= 1
+        isViewingCachedData = false
+        return false
+    }
+
+    /// A chat opening shows its cached transcript at once, read-only, provisionally until the
+    /// attach's first newest read puts the host's rows in its place (#1144). Not once attached,
+    /// when the host's rows, even none, are the transcript, unless that read failed: a Bot Chat
+    /// then keeps its copy as the offline state. An attach that already failed, as one
+    /// `ChatView` starts as it appears can, has had its answer: a Bot Chat's copy shows as the
+    /// offline state, and a session's only as that failure showed it.
+    private func showCachedHermesTranscriptBeforeAttach(_ hermes: HermesChatTurnCoordinator) {
+        let engine = hermes.engine
+        let isBotChat = if case .canonicalChat = engine.target { true } else { false }
+        if engine.connectionState == .connected {
+            if isBotChat && hermes.hasHistoryFailure { showCachedHermesTranscript(provisional: false) }
+            return
+        }
+        guard hermes.needsSignIn || engine.isActive && engine.connectionState == .disconnected else {
+            showCachedHermesTranscript(provisional: true)
+            return
+        }
+        if isBotChat { showCachedHermesTranscript(provisional: false) }
+    }
+
+    /// With nothing on screen, shows the newest page of the chat's cached transcript, read-only
+    /// (`isViewingCachedData`), with no tool, reasoning or compaction cards, until a newest
+    /// read replaces it: `provisional` while the host has yet to answer, else as the offline
+    /// state. Returns whether it shows the cached copy.
+    @discardableResult
+    private func showCachedHermesTranscript(provisional: Bool) -> Bool {
+        guard messages.isEmpty, let scope = hermesCacheScope() else { return false }
+        var cached: [ChatMessage] = []
+        do {
+            for readScope in [scope.scope, scope.fallback].compactMap({ $0 }) where cached.isEmpty {
+                cached = try CacheStore.cachedHermesMessages(serverURL: scope.server, scope: readScope, in: scope.context,
+                                                             limit: HermesREST.transcriptPageSize)
+            }
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+            return false
+        }
+        guard !cached.isEmpty else { return false }
+        messagesOffset = Self.hermesTranscriptBase
+        messages = cached
+        transcriptRevision &+= 1
+        hasOlderMessages = false
+        isViewingCachedData = true
+        isCachedCopyProvisional = provisional
+        errorMessage = nil
+        setCompletedToolCallGroups([])
+        completedReasoningGroups = []
+        hermesHistoryGroupIDs = []
+        hermesCompaction = nil
+        recomputeCompressionReferenceCard()
+        transcriptRelayoutScrollToken += 1
+        return true
+    }
+
+    /// Writes the settled history a Hermes transcript holds to the offline cache (#1054). A Bot
+    /// Chat's newest read, archived or its bot's, also drops what the host cut from the other's
+    /// copy of the same root, without writing there, so neither shows an undone exchange offline.
+    private func cacheHermesHistory(_ transcript: HermesChatTranscript) {
+        guard let scope = hermesCacheScope(), hermesCacheEpoch == CacheStore.hermesCacheEpoch(serverURL: scope.server) else { return }
+        do {
+            try CacheStore.cacheHermesMessages(transcript.messages, newestCoverage: transcript.newestCoverage,
+                                               serverURL: scope.server, scope: scope.scope, in: scope.context)
+            if let sameRoot = scope.sameRoot, let coverage = transcript.newestCoverage {
+                try CacheStore.dropHermesMessagesTheHostCut(from: transcript.messages, newestCoverage: coverage,
+                                                            serverURL: scope.server, scope: sameRoot, in: scope.context)
+            }
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// Where this Hermes chat's transcript sits in the offline cache: its server and scope. A
+    /// session's is its Profile and lineage root, which the list's cached row names for its
+    /// key, else its row or link names, else the key, settled once found, so a key the host
+    /// later moves keeps the same place. A Bot Chat's is its connection, Profile and canonical root: the one its attach
+    /// found, else a deep link's, else the one cached last. An archived Bot Chat's is its own,
+    /// under the root its row names, apart from its bot's so it never becomes that chat's
+    /// preview. `sameRoot` is the other copy of a Bot Chat's root, the bot's or an archive's,
+    /// which loses the rows this chat's newest read found cut; `fallback` is read when the
+    /// chat's own copy is empty, only an archive's: its bot's. Nil without a cache, for a new
+    /// session until the host names its key, and for a Bot Chat with no root.
+    private func hermesCacheScope() -> (context: ModelContext, server: URL, scope: String, fallback: String?, sameRoot: String?)? {
+        guard let hermesCache, let engine = hermesTurn?.engine else { return nil }
+        switch engine.target {
+        case .session(let profile, let key):
+            if let hermesBotChatRoot {
+                let connection = engine.connection.id
+                let bot = CacheStore.hermesBotChatScope(connectionID: connection, profile: profile, root: hermesBotChatRoot)
+                return (hermesCache, engine.server,
+                        CacheStore.hermesArchivedBotChatScope(connectionID: connection, profile: profile, root: hermesBotChatRoot),
+                        bot, bot)
+            }
+            let root = hermesCacheRoot
+                ?? (try? CacheStore.hermesLineageRoot(forKey: key, profile: profile, serverURL: engine.server, in: hermesCache))
+                ?? hermesLineageRoot ?? key
+            hermesCacheRoot = root
+            return (hermesCache, engine.server, CacheStore.hermesScope(profile: profile, lineageRoot: root), nil, nil)
+        case .canonicalChat(let profile):
+            guard let root = hermesCacheRoot ?? engine.root
+                ?? (try? CacheStore.cachedHermesBotChatRoot(serverURL: engine.server, connectionID: engine.connection.id,
+                                                            profile: profile, in: hermesCache)) else { return nil }
+            hermesCacheRoot = root
+            let connection = engine.connection.id
+            return (hermesCache, engine.server, CacheStore.hermesBotChatScope(connectionID: connection, profile: profile, root: root),
+                    nil, CacheStore.hermesArchivedBotChatScope(connectionID: connection, profile: profile, root: root))
+        case .new:
+            return nil
+        }
+    }
+
+    func hermesApplyUsage(_ usage: ContextWindowSnapshot) {
+        guard contextWindowSnapshot != usage else { return }
+        contextWindowSnapshot = usage
+    }
+
+    func hermesApplyModel(_ model: String) {
+        guard currentModel != model else { return }
+        currentModel = model
+    }
+
+    func hermesConnectionDidChange(failure: String?) {
+        guard let failure else {
+            if errorMessage != nil { errorMessage = nil }
+            if sendErrorIsFromStreamRecovery { sendErrorMessage = nil }
+            releaseSubmissionMark()
+            if needsHermesForkCheck { Task { [weak self] in await self?.resolveHermesForkOrigin() } }
+            return
+        }
+        // With nothing on screen yet it is the chat's error, with its retry; otherwise the composer's.
+        if messages.isEmpty {
+            errorMessage = failure
+        } else {
+            sendErrorMessage = failure
+            sendErrorIsFromStreamRecovery = true
+        }
+    }
+
+    func hermesDraftKeyDidChange(from: ChatDraftKey, to: ChatDraftKey) {
+        drafts.moveDraft(from: from, to: to)
+    }
+
+    func hermesRequestDidFail(_ message: String) {
+        sendErrorMessage = message
+    }
+
+    func hermesBackgroundDidChange(_ task: HermesBackgroundTask) {
+        let id = Self.hermesBackgroundCardPrefix + task.id
+        if let index = messages.firstIndex(where: { $0.messageId == id }) {
+            messages[index] = Self.hermesBackgroundCard(task, timestamp: messages[index].timestamp)
+        } else {
+            messages.append(Self.hermesBackgroundCard(task, timestamp: Date().timeIntervalSince1970))
+        }
+        scheduleStreamingScrollTrigger()
+    }
+
+    func hermesGoalDidChange(_ goal: SubmittedGoal?) {
+        currentGoal = goal
+        // The goal menu shows once the session has a goal, and stays to set the next one.
+        if goal != nil { hasActivatedGoalCommand = true }
+    }
+
+    func hermesWorkspaceDidChange() {
+        // The host already applied the move, so an open `@` panel asks again.
+        resetFileChipReferences(reloadingOpenQuery: true)
+    }
+}
+
+struct ActiveChatStreamSnapshot: Equatable {
+    let messages: [ChatMessage]
+    let messagesOffset: Int
+    let displayTitle: String
+    let completedToolCallGroups: [ToolCallGroup]
+    let completedReasoningGroups: [ReasoningGroup]
+    let liveToolCalls: [ToolCall]
+    let liveReasoningText: String
+    let activeStreamLastEventID: String?
+    let streamingAssistantMessageID: String?
+    let toolCallAnchorMessageID: String?
+    let reasoningAnchorMessageID: String?
+    let contextWindowSnapshot: ContextWindowSnapshot?
+    let localAttachmentPreviews: [String: [String: Data]]
+    let pinnedLocalNotices: [String]
+}
+
+private struct ActiveChatStreamSnapshotKey: Hashable {
+    let server: String
+    let sessionID: String
+    let streamID: String
+}
+
+private final class ActiveChatStreamSnapshotStore {
+    static let shared = ActiveChatStreamSnapshotStore()
+
+    private let lock = NSLock()
+    private var snapshots: [ActiveChatStreamSnapshotKey: ActiveChatStreamSnapshot] = [:]
+
+    private init() {}
+
+    func save(
+        _ snapshot: ActiveChatStreamSnapshot,
+        server: URL,
+        sessionID: String,
+        streamID: String
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        snapshots[key(server: server, sessionID: sessionID, streamID: streamID)] = snapshot
+    }
+
+    func snapshot(server: URL, sessionID: String, streamID: String) -> ActiveChatStreamSnapshot? {
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshots[key(server: server, sessionID: sessionID, streamID: streamID)]
+    }
+
+    func remove(server: URL, sessionID: String, streamID: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        snapshots.removeValue(forKey: key(server: server, sessionID: sessionID, streamID: streamID))
+    }
+
+    func removeAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        snapshots.removeAll()
+    }
+
+    private func key(server: URL, sessionID: String, streamID: String) -> ActiveChatStreamSnapshotKey {
+        ActiveChatStreamSnapshotKey(
+            server: server.absoluteString,
+            sessionID: sessionID,
+            streamID: streamID
+        )
+    }
+}
+
+/// A message waiting behind the run, with the files staged for it.
+struct QueuedSlashMessage {
+    let text: String
+    let attachments: [PendingAttachment]
+}
+
+struct ReasoningGroup: Identifiable, Equatable {
+    let id: String
+    let anchorMessageID: String?
+    let text: String
+
+    init(id: String = UUID().uuidString, anchorMessageID: String?, text: String) {
+        self.id = id
+        self.anchorMessageID = anchorMessageID
+        self.text = text
+    }
+}
+
+struct TranscriptMessage: Identifiable, Equatable {
+    let loadedIndex: Int
+    let renderID: String
+    let anchorID: String
+    let message: ChatMessage
+
+    var id: String { renderID }
+}
+
+/// Display model for the synthesized "Context compaction · Reference only" card.
+struct CompressionReferenceCard: Equatable {
+    let referenceText: String
+    /// `renderID` of the transcript row the card renders directly after;
+    /// nil places the card above the loaded transcript.
+    let afterRenderID: String?
+}
+
+struct MessageActionContext: Equatable, Identifiable {
+    var id: String { messageID }
+
+    enum Role: Equatable {
+        case user
+        case assistant
+    }
+
+    let role: Role
+    let visibleIndex: Int
+    let fullHistoryIndex: Int
+    let keepCountThroughMessage: Int
+    let messageID: String
+    let copyText: String
+    let listenText: String?
+    /// Regenerate and Edit rewrite the server's history. A Hermes session offers them only
+    /// where the host can cut (`ChatViewModel.hermesRewindableMessageIDs`, #1049).
+    let offersHistoryActions: Bool
+    /// Fork From Here. A Hermes session offers it on a row the host saved (#1051).
+    let offersFork: Bool
+
+    init?(message: ChatMessage, visibleIndex: Int, messagesOffset: Int?, offersHistoryActions: Bool = true,
+          offersFork: Bool = true) {
+        guard visibleIndex >= 0 else { return nil }
+
+        switch message.role {
+        case "user":
+            role = .user
+        case "assistant":
+            role = .assistant
+        default:
+            return nil
+        }
+
+        let content = message.content ?? ""
+        guard !content.isEmpty else { return nil }
+
+        self.visibleIndex = visibleIndex
+        fullHistoryIndex = max(0, messagesOffset ?? 0) + visibleIndex
+        keepCountThroughMessage = fullHistoryIndex + 1
+        messageID = message.id
+        copyText = content
+        listenText = role == .assistant ? SpeechTextNormalizer.normalizedAssistantText(content) : nil
+        self.offersHistoryActions = offersHistoryActions
+        self.offersFork = offersFork
+    }
+}
+
+extension ChatViewModel {
+    nonisolated static func reasoningDisplayGroups(
+        messages: [ChatMessage],
+        messageOffset: Int? = nil,
+        archivedGroups: [ReasoningGroup]
+    ) -> [ReasoningGroup] {
+        var cache = ReasoningCandidateCache()
+        return reasoningDisplayGroups(
+            messages: messages,
+            messageOffset: messageOffset,
+            archivedGroups: archivedGroups,
+            cache: &cache
+        )
+    }
+
+    /// Same as above, reusing `cache` from the previous pass so only candidates
+    /// whose reasoning or visible reply changed are stripped and normalized again.
+    nonisolated static func reasoningDisplayGroups(
+        messages: [ChatMessage],
+        messageOffset: Int?,
+        archivedGroups: [ReasoningGroup],
+        cache: inout ReasoningCandidateCache
+    ) -> [ReasoningGroup] {
+        let turnKeysByMessageID = TranscriptTurnClassifier.assistantTurnKeysByAnchorID(
+            messages,
+            messageOffset: messageOffset
+        )
+        let assistantMessagesByID = messages.enumerated().reduce(into: [String: ChatMessage]()) { result, entry in
+            let message = entry.element
+            guard message.role == "assistant" else { return }
+            result[TranscriptTurnClassifier.anchorID(for: message, at: entry.offset, messageOffset: messageOffset)] = message
+        }
+        var candidates: [ReasoningDisplayCandidate] = []
+        var order = 0
+
+        for group in archivedGroups {
+            let visibleText = group.anchorMessageID.flatMap { assistantMessagesByID[$0]?.content }
+            appendReasoningCandidate(
+                cacheID: "archived:\(group.id)",
+                text: group.text,
+                anchorMessageID: group.anchorMessageID,
+                turnKey: group.anchorMessageID.flatMap { turnKeysByMessageID[$0] } ?? "archived:\(group.anchorMessageID ?? group.id)",
+                visibleText: visibleText,
+                order: &order,
+                candidates: &candidates,
+                cache: &cache
+            )
+        }
+
+        for (messageIndex, message) in messages.enumerated() where message.role == "assistant" {
+            let anchorID = TranscriptTurnClassifier.anchorID(
+                for: message,
+                at: messageIndex,
+                messageOffset: messageOffset
+            )
+            let turnKey = turnKeysByMessageID[anchorID] ?? "message:\(anchorID)"
+            for text in reasoningTexts(from: message) {
+                appendReasoningCandidate(
+                    cacheID: "message:\(anchorID)",
+                    text: text,
+                    anchorMessageID: anchorID,
+                    turnKey: turnKey,
+                    visibleText: message.content,
+                    order: &order,
+                    candidates: &candidates,
+                    cache: &cache
+                )
+            }
+        }
+        cache.finishPass()
+
+        var latestCandidateIndexByKey: [String: Int] = [:]
+        for (index, candidate) in candidates.enumerated() {
+            latestCandidateIndexByKey["\(candidate.turnKey)::\(candidate.dedupeKey)"] = index
+        }
+
+        return candidates.enumerated().compactMap { index, candidate in
+            let key = "\(candidate.turnKey)::\(candidate.dedupeKey)"
+            guard latestCandidateIndexByKey[key] == index else { return nil }
+
+            return ReasoningGroup(
+                id: "reasoning-\(candidate.anchorMessageID ?? "unanchored")-\(candidate.order)",
+                anchorMessageID: candidate.anchorMessageID,
+                text: candidate.text
+            )
+        }
+    }
+
+    nonisolated static func transcriptMessages(
+        from messages: [ChatMessage],
+        messageOffset: Int? = nil,
+        preservingEmptyAssistantID: String? = nil,
+        renderedActivityAnchorIDs: Set<String>? = nil
+    ) -> [TranscriptMessage] {
+        transcriptMessages(
+            from: messages,
+            messageOffset: messageOffset,
+            hidingStreamingAssistantID: nil,
+            preservingEmptyAssistantID: preservingEmptyAssistantID,
+            renderedActivityAnchorIDs: renderedActivityAnchorIDs
+        )
+    }
+
+    nonisolated static func transcriptMessages(
+        from messages: [ChatMessage],
+        messageOffset: Int? = nil,
+        hidingStreamingAssistantID streamingAssistantID: String?,
+        preservingEmptyAssistantID: String? = nil,
+        renderedActivityAnchorIDs: Set<String>? = nil
+    ) -> [TranscriptMessage] {
+        let offset = max(0, messageOffset ?? 0)
+        let activityAnchorIDs = renderedActivityAnchorIDs ?? transcriptActivityAnchorIDs(
+            reasoningGroups: reasoningDisplayGroups(
+                messages: messages,
+                messageOffset: messageOffset,
+                archivedGroups: []
+            ),
+            toolCallGroups: ToolCallGroup.groups(
+                persistedToolCalls: [],
+                messages: messages,
+                messageOffset: messageOffset
+            )
+        )
+        var transcriptMessages: [TranscriptMessage] = []
+        transcriptMessages.reserveCapacity(messages.count)
+
+        for (loadedIndex, message) in messages.enumerated() {
+            guard message.role != "tool" else { continue }
+            guard !TranscriptTurnClassifier.isToolResultOnlyMessage(message) else { continue }
+            if let streamingAssistantID, message.messageId == streamingAssistantID {
+                continue
+            }
+
+            let anchorID = TranscriptTurnClassifier.anchorID(
+                for: message,
+                at: loadedIndex,
+                messageOffset: messageOffset
+            )
+            guard anchorID == preservingEmptyAssistantID
+                || activityAnchorIDs.contains(anchorID)
+                || hasTranscriptMessageRowContent(message)
+            else {
+                continue
+            }
+            let absoluteIndex = offset + loadedIndex
+            let renderID = "transcript:\(absoluteIndex)"
+
+            transcriptMessages.append(TranscriptMessage(
+                loadedIndex: loadedIndex,
+                renderID: renderID,
+                anchorID: anchorID,
+                message: message
+            ))
+        }
+
+        return transcriptMessages
+    }
+
+    nonisolated private static func transcriptActivityAnchorIDs(
+        reasoningGroups: [ReasoningGroup],
+        toolCallGroups: [ToolCallGroup]
+    ) -> Set<String> {
+        Set(reasoningGroups.compactMap(\.anchorMessageID))
+            .union(toolCallGroups.compactMap(\.anchorMessageID))
+    }
+
+    nonisolated private static func hasTranscriptMessageRowContent(_ message: ChatMessage) -> Bool {
+        if message.content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return true
+        }
+
+        return message.role == "user" && message.attachments?.isEmpty == false
+    }
+
+    /// A Hermes session's compaction card (#1047): after the last row the transcript draws at
+    /// or before the summary's anchor, or above the rows loaded when none is.
+    nonisolated static func hermesCompressionReferenceCard(
+        _ compaction: HermesCompaction,
+        messages: [ChatMessage],
+        transcriptMessages: [TranscriptMessage]
+    ) -> CompressionReferenceCard {
+        let anchor = compaction.anchorMessageID.flatMap { id in messages.firstIndex { $0.messageId == id } }
+        let afterRenderID = anchor.flatMap { index in transcriptMessages.last { $0.loadedIndex <= index }?.renderID }
+        return CompressionReferenceCard(referenceText: compaction.referenceText, afterRenderID: afterRenderID)
+    }
+
+    nonisolated static func compressionReferenceCard(
+        messages: [ChatMessage],
+        messagesOffset: Int,
+        transcriptMessages: [TranscriptMessage],
+        metadata: CompressionAnchorMetadata?
+    ) -> CompressionReferenceCard? {
+        guard let resolution = CompressionAnchorResolver.resolve(
+            messages: messages,
+            messagesOffset: messagesOffset,
+            metadata: metadata
+        ) else {
+            return nil
+        }
+
+        switch resolution.placement {
+        case .top:
+            return CompressionReferenceCard(referenceText: resolution.referenceText, afterRenderID: nil)
+        case .afterLoadedMessageIndex(let loadedIndex):
+            // The anchor message itself may be filtered out of the transcript
+            // (e.g. tool-result-only); attach to the closest preceding row.
+            let afterRenderID = transcriptMessages.last { $0.loadedIndex <= loadedIndex }?.renderID
+            return CompressionReferenceCard(referenceText: resolution.referenceText, afterRenderID: afterRenderID)
+        }
+    }
+
+    nonisolated private static func appendReasoningCandidate(
+        cacheID: String,
+        text: String,
+        anchorMessageID: String?,
+        turnKey: String,
+        visibleText: String?,
+        order: inout Int,
+        candidates: inout [ReasoningDisplayCandidate],
+        cache: inout ReasoningCandidateCache
+    ) {
+        let derived = cache.derived(id: cacheID, reasoning: text, visibleText: visibleText) {
+            strippedVisibleAssistantEcho(fromReasoning: text, visibleText: visibleText).map { stripped in
+                ReasoningCandidateCache.Derived(text: stripped, dedupeKey: normalizedReasoningKey(stripped))
+            }
+        }
+        guard let derived else { return }
+
+        candidates.append(
+            ReasoningDisplayCandidate(
+                order: order,
+                anchorMessageID: anchorMessageID,
+                turnKey: turnKey,
+                text: derived.text,
+                dedupeKey: derived.dedupeKey
+            )
+        )
+        order += 1
+    }
+
+    nonisolated private static func reasoningTexts(from message: ChatMessage) -> [String] {
+        if let partsText = reasoningText(fromContentParts: message.contentParts) {
+            return [partsText]
+        }
+
+        if let reasoning = nonEmptyReasoningText(message.reasoning) {
+            return [reasoning]
+        }
+
+        if let contentReasoning = reasoningText(fromContent: message.content) {
+            return [contentReasoning]
+        }
+
+        return []
+    }
+
+    nonisolated private static func reasoningText(fromContentParts parts: [JSONValue]?) -> String? {
+        guard let parts else { return nil }
+
+        let text = parts.compactMap { part -> String? in
+            guard case .object(let object) = part,
+                  let type = jsonStringValue(object["type"]),
+                  type == "thinking" || type == "reasoning"
+            else {
+                return nil
+            }
+
+            return jsonStringValue(object["thinking"])
+                ?? jsonStringValue(object["reasoning"])
+                ?? jsonStringValue(object["text"])
+        }
+        .joined(separator: "\n")
+
+        return nonEmptyReasoningText(text)
+    }
+
+    nonisolated private static func reasoningText(fromContent content: String?) -> String? {
+        guard let content = nonEmptyReasoningText(content) else { return nil }
+
+        if let text = leadingDelimitedText(in: content, open: "<think>", close: "</think>") {
+            return text
+        }
+
+        if let text = leadingDelimitedText(in: content, open: "<|channel|>thought", close: "<channel|>") {
+            return text
+        }
+
+        return leadingDelimitedText(in: content, open: "<|turn|>thinking\n", close: "<turn|>")
+    }
+
+    nonisolated private static func leadingDelimitedText(in content: String, open: String, close: String) -> String? {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix(open),
+              let closeRange = trimmed.range(of: close, range: trimmed.index(trimmed.startIndex, offsetBy: open.count)..<trimmed.endIndex)
+        else {
+            return nil
+        }
+
+        let text = String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: open.count)..<closeRange.lowerBound])
+        return nonEmptyReasoningText(text)
+    }
+
+    nonisolated private static func strippedVisibleAssistantEcho(
+        fromReasoning reasoning: String,
+        visibleText: String?
+    ) -> String? {
+        var output = reasoning
+        let visibleParagraphs = visibleText?
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 20 } ?? []
+
+        for paragraph in visibleParagraphs {
+            output = output.replacingOccurrences(of: paragraph, with: "")
+        }
+
+        return nonEmptyReasoningText(output)
+    }
+
+    nonisolated private static func normalizedReasoningKey(_ text: String) -> String {
+        text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    nonisolated private static func nonEmptyReasoningText(_ text: String?) -> String? {
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    nonisolated private static func jsonStringValue(_ value: JSONValue?) -> String? {
+        switch value {
+        case .string(let value):
+            return value
+        case .number(let value):
+            return value.formatted()
+        case .bool(let value):
+            return value ? "true" : "false"
+        case .object, .array, .null, nil:
+            return nil
+        }
+    }
+}
+
+private struct ReasoningDisplayCandidate {
+    let order: Int
+    let anchorMessageID: String?
+    let turnKey: String
+    let text: String
+    let dedupeKey: String
+}
+
+/// Memo for the costly per-candidate work in
+/// `ChatViewModel.reasoningDisplayGroups`: stripping the visible reply's echo
+/// from the reasoning and normalizing the dedupe key. `ChatViewModel` keeps one
+/// across transcript recomputes, so a stream tick re-derives only the reply that
+/// changed. An entry is reused only when its inputs are equal to the current
+/// ones, and each pass keeps only the entries it used.
+struct ReasoningCandidateCache {
+    struct Derived {
+        let text: String
+        let dedupeKey: String
+    }
+
+    private struct Entry {
+        let reasoning: String
+        let visibleText: String?
+        /// Nil when nothing is left once the visible echo is stripped.
+        let derived: Derived?
+    }
+
+    private var previousPass: [String: Entry] = [:]
+    private var currentPass: [String: Entry] = [:]
+
+    /// Returns the derived candidate for `id`, calling `derive` only when the
+    /// previous pass saw different inputs for it.
+    mutating func derived(
+        id: String,
+        reasoning: String,
+        visibleText: String?,
+        derive: () -> Derived?
+    ) -> Derived? {
+        let entry: Entry
+        if let cached = previousPass[id], cached.reasoning == reasoning, cached.visibleText == visibleText {
+            entry = cached
+        } else {
+            entry = Entry(reasoning: reasoning, visibleText: visibleText, derived: derive())
+        }
+        currentPass[id] = entry
+        return entry.derived
+    }
+
+    /// Ends a pass; entries the pass did not use are dropped.
+    mutating func finishPass() {
+        previousPass = currentPass
+        currentPass = [:]
+    }
+}
+
+private extension ToolCall {
+    func matchesStableToolID(_ stableID: String) -> Bool {
+        id.nonEmptyStableToolID == stableID
+    }
+
+    func matchesReplayToolStart(_ payload: ToolStreamEvent) -> Bool {
+        matchesReplayToolIdentity(payload)
+    }
+
+    func matchesReplayToolCompletion(_ payload: ToolStreamEvent) -> Bool {
+        matchesReplayToolIdentity(payload)
+    }
+
+    private func matchesReplayToolIdentity(_ payload: ToolStreamEvent) -> Bool {
+        if let payloadStableID = payload.stableID?.nonEmptyReplayMatchText,
+           let stableID = id.nonEmptyStableToolID {
+            return stableID == payloadStableID
+        }
+
+        var didCompareStableField = false
+
+        if let payloadName = payload.name?.nonEmptyReplayMatchText {
+            didCompareStableField = true
+            guard name?.nonEmptyReplayMatchText == payloadName else { return false }
+        }
+
+        if let payloadArgs = payload.args {
+            didCompareStableField = true
+            guard args == payloadArgs else { return false }
+        }
+
+        if didCompareStableField {
+            return true
+        }
+
+        guard let payloadPreview = payload.preview?.nonEmptyReplayMatchText,
+              let preview = preview?.nonEmptyReplayMatchText
+        else {
+            return false
+        }
+
+        return preview == payloadPreview
+    }
+
+    func applyingCompletionPayload(_ payload: ToolStreamEvent) -> ToolCall {
+        ToolCall(
+            id: id.nonEmptyStableToolID == nil ? payload.stableID ?? id : id,
+            presentationID: presentationID,
+            name: payload.name ?? name,
+            preview: payload.preview ?? preview,
+            args: payload.args ?? args,
+            duration: payload.duration,
+            isError: payload.isError,
+            isCompleted: true,
+            startedAt: startedAt
+        )
+    }
+}
+
+private extension String {
+    var nonEmptyReplayMatchText: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var nonEmptyStableToolID: String? {
+        guard let stableID = nonEmptyReplayMatchText,
+              !stableID.hasPrefix("live-tool-"),
+              !stableID.hasPrefix("message-tool-"),
+              !stableID.hasPrefix("persisted-tool-")
+        else {
+            return nil
+        }
+
+        return stableID
+    }
+}
+
+struct SpeechTextNormalizer {
+    static func normalizedAssistantText(_ text: String) -> String? {
+        let lines = text
+            .replacingOccurrences(of: "`", with: "")
+            .components(separatedBy: .newlines)
+            .map { line in
+                line
+                    .replacingOccurrences(of: #"^\s{0,3}#{1,6}\s*"#, with: "", options: .regularExpression)
+                    .replacingOccurrences(of: #"^\s{0,3}[-*+]\s+"#, with: "", options: .regularExpression)
+                    .replacingOccurrences(of: #"^\s{0,3}>\s?"#, with: "", options: .regularExpression)
+                    .replacingOccurrences(of: #"\[([^\]]+)\]\([^)]+\)"#, with: "$1", options: .regularExpression)
+            }
+
+        let normalized = lines
+            .joined(separator: "\n")
+            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return normalized.isEmpty ? nil : normalized
+    }
+}
+
+/// Routing policy for the "Listen" action: honor saved server preferences and
+/// fall back to the
+/// on-device synthesizer when the server can't serve the request.
+enum ServerTTSPolicy {
+    /// Server-enforced request cap (`400 text too long` above it); longer text
+    /// routes straight to the on-device synthesizer (chunking is a non-goal).
+    static let maximumTextLength = 5000
+    /// A Hermes host's ceiling (#1072). The host splits longer text into its provider's
+    /// chunks (Edge 5000, OpenAI 4096, others 4000) and plays only the first without ffmpeg
+    /// to join them, so Hermex sends one chunk's worth and speaks longer replies on device.
+    /// Counted in Unicode scalars, as the host's Python `len` counts them.
+    static let maximumHermesTextLength = 4000
+    /// The server's own default voice is `zh-CN-XiaoxiaoNeural`, so the client
+    /// must always send an explicit voice. A voice picker is a non-goal of #15;
+    /// this is the issue-specified default (verified live 2026-07-02).
+    static let defaultVoice = "en-US-AriaNeural"
+
+    static func shouldUseServerTTS(for text: String, onHermes: Bool = false) -> Bool {
+        onHermes ? text.unicodeScalars.count <= maximumHermesTextLength : text.count <= maximumTextLength
+    }
+}
+
+/// Playback seam for server-synthesized "Listen" audio. Injectable so tests can
+/// drive playback outcomes without constructing a real `AVAudioPlayer` (which
+/// requires decodable audio bytes).
+@MainActor
+protocol ListenAudioPlaying: AnyObject {
+    /// Fired on the main actor when playback finishes naturally.
+    /// `stop()` must not fire it.
+    var onFinish: (@MainActor () -> Void)? { get set }
+    var currentTime: TimeInterval { get set }
+    var duration: TimeInterval { get }
+    var rate: Float { get set }
+
+    func prepareToPlay()
+    @discardableResult
+    func play() -> Bool
+    func pause()
+    func stop()
+}
+
+/// Production `ListenAudioPlaying`: wraps `AVAudioPlayer` and forwards its finish
+/// delegate onto the main actor. `init` throws when the bytes aren't decodable
+/// audio, which the caller treats as "fall back to the on-device synthesizer".
+@MainActor
+final class ServerTTSAudioPlayer: NSObject, ListenAudioPlaying {
+    private let player: AVAudioPlayer
+    var onFinish: (@MainActor () -> Void)?
+    var currentTime: TimeInterval {
+        get { player.currentTime }
+        set { player.currentTime = newValue }
+    }
+    var duration: TimeInterval { player.duration }
+    var rate: Float {
+        get { player.rate }
+        set { player.rate = newValue }
+    }
+
+    init(data: Data) throws {
+        player = try AVAudioPlayer(data: data)
+        super.init()
+        player.delegate = self
+        player.enableRate = true
+    }
+
+    func prepareToPlay() {
+        player.prepareToPlay()
+    }
+
+    @discardableResult
+    func play() -> Bool {
+        player.play()
+    }
+
+    func pause() {
+        player.pause()
+    }
+
+    func stop() {
+        player.stop()
+    }
+}
+
+extension ServerTTSAudioPlayer: AVAudioPlayerDelegate {
+    // `AVAudioPlayer` may call its delegate off the main thread; hop back before
+    // touching main-actor listen state. Finished-with-error still ends playback,
+    // so both flag values route to `onFinish`.
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            self.onFinish?()
+        }
+    }
+
+    // A mid-playback decode error fires this callback instead of (or as well as)
+    // the finish one — without it the listen state would stay stuck "listening"
+    // forever. Route it to `onFinish` too; a double fire is harmless because the
+    // completion handler drops callbacks from a no-longer-active player.
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor in
+            self.onFinish?()
+        }
+    }
+}
+
+protocol ChatSpeechSynthesizing: AnyObject {
+    var delegate: (any AVSpeechSynthesizerDelegate)? { get set }
+    var isSpeaking: Bool { get }
+    var isPaused: Bool { get }
+
+    func speak(_ utterance: AVSpeechUtterance)
+
+    @discardableResult
+    func stopSpeaking(at boundary: AVSpeechBoundary) -> Bool
+}
+
+extension AVSpeechSynthesizer: ChatSpeechSynthesizing {}
+
+/// Audio-session settings for the "Listen" (TTS) feature. `.playback` routes audio
+/// to the speaker by default instead of the receiver/earpiece, and `.spokenAudio` is
+/// the mode Apple recommends for synthesized speech (it pauses other spoken-word audio
+/// rather than ducking it). Exposed as constants so the routing intent is unit-testable
+/// without driving the live `AVAudioSession`. See #252.
+enum ListenAudioSessionConfiguration {
+    static let category = AVAudioSession.Category.playback
+    static let mode = AVAudioSession.Mode.spokenAudio
+    static let deactivationOptions = AVAudioSession.SetActiveOptions.notifyOthersOnDeactivation
+}
+
+/// Activates/deactivates the shared audio session around a "Listen" utterance.
+/// Injectable so tests can assert the call sequence without touching real hardware.
+@MainActor
+protocol ListenAudioSessionControlling {
+    func activate()
+    func deactivate()
+}
+
+/// Production `ListenAudioSessionControlling`: drives the real shared `AVAudioSession`.
+@MainActor
+final class ListenAudioSessionController: ListenAudioSessionControlling {
+    func activate() {
+        // If composer dictation is capturing the mic, leave the shared session alone:
+        // switching it to `.playback` would tear down the live recording engine. Mirrors
+        // `InlineAudioPlayerView`'s guard so the two playback paths stay consistent.
+        guard !ComposerAudioCaptureState.shared.isCapturing else { return }
+
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(
+            ListenAudioSessionConfiguration.category,
+            mode: ListenAudioSessionConfiguration.mode
+        )
+        try? session.setActive(true)
+    }
+
+    func deactivate() {
+        guard !ComposerAudioCaptureState.shared.isCapturing else { return }
+        try? AVAudioSession.sharedInstance().setActive(
+            false,
+            options: ListenAudioSessionConfiguration.deactivationOptions
+        )
+    }
+}
+
+private final class SpeechSynthesizerDelegate: NSObject, AVSpeechSynthesizerDelegate {
+    private let onFinished: @MainActor @Sendable (ObjectIdentifier) -> Void
+
+    init(onFinished: @escaping @MainActor @Sendable (ObjectIdentifier) -> Void) {
+        self.onFinished = onFinished
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        finishOnMainActor(for: utterance)
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        finishOnMainActor(for: utterance)
+    }
+
+    private func finishOnMainActor(for utterance: AVSpeechUtterance) {
+        // Capture identity synchronously; `ObjectIdentifier` is `Sendable`, so nothing
+        // non-`Sendable` crosses the actor hop into the `@MainActor` task below.
+        let utteranceID = ObjectIdentifier(utterance)
+        Task { @MainActor [onFinished] in
+            onFinished(utteranceID)
+        }
+    }
+}

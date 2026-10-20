@@ -1,0 +1,281 @@
+import XCTest
+@testable import HermesMobile
+
+final class ToolCallSummaryFormatterTests: XCTestCase {
+    // MARK: - Shell wrapper unwrap
+
+    func testUnwrapsKnownShellWrappers() {
+        XCTAssertEqual(ToolCallSummaryFormatter.unwrappingShellWrapper(#"bash -lc "git status""#), "git status")
+        XCTAssertEqual(ToolCallSummaryFormatter.unwrappingShellWrapper("/bin/zsh -c 'ls -la'"), "ls -la")
+        XCTAssertEqual(ToolCallSummaryFormatter.unwrappingShellWrapper("sh -c make test"), "make test")
+        XCTAssertEqual(ToolCallSummaryFormatter.unwrappingShellWrapper("pwsh -Command 'Get-ChildItem'"), "Get-ChildItem")
+        XCTAssertEqual(ToolCallSummaryFormatter.unwrappingShellWrapper("cmd.exe /c dir"), "dir")
+    }
+
+    func testLeavesPlainCommandsAlone() {
+        XCTAssertEqual(ToolCallSummaryFormatter.unwrappingShellWrapper("git status"), "git status")
+        XCTAssertEqual(ToolCallSummaryFormatter.unwrappingShellWrapper("bash -lc"), "bash -lc")
+        XCTAssertEqual(ToolCallSummaryFormatter.unwrappingShellWrapper("bash script.sh"), "bash script.sh")
+    }
+
+    // MARK: - Exit code
+
+    func testStripsTrailingExitCodeMarker() {
+        let stripped = ToolCallSummaryFormatter.strippingTrailingExitCode("hello\n<exited with exit code 2>")
+        XCTAssertEqual(stripped.output, "hello")
+        XCTAssertEqual(stripped.exitCode, 2)
+
+        let markerOnly = ToolCallSummaryFormatter.strippingTrailingExitCode("<exited with exit code 0>")
+        XCTAssertNil(markerOnly.output)
+        XCTAssertEqual(markerOnly.exitCode, 0)
+
+        let plain = ToolCallSummaryFormatter.strippingTrailingExitCode("  done  ")
+        XCTAssertEqual(plain.output, "done")
+        XCTAssertNil(plain.exitCode)
+    }
+
+    func testShellRowUsesUnwrappedCommandAndNonZeroExitCodeFails() throws {
+        let toolCall = ToolCall(
+            name: "terminal",
+            preview: "make: *** No rule\n<exited with exit code 2>",
+            args: ["command": .string("bash -lc 'make test'"), "workdir": .string("/tmp")],
+            isCompleted: true
+        )
+
+        let row = try XCTUnwrap(ToolCallSummaryFormatter.row(for: toolCall, isLive: false))
+        XCTAssertEqual(row.icon, "terminal")
+        XCTAssertEqual(row.summary, "Ran")
+        XCTAssertEqual(row.detail, "make test")
+        XCTAssertEqual(row.status, .failure)
+    }
+
+    // MARK: - Changed files and read ranges
+
+    func testChangedFilePreviewShowsFirstFileAndRemainder() throws {
+        let patch = ToolCall(
+            name: "patch",
+            preview: nil,
+            args: [
+                "edits": .array([
+                    .object(["path": .string("Sources/App/One.swift")]),
+                    .object(["path": .string("Sources/App/Two.swift")]),
+                    .object(["path": .string("Sources/App/Three.swift")])
+                ])
+            ],
+            isCompleted: true
+        )
+        let patchRow = try XCTUnwrap(ToolCallSummaryFormatter.row(for: patch, isLive: false))
+        XCTAssertEqual(patchRow.summary, "Updated")
+        XCTAssertEqual(patchRow.detail, "One.swift +2 more")
+
+        let write = ToolCall(
+            name: "write_file",
+            preview: nil,
+            args: ["path": .string("~/project/Notes.md"), "content": .string("secret body")],
+            isCompleted: true
+        )
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: write, isLive: false)?.detail, "Notes.md")
+    }
+
+    // MARK: - Edit counts
+
+    func testEditRowsCarryTheirDiffCountsAndSpeakThem() throws {
+        let patch = ToolCall(
+            name: "patch",
+            preview: #"{"success": true, "diff": "--- a/App.swift\n+++ b/App.swift\n@@ -1,2 +1,4 @@\n-old\n+new\n+more\n+last\n keep\n"}"#,
+            args: ["path": .string("Sources/App.swift"), "old_string": .string("old"), "new_string": .string("new")],
+            isCompleted: true
+        )
+        let patchRow = try XCTUnwrap(ToolCallSummaryFormatter.row(for: patch, isLive: false))
+        XCTAssertEqual(patchRow.diffCounts, ToolCallDiff.Counts(additions: 3, deletions: 1))
+        XCTAssertEqual(patchRow.accessibilityLabel, "Updated, App.swift, 3 added, 1 removed, Completed")
+
+        let write = ToolCall(
+            name: "write_file",
+            preview: nil,
+            args: ["path": .string("docs/Notes.md"), "content": .string("one\ntwo")],
+            isCompleted: true
+        )
+        let writeRow = try XCTUnwrap(ToolCallSummaryFormatter.row(for: write, isLive: false))
+        XCTAssertEqual(writeRow.diffCounts, ToolCallDiff.Counts(additions: 2, deletions: nil))
+        XCTAssertEqual(writeRow.accessibilityLabel, "Updated, Notes.md, 2 added, Completed")
+    }
+
+    func testNonEditAndUnfinishedRowsCarryNoCounts() throws {
+        let terminal = ToolCall(
+            name: "terminal",
+            preview: "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b",
+            args: ["command": .string("git diff")],
+            isCompleted: true
+        )
+        let terminalRow = try XCTUnwrap(ToolCallSummaryFormatter.row(for: terminal, isLive: false))
+        XCTAssertNil(terminalRow.diffCounts)
+        XCTAssertEqual(terminalRow.accessibilityLabel, "Ran, git diff, Completed")
+
+        let running = ToolCall(
+            name: "patch",
+            preview: nil,
+            args: ["path": .string("App.swift"), "old_string": .string("a"), "new_string": .string("b")],
+            isCompleted: false
+        )
+        XCTAssertNil(
+            ToolCallSummaryFormatter.row(for: running, isLive: true)?.diffCounts,
+            "an edit shows counts only once the server says it completed"
+        )
+    }
+
+    func testReadRowShowsLineRangeAndBasename() throws {
+        let toolCall = ToolCall(
+            name: "read_file",
+            preview: "line 12",
+            args: ["path": .string("/repo/Sources/File.swift"), "offset": .number(12), "limit": .number(20)],
+            isCompleted: true
+        )
+
+        let row = try XCTUnwrap(ToolCallSummaryFormatter.row(for: toolCall, isLive: false))
+        XCTAssertEqual(row.icon, "doc.text")
+        XCTAssertEqual(row.summary, "Read")
+        XCTAssertEqual(row.detail, "L12-31 · File.swift")
+        XCTAssertEqual(row.status, .success)
+    }
+
+    // MARK: - Failure heuristics
+
+    func testFailureTextHeuristicsReadTheFirstLineAndTheExitMarker() {
+        XCTAssertTrue(ToolCallSummaryFormatter.looksLikeFailure("zsh: command not found: foo"))
+        XCTAssertTrue(ToolCallSummaryFormatter.looksLikeFailure("Error: ENOENT: no such file"))
+        XCTAssertTrue(ToolCallSummaryFormatter.looksLikeFailure("Error: BLOCKED: Command denied by user."))
+        XCTAssertTrue(ToolCallSummaryFormatter.looksLikeFailure("make: *** No rule\n<exited with exit code 2>"))
+        XCTAssertFalse(ToolCallSummaryFormatter.looksLikeFailure("grep: 3 lines mention 'file not found'\n<exited with exit code 0>"))
+        XCTAssertFalse(ToolCallSummaryFormatter.looksLikeFailure("Successfully wrote 3 files"))
+        XCTAssertFalse(ToolCallSummaryFormatter.looksLikeFailure("ok\nlater output says no such file"))
+    }
+
+    func testServerVerdictBeatsResultText() {
+        let succeeded = ToolCall(
+            name: "terminal",
+            preview: "zsh: command not found: foo",
+            args: ["command": .string("foo")],
+            isError: false,
+            isCompleted: true
+        )
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: succeeded, isLive: false)?.status, .success)
+
+        let failed = ToolCall(
+            name: "terminal",
+            preview: "all good",
+            args: ["command": .string("foo")],
+            isError: true,
+            isCompleted: true
+        )
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: failed, isLive: false)?.status, .failure)
+    }
+
+    func testEnvelopeExitCodeZeroKeepsScaryOutputGreen() {
+        let toolCall = ToolCall(
+            name: "terminal",
+            preview: #"{"output":"grep: file not found handler matched 3 lines","exit_code":0}"#,
+            args: ["command": .string("grep -rn 'file not found' src")],
+            isCompleted: true
+        )
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: toolCall, isLive: false)?.status, .success)
+    }
+
+    func testSearchResultsAreNeverJudgedByText() {
+        let toolCall = ToolCall(
+            name: "search_files",
+            preview: "src/errors.swift:12: throw FileError(\"file not found\")\nsrc/io.swift:4: // ENOENT",
+            args: ["pattern": .string("file not found")],
+            isCompleted: true
+        )
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: toolCall, isLive: false)?.status, .success)
+    }
+
+    func testPersistedToolCallCarriesTheServerVerdict() throws {
+        let json = #"{"name":"terminal","snippet":"boom","tid":"t1","assistant_msg_idx":2,"args":{"command":"x"},"is_error":true,"duration":1.5}"#
+        let persisted = try JSONDecoder().decode(PersistedToolCall.self, from: Data(json.utf8))
+        let toolCall = persisted.toolCall(fallbackIndex: 0)
+
+        XCTAssertEqual(toolCall.isError, true)
+        XCTAssertEqual(toolCall.duration, 1.5)
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: toolCall, isLive: false)?.status, .failure)
+
+        let legacy = try JSONDecoder().decode(PersistedToolCall.self, from: Data(#"{"name":"terminal","snippet":"ok","tid":"t2"}"#.utf8))
+        XCTAssertNil(legacy.isError)
+    }
+
+    func testDeniedCommandEnvelopeFailsTheRow() {
+        let toolCall = ToolCall(
+            name: "terminal",
+            preview: #"{"error":"BLOCKED: Command denied by user.","exit_code":-1}"#,
+            args: ["command": .string("rm -rf /tmp/x")],
+            isCompleted: true
+        )
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: toolCall, isLive: false)?.status, .failure)
+    }
+
+    func testNeverCompletedCallIsInterrupted() {
+        let toolCall = ToolCall(name: "terminal", preview: nil, args: ["command": .string("sleep 60")])
+        XCTAssertEqual(
+            ToolCallSummaryFormatter.row(for: toolCall, isLive: false)?.status,
+            .interrupted
+        )
+    }
+
+    func testIncompleteLiveCallIsRunning() throws {
+        let toolCall = ToolCall(name: "terminal", preview: nil, args: ["command": .string("sleep 60")])
+        let row = try XCTUnwrap(ToolCallSummaryFormatter.row(for: toolCall, isLive: true))
+
+        XCTAssertEqual(row.status, .running)
+        XCTAssertEqual(row.statusText, "Running")
+    }
+
+    func testFailureWinsOverGroupLiveness() {
+        let toolCall = ToolCall(
+            name: "terminal",
+            preview: nil,
+            args: ["command": .string("exit 1")],
+            isError: true,
+            isCompleted: false
+        )
+
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: toolCall, isLive: true)?.status, .failure)
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: toolCall, isLive: false)?.status, .failure)
+    }
+
+    // MARK: - Drop rule and fallbacks
+
+    func testDropsRowsWithoutSignalButKeepsFailures() {
+        let empty = ToolCall(name: nil, preview: nil, args: nil, isCompleted: true)
+        let failed = ToolCall(name: nil, preview: nil, args: nil, isError: true, isCompleted: true)
+        let named = ToolCall(name: "terminal", preview: nil, args: nil, isCompleted: true)
+
+        let entries = ToolCallSummaryFormatter.entries(for: [empty, failed, named], isLive: false)
+        XCTAssertEqual(entries.map(\.toolCall.id), [failed.id, named.id])
+        XCTAssertEqual(entries.first?.row.status, .failure)
+    }
+
+    func testDetailFallsBackToFirstResultLineWhenThereIsNoTarget() throws {
+        let toolCall = ToolCall(
+            name: "terminal",
+            preview: "  12 files   changed\nmore output\n<exited with exit code 0>",
+            args: ["workdir": .string("/tmp")],
+            isCompleted: true
+        )
+
+        let row = try XCTUnwrap(ToolCallSummaryFormatter.row(for: toolCall, isLive: false))
+        XCTAssertEqual(row.detail, "12 files changed")
+        XCTAssertEqual(row.status, .success)
+    }
+
+    func testUnknownToolsUseTheirShortName() throws {
+        let mcp = ToolCall(name: "mcp__slack__post", preview: nil, args: ["channel": .string("#ops")], isCompleted: true)
+        let mcpRow = try XCTUnwrap(ToolCallSummaryFormatter.row(for: mcp, isLive: false))
+        XCTAssertEqual(mcpRow.summary, "slack/post")
+        XCTAssertEqual(mcpRow.icon, "powerplug")
+        XCTAssertNil(mcpRow.detail)
+
+        let clarify = ToolCall(name: "clarify", preview: nil, args: ["question": .string("Which?")], isCompleted: true)
+        XCTAssertEqual(ToolCallSummaryFormatter.row(for: clarify, isLive: false)?.summary, "clarify")
+    }
+}

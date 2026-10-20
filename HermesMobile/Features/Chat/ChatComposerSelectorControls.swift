@@ -1,0 +1,437 @@
+import SwiftUI
+import UIKit
+
+struct ComposerWorkspaceSelectorButton: View {
+    let title: String
+    let isDisabled: Bool
+    let color: Color
+    let controlFont: Font
+    let chevronFont: Font
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            ComposerInlineControlLabel(
+                title: title,
+                systemImage: "folder",
+                color: color,
+                controlFont: controlFont,
+                chevronFont: chevronFont
+            )
+        }
+        .buttonStyle(.chatTactile(.compactControl))
+        .disabled(isDisabled)
+        .accessibilityLabel("Choose workspace path")
+    }
+}
+
+/// The Fast chip: a Hermes session's or a bot chat's priority mode (#1142). A tap asks for the
+/// other mode; the chip changes only once the host answers.
+struct ComposerFastModeButton: View {
+    let isOn: Bool
+    let isDisabled: Bool
+    let color: Color
+    let controlFont: Font
+    let chevronFont: Font
+    let onSelect: (Bool) -> Void
+
+    var body: some View {
+        Button { onSelect(!isOn) } label: {
+            ComposerInlineControlLabel(
+                title: isOn ? String(localized: "Fast") : String(localized: "Normal"),
+                systemImage: "bolt", showsChevron: false, color: color,
+                controlFont: controlFont, chevronFont: chevronFont
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .accessibilityLabel("Fast")
+        .accessibilityValue(isOn ? String(localized: "On") : String(localized: "Off"))
+    }
+}
+
+struct ComposerProfileSelectorMenu: View {
+    let profileOptions: [ProfileSummary]
+    let selectedProfileName: String?
+    let selectedProfileTitle: String
+    /// Single-profile servers reject switches (#24), so the control is a plain
+    /// label: no chevron, no menu, no button trait.
+    let isStatic: Bool
+    let isDisabled: Bool
+    let color: Color
+    let controlFont: Font
+    let chevronFont: Font
+    let onSelectProfile: (ProfileSummary) -> Void
+
+    var body: some View {
+        if isStatic {
+            ComposerInlineControlLabel(
+                title: selectedProfileTitle,
+                systemImage: "person.crop.circle",
+                showsChevron: false,
+                color: color,
+                controlFont: controlFont,
+                chevronFont: chevronFont
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text("Profile: \(selectedProfileTitle)"))
+        } else {
+            profileMenu
+        }
+    }
+
+    private var profileMenu: some View {
+        ChatUIKitMenuButton {
+            ComposerInlineControlLabel(
+                title: selectedProfileTitle,
+                systemImage: "person.crop.circle",
+                color: color,
+                controlFont: controlFont,
+                chevronFont: chevronFont
+            )
+        } menu: {
+            makeMenu()
+        }
+        .tint(color)
+        .disabled(isDisabled)
+        .accessibilityLabel("Choose profile")
+    }
+
+    func makeMenu() -> UIMenu {
+        guard !profileOptions.isEmpty else {
+            return UIMenu(children: [
+                UIAction(
+                    title: String(localized: "No profiles available"),
+                    attributes: .disabled
+                ) { _ in }
+            ])
+        }
+
+        return UIMenu(children: [
+            UIMenu(
+                title: String(localized: "Profile"),
+                options: [.displayInline],
+                children: profileOptions.map { profile in
+                    UIAction(
+                        title: profile.displayName,
+                        state: profile.name == selectedProfileName ? .on : .off
+                    ) { _ in
+                        Task { @MainActor in
+                            onSelectProfile(profile)
+                        }
+                    }
+                }
+            )
+        ])
+    }
+}
+
+struct ComposerModelEffortMenu: View {
+    /// Allows a caller to disable effort while retaining access to the model menu.
+    var allowsEffortChanges = true
+    let selection: ComposerModelEffortSelection
+    let modelGroups: [ModelCatalogGroup]
+    let favoriteModelKeys: [ModelFavoriteKey]
+    let recentModelKeys: [ModelFavoriteKey]
+    let isDisabled: Bool
+    let color: Color
+    let controlFont: Font
+    let chevronFont: Font
+    let onSelectModel: (ModelCatalogOption) -> Void
+    let onSelectEffort: (String) -> Void
+    let onShowAllModels: () -> Void
+
+    var body: some View {
+        // UIKit needs the nested menu's full geometry before presentation. Deferring
+        // this tree makes the first submenu expansion visibly re-anchor.
+        ChatUIKitMenuButton(loadsMenuEagerly: true) {
+            HStack(spacing: 5) {
+                if ProviderGlyphKind.resolve(providerID: selection.modelProviderID) != nil {
+                    ProviderGlyph(providerID: selection.modelProviderID)
+                        .frame(width: 15, height: 15)
+                }
+
+                Text(selection.title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .font(controlFont)
+                    .layoutPriority(1)
+
+                Image(systemName: "chevron.down")
+                    .font(chevronFont)
+            }
+            .foregroundStyle(color)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, ComposerInlineControlLabel.horizontalPadding)
+            .frame(minHeight: ComposerInlineControlLabel.minimumHeight)
+            .contentShape(Rectangle())
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+        } menu: {
+            makeMenu()
+        }
+        .tint(color)
+        .disabled(isDisabled)
+        .accessibilityLabel(Text(verbatim: selection.accessibilityTitle))
+    }
+
+    private func makeMenu() -> UIMenu {
+        var children: [UIMenuElement] = [modelMenu]
+        if selection.showsEffortControl {
+            children.append(effortMenu)
+        }
+        return UIMenu(children: children)
+    }
+
+    private var modelMenu: UIMenu {
+        var children: [UIMenuElement] = []
+
+        if !favoriteOptions.isEmpty {
+            children.append(modelSection(title: String(localized: "Favorites"), options: favoriteOptions))
+        }
+        if !recentOptions.isEmpty {
+            children.append(modelSection(title: String(localized: "Recent"), options: recentOptions))
+        }
+        // The active model always has a checked row, even when it is neither a
+        // favorite nor a recent, so the submenu never opens with nothing selected.
+        let listedKeys = Set((favoriteOptions + recentOptions).map(\.favoriteKey))
+        if !listedKeys.contains(selection.model.favoriteKey) {
+            children.append(modelSection(title: "", options: [selection.model]))
+        }
+
+        children.append(UIMenu(
+            options: [.displayInline],
+            children: [
+                UIAction(title: String(localized: "All Models...")) { _ in
+                    Task { @MainActor in
+                        await Task.yield()
+                        onShowAllModels()
+                    }
+                }
+            ]
+        ))
+
+        return UIMenu(
+            title: String(localized: "Model"),
+            subtitle: selection.model.displayName,
+            children: children
+        )
+    }
+
+    private var effortMenu: UIMenu {
+        UIMenu(
+            title: String(localized: "Effort"),
+            subtitle: selection.effortTitle,
+            children: selection.effortOptions.map { option in
+                UIAction(
+                    title: option.title,
+                    attributes: allowsEffortChanges ? [] : [.disabled],
+                    state: selection.committedEffort == option.id ? .on : .off
+                ) { _ in
+                    Task { @MainActor in
+                        onSelectEffort(option.id)
+                    }
+                }
+            }
+        )
+    }
+
+    private func modelSection(title: String, options: [ModelCatalogOption]) -> UIMenu {
+        UIMenu(
+            title: title,
+            options: [.displayInline],
+            children: options.map(modelAction)
+        )
+    }
+
+    private func modelAction(_ option: ModelCatalogOption) -> UIAction {
+        UIAction(
+            title: option.displayName,
+            state: option.matchesSelection(
+                modelID: selection.model.id,
+                providerID: selection.modelProviderID
+            ) ? .on : .off
+        ) { _ in
+            Task { @MainActor in
+                onSelectModel(option)
+            }
+        }
+    }
+
+    private var favoriteOptions: [ModelCatalogOption] {
+        ModelFavoritesStore.visibleFavoriteOptions(
+            in: modelGroups,
+            favoriteKeys: favoriteModelKeys
+        )
+    }
+
+    private var recentOptions: [ModelCatalogOption] {
+        ModelRecentsStore.visibleRecentOptions(
+            in: modelGroups,
+            recentKeys: recentModelKeys,
+            favoriteKeys: favoriteModelKeys
+        )
+    }
+}
+
+struct ComposerModelEffortSelection: Equatable, Sendable {
+    let model: ModelCatalogOption
+    let effort: String?
+    let supportedEfforts: [String]?
+    let supportsEffort: Bool?
+    /// The level a Hermes host sends when the model's route takes less than `effort` (#1016).
+    var sentEffort: String? = nil
+
+    var modelProviderID: String? {
+        model.providerID ?? model.id.modelIDProviderPrefix
+    }
+
+    var showsEffortControl: Bool {
+        ReasoningEffortOption.showsEffortControl(
+            supportsReasoningEffort: supportsEffort,
+            supportedEfforts: supportedEfforts
+        )
+    }
+
+    var effortOptions: [ReasoningEffortOption] {
+        ReasoningEffortOption.options(forSupportedEfforts: supportedEfforts)
+    }
+
+    var staticEffort: ReasoningEffortOption? {
+        ReasoningEffortOption.singleOption(forSupportedEfforts: supportedEfforts)
+    }
+
+    var committedEffort: String? {
+        guard showsEffortControl else { return nil }
+        return staticEffort?.id ?? normalizedEffort(effort)
+    }
+
+    var effortTitle: String? {
+        guard showsEffortControl else { return nil }
+        guard let effort = committedEffort else { return String(localized: "Reasoning") }
+        let title = ReasoningEffortOption.title(for: effort)
+        guard let lowered = loweredEffort else { return title }
+        return String(localized: "\(title) · sent as \(ReasoningEffortOption.title(for: lowered))")
+    }
+
+    var title: String {
+        guard let effortTitle else { return model.displayName }
+        return "\(model.displayName) · \(effortTitle)"
+    }
+
+    /// `title` for VoiceOver, which reads a lowered level as a sentence rather than symbols.
+    var accessibilityTitle: String {
+        guard let effort = committedEffort, let lowered = loweredEffort else { return title }
+        let picked = ReasoningEffortOption.title(for: effort), sent = ReasoningEffortOption.title(for: lowered)
+        return String(localized: "\(model.displayName), \(picked) effort, sent as \(sent)")
+    }
+
+    /// `sentEffort` when it differs from the committed level.
+    private var loweredEffort: String? {
+        guard let effort = committedEffort, let sent = normalizedEffort(sentEffort), sent != effort else { return nil }
+        return sent
+    }
+
+    private func normalizedEffort(_ effort: String?) -> String? {
+        guard let effort else { return nil }
+        let normalized = effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? nil : normalized
+    }
+}
+
+/// Quiet toolbar-row control: icon, one-line title, optional chevron, no pill
+/// background, so the row reads as one surface. 44 pt tall for the hit target.
+struct ComposerInlineControlLabel: View {
+    static let minimumHeight: CGFloat = 44
+    static let horizontalPadding: CGFloat = 6
+
+    let title: String
+    let systemImage: String
+    var showsChevron = true
+    let color: Color
+    let controlFont: Font
+    let chevronFont: Font
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(controlFont)
+
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .font(controlFont)
+
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(chevronFont)
+            }
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, Self.horizontalPadding)
+        .frame(minHeight: Self.minimumHeight)
+        .contentShape(Rectangle())
+    }
+}
+
+struct ReasoningEffortOption: Identifiable, CaseIterable {
+    let id: String
+    let title: String
+
+    /// webui's static ladder, and the fallback when a server sends no vocabulary (#18).
+    static let allCases: [ReasoningEffortOption] = [
+        ReasoningEffortOption(id: "none", title: String(localized: "None")),
+        ReasoningEffortOption(id: "minimal", title: String(localized: "Minimal")),
+        ReasoningEffortOption(id: "low", title: String(localized: "Low")),
+        ReasoningEffortOption(id: "medium", title: String(localized: "Medium")),
+        ReasoningEffortOption(id: "high", title: String(localized: "High")),
+        ReasoningEffortOption(id: "xhigh", title: String(localized: "XHigh"))
+    ]
+
+    /// Every level with a title: webui's ladder plus the levels only a Hermes host offers
+    /// (#1016), which stay out of webui's fallback.
+    private static let titled = allCases + [
+        ReasoningEffortOption(id: "max", title: String(localized: "Max")),
+        ReasoningEffortOption(id: "ultra", title: String(localized: "Ultra"))
+    ]
+
+    static func title(for effort: String) -> String {
+        titled.first(where: { $0.id == effort })?.title
+            ?? effort.capitalized
+    }
+
+    /// Menu options for a server-provided effort vocabulary (issue #18).
+    /// `nil` or empty → the full static list (older servers / defensive fallback;
+    /// an empty list also means `supports_reasoning_effort == false`, which hides
+    /// the control before this is ever rendered). Unknown ids are kept with a
+    /// capitalized title so a newer server's vocabulary still works.
+    static func options(forSupportedEfforts supportedEfforts: [String]?) -> [ReasoningEffortOption] {
+        guard let supportedEfforts, !supportedEfforts.isEmpty else { return allCases }
+
+        var seen = Set<String>()
+        return supportedEfforts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+            .map { id in ReasoningEffortOption(id: id, title: title(for: id)) }
+    }
+
+    /// The lone effort when the server vocabulary leaves nothing to choose, so the
+    /// composer can render a static label instead of a one-item menu.
+    static func singleOption(forSupportedEfforts supportedEfforts: [String]?) -> ReasoningEffortOption? {
+        let options = options(forSupportedEfforts: supportedEfforts)
+        return options.count == 1 ? options[0] : nil
+    }
+
+    /// Whether the composer should show the effort control at all (issue #18).
+    /// `supports_reasoning_effort == false` hides it; older servers (both fields
+    /// absent) keep today's behavior and show it.
+    static func showsEffortControl(
+        supportsReasoningEffort: Bool?,
+        supportedEfforts: [String]?
+    ) -> Bool {
+        if let supportsReasoningEffort { return supportsReasoningEffort }
+        if let supportedEfforts { return !supportedEfforts.isEmpty }
+        return true
+    }
+}

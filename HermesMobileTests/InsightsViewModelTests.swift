@@ -1,0 +1,565 @@
+import XCTest
+@testable import HermesMobile
+
+final class InsightsViewModelTests: XCTestCase {
+    func testAggregateMathToleratesMissingUsageFields() throws {
+        let sessions = try decodeSessions([
+            sessionJSON(title: "Complete", inputTokens: 10, outputTokens: 20, estimatedCost: 0.12),
+            sessionJSON(title: "Input only", inputTokens: 7, outputTokens: nil, estimatedCost: nil),
+            sessionJSON(title: "Cost only", inputTokens: nil, outputTokens: nil, estimatedCost: 0.03)
+        ])
+
+        let analytics = SessionUsageAnalytics(sessions: sessions)
+
+        XCTAssertEqual(analytics.sessionCount, 3)
+        XCTAssertEqual(analytics.totalInputTokens, 17)
+        XCTAssertEqual(analytics.totalOutputTokens, 20)
+        XCTAssertEqual(analytics.totalTokens, 37)
+        XCTAssertEqual(analytics.estimatedCost, 0.15, accuracy: 0.0001)
+    }
+
+    func testTimeframeFilteringUsesMostRecentSessionTimestamp() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let sessions = try decodeSessions([
+            sessionJSON(title: "Today", createdAt: now.addingTimeInterval(-60).timeIntervalSince1970),
+            sessionJSON(title: "Updated recently", createdAt: now.addingTimeInterval(-100 * 24 * 60 * 60).timeIntervalSince1970, updatedAt: now.addingTimeInterval(-3 * 24 * 60 * 60).timeIntervalSince1970),
+            sessionJSON(title: "Last message recently", createdAt: now.addingTimeInterval(-100 * 24 * 60 * 60).timeIntervalSince1970, updatedAt: now.addingTimeInterval(-40 * 24 * 60 * 60).timeIntervalSince1970, lastMessageAt: now.addingTimeInterval(-20 * 24 * 60 * 60).timeIntervalSince1970),
+            sessionJSON(title: "Old", createdAt: now.addingTimeInterval(-45 * 24 * 60 * 60).timeIntervalSince1970),
+            sessionJSON(title: "No timestamp", createdAt: nil)
+        ])
+
+        let today = sessions.filter { AnalyticsTimeframe.today.contains($0, now: now, calendar: calendar) }
+        let last7Days = sessions.filter { AnalyticsTimeframe.last7Days.contains($0, now: now, calendar: calendar) }
+        let last30Days = sessions.filter { AnalyticsTimeframe.last30Days.contains($0, now: now, calendar: calendar) }
+        let last90Days = sessions.filter { AnalyticsTimeframe.last90Days.contains($0, now: now, calendar: calendar) }
+
+        XCTAssertEqual(today.map(\.title), ["Today"])
+        XCTAssertEqual(last7Days.map(\.title), ["Today", "Updated recently"])
+        XCTAssertEqual(last30Days.map(\.title), ["Today", "Updated recently", "Last message recently"])
+        XCTAssertEqual(last90Days.map(\.title), ["Today", "Updated recently", "Last message recently", "Old"])
+    }
+
+    func testModelDisplayShareFallsBackFromZeroCostShareToTokenShare() throws {
+        let insights = try decodeInsights("""
+        {
+          "models": [
+            {
+              "model": "deepseek-v4-flash",
+              "sessions": 25,
+              "total_tokens": 3000000,
+              "cost_share": 0,
+              "token_share": 26,
+              "session_share": 37
+            }
+          ]
+        }
+        """)
+
+        XCTAssertEqual(insights.models?.first?.displayShare, 26)
+    }
+
+    @MainActor
+    func testLoadFallsBackToLocalAnalyticsWhenServerInsightsFails() async throws {
+        let now = Date().timeIntervalSince1970
+        let sessions = try decodeSessions([
+            sessionJSON(title: "Recent", createdAt: now - 60, messageCount: 4, inputTokens: 10, outputTokens: 20, estimatedCost: 0.12),
+            sessionJSON(title: "Older", createdAt: now - 3_600, messageCount: 2, inputTokens: 5, outputTokens: 7, estimatedCost: 0.03)
+        ])
+        let client = StubInsightsClient(
+            insightsResult: .failure(StubInsightsError()),
+            sessionsResult: .success(SessionsResponse(sessions: sessions, cliCount: nil, archivedCount: nil, serverTime: nil, serverTz: nil))
+        )
+        let viewModel = InsightsViewModel(client: client)
+        viewModel.selectedTimeframe = .last7Days
+
+        await viewModel.load()
+
+        XCTAssertEqual(client.requestedDays, [7])
+        XCTAssertEqual(viewModel.dataSource, .localFallback)
+        XCTAssertEqual(viewModel.sessionCount, 2)
+        XCTAssertEqual(viewModel.totalMessages, 6)
+        XCTAssertEqual(viewModel.totalInputTokens, 15)
+        XCTAssertEqual(viewModel.totalOutputTokens, 27)
+        XCTAssertEqual(viewModel.totalTokens, 42)
+        XCTAssertEqual(viewModel.estimatedCost, 0.15, accuracy: 0.0001)
+        XCTAssertNil(viewModel.totalCacheReadTokens)
+        XCTAssertNil(viewModel.totalCacheHitPercent)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.fallbackReason, "Server insights unavailable")
+    }
+
+    @MainActor
+    func testFallbackTotalsIncludeSessionsWithoutUsableIDs() async throws {
+        let now = Date().timeIntervalSince1970
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let response = try decoder.decode(SessionsResponse.self, from: Data("""
+        {
+          "sessions": [
+            {
+              "title": "Missing identity",
+              "created_at": \(now - 60),
+              "message_count": 4,
+              "input_tokens": 10,
+              "output_tokens": 20,
+              "estimated_cost": 0.12
+            },
+            {
+              "session_id": "   ",
+              "title": "Blank identity",
+              "created_at": \(now - 120),
+              "message_count": 2,
+              "input_tokens": 5,
+              "output_tokens": 7,
+              "estimated_cost": 0.03
+            }
+          ]
+        }
+        """.utf8))
+        let client = StubInsightsClient(
+            insightsResult: .failure(StubInsightsError()),
+            sessionsResult: .success(response)
+        )
+        let viewModel = InsightsViewModel(client: client)
+        viewModel.selectedTimeframe = .last7Days
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.sessionCount, 2)
+        XCTAssertEqual(viewModel.totalMessages, 6)
+        XCTAssertEqual(viewModel.totalTokens, 42)
+        XCTAssertEqual(viewModel.estimatedCost, 0.15, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testLoadUsesServerInsightsWhenAvailable() async throws {
+        let client = StubInsightsClient(
+            insightsResult: .success(try decodeInsights("""
+            {
+              "period_days": 30,
+              "total_sessions": 5,
+              "total_messages": 13,
+              "total_input_tokens": 100,
+              "total_output_tokens": 250,
+              "total_tokens": 350,
+              "total_cost": 0.42,
+              "total_cache_read_tokens": 80,
+              "total_cache_hit_percent": 64.2
+            }
+            """)),
+            sessionsResult: .failure(StubInsightsError())
+        )
+        let viewModel = InsightsViewModel(client: client)
+
+        await viewModel.load()
+
+        XCTAssertEqual(client.requestedDays, [30])
+        XCTAssertEqual(viewModel.dataSource, .server)
+        XCTAssertEqual(viewModel.periodDays, 30)
+        XCTAssertEqual(viewModel.sessionCount, 5)
+        XCTAssertEqual(viewModel.totalMessages, 13)
+        XCTAssertEqual(viewModel.totalInputTokens, 100)
+        XCTAssertEqual(viewModel.totalOutputTokens, 250)
+        XCTAssertEqual(viewModel.totalTokens, 350)
+        XCTAssertEqual(viewModel.estimatedCost, 0.42, accuracy: 0.0001)
+        XCTAssertEqual(viewModel.totalCacheReadTokens, 80)
+        XCTAssertEqual(try XCTUnwrap(viewModel.totalCacheHitPercent), 64.2, accuracy: 0.0001)
+        XCTAssertTrue(viewModel.sessions.isEmpty)
+    }
+
+    @MainActor
+    func testLoadKeepsExistingAnalyticsVisibleWhileTimeframeRefreshes() async throws {
+        let client = DelayedInsightsClient(
+            firstResponse: try decodeInsights("""
+            {
+              "period_days": 30,
+              "total_sessions": 5,
+              "total_tokens": 350
+            }
+            """)
+        )
+        let viewModel = InsightsViewModel(client: client)
+
+        await viewModel.load()
+        XCTAssertEqual(viewModel.totalTokens, 350)
+        XCTAssertEqual(viewModel.periodTitle, "30 days")
+        XCTAssertFalse(viewModel.isRefreshing, "a first load is not a refresh")
+
+        viewModel.selectedTimeframe = .last7Days
+        let refreshTask = Task { await viewModel.load() }
+        await client.waitForPendingRequest()
+
+        XCTAssertTrue(viewModel.isLoading)
+        XCTAssertTrue(viewModel.isRefreshing)
+        XCTAssertEqual(viewModel.totalTokens, 350)
+        XCTAssertEqual(viewModel.periodTitle, "30 days")
+
+        client.completePendingRequest(with: .success(try decodeInsights("""
+        {
+          "period_days": 7,
+          "total_sessions": 2,
+          "total_tokens": 125
+        }
+        """)))
+        await refreshTask.value
+
+        XCTAssertEqual(viewModel.totalTokens, 125)
+        XCTAssertEqual(viewModel.periodTitle, "7 days")
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertFalse(viewModel.isRefreshing)
+    }
+
+    @MainActor
+    func testChartBucketsZeroFillTheWholeWindow() async throws {
+        let viewModel = try await loadedViewModel(timeframe: .last7Days, json: """
+        {
+          "period_days": 7,
+          "daily_tokens": [
+            {"date": "2026-08-28", "input_tokens": 100, "output_tokens": 20, "cache_read_tokens": 50, "sessions": 2, "cost": 0.5},
+            {"date": "2026-08-31", "input_tokens": 40, "output_tokens": 10, "cache_read_tokens": 0, "sessions": 1, "cost": 0.25}
+          ]
+        }
+        """)
+
+        let buckets = viewModel.chartBuckets
+
+        XCTAssertEqual(buckets.count, 7)
+        XCTAssertEqual(buckets.map(\.label).first, "Aug 25")
+        XCTAssertEqual(buckets.map(\.label).last, "Aug 31")
+        XCTAssertEqual(buckets[3].processedTokens, 120)
+        XCTAssertEqual(buckets[3].sessions, 2)
+        // The two days the server skipped, plus the padded lead-in, are real zeros.
+        XCTAssertEqual(buckets[4].processedTokens, 0)
+        XCTAssertEqual(buckets[5].processedTokens, 0)
+        XCTAssertFalse(buckets[0].hasActivity)
+        XCTAssertEqual(buckets[6].processedTokens, 50)
+    }
+
+    @MainActor
+    func testHourlyWindowPlotsSessionsAndHidesTheMetricToggle() async throws {
+        let hours = (0...23).map { #"{"hour": \#($0), "sessions": \#($0 == 9 ? 4 : 0)}"# }
+        let viewModel = try await loadedViewModel(timeframe: .today, json: """
+        {
+          "period_days": 1,
+          "total_sessions": 4,
+          "daily_tokens": [{"date": "2026-09-03", "input_tokens": 900, "output_tokens": 100, "sessions": 4, "cost": 1.5}],
+          "activity_by_hour": [\(hours.joined(separator: ","))]
+        }
+        """)
+
+        let buckets = viewModel.chartBuckets
+
+        XCTAssertEqual(buckets.count, 24)
+        XCTAssertEqual(buckets[9].sessions, 4)
+        // Hour buckets carry sessions and nothing else, so nothing may be stacked.
+        XCTAssertEqual(buckets[9].processedTokens, 0)
+        XCTAssertEqual(buckets[9].segments(for: .tokens).map(\.segment), [.sessions])
+        XCTAssertFalse(viewModel.showsMetricToggle)
+        XCTAssertEqual(viewModel.heroFigure.label, "Sessions")
+        XCTAssertEqual(viewModel.heroFigure.value, "4")
+        XCTAssertNotNil(viewModel.hourlyChartNote)
+    }
+
+    @MainActor
+    func testMetricTogglePicksTheHeroFigureAndTheStackedSegments() async throws {
+        let viewModel = try await loadedViewModel(timeframe: .last7Days, json: """
+        {
+          "period_days": 7,
+          "total_sessions": 3,
+          "total_tokens": 350,
+          "total_cost": 0.42,
+          "daily_tokens": [
+            {"date": "2026-09-01", "input_tokens": 100, "output_tokens": 250, "cache_read_tokens": 60, "sessions": 3, "cost": 0.42}
+          ]
+        }
+        """)
+
+        // A priced window opens on cost.
+        XCTAssertEqual(viewModel.metric, .cost)
+        XCTAssertEqual(viewModel.heroFigure.value, "$0.42")
+        let bucket = try XCTUnwrap(viewModel.chartBuckets.last)
+        XCTAssertEqual(bucket.segments(for: .cost).map(\.segment), [.cost])
+
+        viewModel.metric = .tokens
+
+        XCTAssertEqual(viewModel.heroFigure.label, "Processed tokens")
+        XCTAssertEqual(viewModel.heroFigure.value, "350")
+        XCTAssertEqual(bucket.segments(for: .tokens).map(\.segment), [.input, .output, .cacheRead])
+        XCTAssertEqual(bucket.segments(for: .tokens).map(\.value), [100, 250, 60])
+        XCTAssertTrue(viewModel.showsMetricToggle)
+    }
+
+    @MainActor
+    func testMetricDefaultsToTokensWhenTheServerPricesTheWindowAtZero() async throws {
+        let viewModel = try await loadedViewModel(timeframe: .last7Days, json: """
+        {
+          "period_days": 7,
+          "total_tokens": 4197262,
+          "total_cost": 0.0,
+          "daily_tokens": [{"date": "2026-09-01", "input_tokens": 100, "output_tokens": 20, "sessions": 1, "cost": 0.0}]
+        }
+        """)
+
+        XCTAssertEqual(viewModel.metric, .tokens)
+
+        // The user can still ask for cost, and it stays asked for.
+        viewModel.metric = .cost
+        XCTAssertEqual(viewModel.metric, .cost)
+    }
+
+    @MainActor
+    func testPerActiveDayDividesByDaysWithActivityNotWindowLength() async throws {
+        let viewModel = try await loadedViewModel(timeframe: .last7Days, json: """
+        {
+          "period_days": 7,
+          "total_tokens": 300,
+          "daily_tokens": [
+            {"date": "2026-08-30", "input_tokens": 100, "output_tokens": 0, "sessions": 1, "cost": 0},
+            {"date": "2026-08-31", "input_tokens": 0, "output_tokens": 0, "sessions": 0, "cost": 0},
+            {"date": "2026-09-01", "input_tokens": 100, "output_tokens": 0, "sessions": 1, "cost": 0},
+            {"date": "2026-09-02", "input_tokens": 100, "output_tokens": 0, "sessions": 1, "cost": 0}
+          ]
+        }
+        """)
+
+        XCTAssertEqual(viewModel.activeDayCount, 3)
+        let processed = try XCTUnwrap(viewModel.totalsCells.first { $0.id == "processedTokens" })
+        XCTAssertEqual(processed.detail, "100 per active day")
+    }
+
+    @MainActor
+    func testTotalsCellsDropCacheFiguresTheServerDoesNotReport() async throws {
+        let withCache = try await loadedViewModel(timeframe: .last7Days, json: """
+        {
+          "period_days": 7,
+          "total_input_tokens": 100,
+          "total_cache_read_tokens": 300,
+          "total_cache_hit_percent": 75
+        }
+        """)
+
+        let cachedInput = try XCTUnwrap(withCache.totalsCells.first { $0.id == "cachedInput" })
+        XCTAssertEqual(cachedInput.value, "300")
+        XCTAssertEqual(cachedInput.detail, "75% of observed input")
+        XCTAssertNotNil(withCache.totalsCells.first { $0.id == "cacheHitRate" })
+
+        let withoutCache = try await loadedViewModel(timeframe: .last7Days, json: """
+        {
+          "period_days": 7,
+          "total_input_tokens": 100
+        }
+        """)
+
+        XCTAssertNil(withoutCache.totalsCells.first { $0.id == "cachedInput" })
+        XCTAssertNil(withoutCache.totalsCells.first { $0.id == "cacheHitRate" })
+    }
+
+    /// A Hermes host (#1074) has no hours and counts messages over part of the window: the
+    /// picker leaves Today out and messages read "≈".
+    @MainActor
+    func testHermesFeaturesHideTodayAndMarkMessagesApproximate() async throws {
+        let client = StubInsightsClient(
+            insightsResult: .success(try decodeInsights("""
+            {"period_days": 30, "total_sessions": 5, "total_messages": 1234, "total_input_tokens": 10, "total_output_tokens": 5}
+            """)),
+            sessionsResult: .failure(StubInsightsError()),
+            features: .hermes
+        )
+        let viewModel = InsightsViewModel(client: client)
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.timeframes, [.last7Days, .last30Days, .last90Days])
+        let messages = try XCTUnwrap(viewModel.totalsCells.first { $0.id == "messages" })
+        XCTAssertEqual(messages.value, "≈1,234")
+        XCTAssertEqual(messages.detail, "across 5 sessions")
+    }
+
+    @MainActor
+    func testWebuiOffersEveryWindowAndExactMessages() async throws {
+        let viewModel = try await loadedViewModel(timeframe: .last30Days, json: #"{"period_days": 30, "total_messages": 1234}"#)
+
+        XCTAssertEqual(viewModel.timeframes, AnalyticsTimeframe.allCases)
+        XCTAssertEqual(viewModel.totalsCells.first { $0.id == "messages" }?.value, "1,234")
+    }
+
+    /// Without a sessions fallback, a failed read is the screen's error, never zeros or the
+    /// previous window's figures, and picking another window from there loads it.
+    @MainActor
+    func testWithoutASessionsFallbackAFailedReadIsTheError() async throws {
+        let client = StubInsightsClient(
+            insightsResult: .success(try decodeInsights(#"{"period_days": 30, "total_sessions": 5, "total_tokens": 350}"#)),
+            sessionsResult: .success(SessionsResponse(sessions: [], cliCount: nil, archivedCount: nil, serverTime: nil, serverTz: nil)),
+            features: .hermes
+        )
+        let viewModel = InsightsViewModel(client: client)
+        await viewModel.load()
+        XCTAssertTrue(viewModel.hasLoadedAnalytics)
+
+        client.insightsResult = .failure(StubInsightsError())
+        viewModel.selectedTimeframe = .last7Days
+        await viewModel.load()
+
+        XCTAssertEqual(client.requestedDays, [30, 7])
+        XCTAssertEqual(client.sessionsRequests, 0)
+        XCTAssertEqual(viewModel.errorMessage, "Server insights unavailable")
+        XCTAssertFalse(viewModel.hasLoadedAnalytics, "The error replaces the 30-day figures")
+        XCTAssertNotNil(viewModel.lastError)
+
+        client.insightsResult = .success(try decodeInsights(#"{"period_days": 90, "total_sessions": 9, "total_tokens": 900}"#))
+        viewModel.selectedTimeframe = .last90Days
+        await viewModel.load()
+
+        XCTAssertEqual(client.requestedDays, [30, 7, 90])
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.loadedTimeframe, .last90Days)
+        XCTAssertEqual(viewModel.sessionCount, 9)
+    }
+
+    @MainActor
+    private func loadedViewModel(timeframe: AnalyticsTimeframe, json: String) async throws -> InsightsViewModel {
+        let client = StubInsightsClient(
+            insightsResult: .success(try decodeInsights(json)),
+            sessionsResult: .failure(StubInsightsError())
+        )
+        let viewModel = InsightsViewModel(client: client)
+        viewModel.selectedTimeframe = timeframe
+        await viewModel.load()
+        return viewModel
+    }
+
+    private func decodeSessions(_ objects: [String]) throws -> [SessionSummary] {
+        let json = "[\(objects.joined(separator: ","))]"
+        return try JSONDecoder().decode([SessionSummary].self, from: Data(json.utf8))
+    }
+
+    private func decodeInsights(_ json: String) throws -> InsightsResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(InsightsResponse.self, from: Data(json.utf8))
+    }
+
+    private func sessionJSON(
+        title: String,
+        createdAt: Double? = 1_800_000_000,
+        updatedAt: Double? = nil,
+        lastMessageAt: Double? = nil,
+        messageCount: Int? = nil,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        estimatedCost: Double? = nil
+    ) -> String {
+        var fields = [
+            #""sessionId":"\#(UUID().uuidString)""#,
+            #""title":"\#(title)""#
+        ]
+
+        append("createdAt", createdAt, to: &fields)
+        append("updatedAt", updatedAt, to: &fields)
+        append("lastMessageAt", lastMessageAt, to: &fields)
+        append("messageCount", messageCount, to: &fields)
+        append("inputTokens", inputTokens, to: &fields)
+        append("outputTokens", outputTokens, to: &fields)
+        append("estimatedCost", estimatedCost, to: &fields)
+
+        return "{\(fields.joined(separator: ","))}"
+    }
+
+    private func append(_ key: String, _ value: Double?, to fields: inout [String]) {
+        guard let value else { return }
+        fields.append(#""\#(key)":\#(value)"#)
+    }
+
+    private func append(_ key: String, _ value: Int?, to fields: inout [String]) {
+        guard let value else { return }
+        fields.append(#""\#(key)":\#(value)"#)
+    }
+}
+
+@MainActor
+private final class StubInsightsClient: InsightsDataClient {
+    var insightsResult: Result<InsightsResponse, Error>
+    private let sessionsResult: Result<SessionsResponse, Error>
+    nonisolated let insightsFeatures: InsightsFeatures
+    private(set) var requestedDays: [Int] = []
+    private(set) var sessionsRequests = 0
+
+    init(insightsResult: Result<InsightsResponse, Error>, sessionsResult: Result<SessionsResponse, Error>,
+         features: InsightsFeatures = .webui) {
+        self.insightsResult = insightsResult
+        self.sessionsResult = sessionsResult
+        insightsFeatures = features
+    }
+
+    func insights(days: Int) async throws -> InsightsResponse {
+        requestedDays.append(days)
+        return try insightsResult.get()
+    }
+
+    func sessions() async throws -> SessionsResponse {
+        sessionsRequests += 1
+        return try sessionsResult.get()
+    }
+
+    func providers() async throws -> ProvidersResponse {
+        throw StubInsightsError()
+    }
+
+    func providerQuota(provider: String, refresh: Bool) async throws -> ProviderQuotaResponse {
+        throw StubInsightsError()
+    }
+}
+
+private struct StubInsightsError: LocalizedError {
+    var errorDescription: String? {
+        "Server insights unavailable"
+    }
+}
+
+@MainActor
+private final class DelayedInsightsClient: InsightsDataClient {
+    nonisolated var insightsFeatures: InsightsFeatures { .webui }
+    private var firstResponse: InsightsResponse?
+    private var pendingContinuation: CheckedContinuation<InsightsResponse, Error>?
+
+    init(firstResponse: InsightsResponse) {
+        self.firstResponse = firstResponse
+    }
+
+    func insights(days: Int) async throws -> InsightsResponse {
+        if let response = firstResponse {
+            firstResponse = nil
+            return response
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingContinuation = continuation
+        }
+    }
+
+    func sessions() async throws -> SessionsResponse {
+        throw StubInsightsError()
+    }
+
+    func providers() async throws -> ProvidersResponse {
+        throw StubInsightsError()
+    }
+
+    func providerQuota(provider: String, refresh: Bool) async throws -> ProviderQuotaResponse {
+        throw StubInsightsError()
+    }
+
+    func waitForPendingRequest() async {
+        while pendingContinuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func completePendingRequest(with result: Result<InsightsResponse, Error>) {
+        pendingContinuation?.resume(with: result)
+        pendingContinuation = nil
+    }
+}

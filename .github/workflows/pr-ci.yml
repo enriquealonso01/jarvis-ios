@@ -1,0 +1,249 @@
+# Contributor CI: build and run the full XCTest suite on every pull request
+# that touches app code, then check the build's extracted UI strings against
+# the String Catalog (ci/check_string_catalog.py). Pushes to master run the
+# full suite too: PRs need not be up to date to merge, so two green PRs can
+# still break master together. PRs limited to docs
+# (markdown, docs/, community files) and local tooling (scripts/) skip the
+# macOS runner entirely. The tooling tests (scripts/tests, ci/) run on Linux for
+# every PR and push, so a tooling-only change still gets tested.
+#
+# The required branch-protection check is "CI Gate", not "Build and Test":
+# a skipped required check would block merges forever, so the gate always
+# runs and passes when the tooling tests passed and the suite either succeeded
+# or was legitimately skipped.
+#
+# Uses no repository secrets, so PRs from forks get green CI too.
+#
+# Code signing is disabled (CODE_SIGNING_ALLOWED=NO) — fine for compile/test
+# runs per TESTFLIGHT.md; the "simulator installs must be signed" rule applies
+# to manual simulator testing, not CI.
+
+name: PR CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# A newer push to a PR cancels its older run. A master run always finishes;
+# pushes that land meanwhile wait, and only the newest waiting one runs. Its
+# result covers every commit before it, so a burst of merges ends with one
+# result for the latest master rather than a queue of macOS runs.
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_ios: ${{ steps.filter.outputs.run_ios }}
+    steps:
+      - name: Classify changed files
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "Push to master — running the full suite."
+            echo "run_ios=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --paginate --jq '.[].filename')
+          echo "Changed files:"
+          echo "${files}"
+          # Fail closed: anything NOT on the allowlist triggers the full suite
+          # (including workflow, project, and config changes). scripts/ is
+          # local tooling that no build phase or iOS step calls (the tooling
+          # job only runs its tests); take it off the allowlist if that ever
+          # changes.
+          app_changes=$(echo "${files}" | grep -vE '^(docs/.*|scripts/.*|LICENSE|\.gitignore|\.github/ISSUE_TEMPLATE/.*|\.github/CODEOWNERS|\.github/dependabot\.yml|\.github/FUNDING\.yml|.*\.md)$' || true)
+          if [[ -n "${app_changes}" ]]; then
+            echo "App-affecting changes detected — running the full suite:"
+            echo "${app_changes}"
+            echo "run_ios=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Docs or scripts only — skipping the macOS runner."
+            echo "run_ios=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    name: Build and Test
+    needs: changes
+    if: needs.changes.outputs.run_ios == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 90
+
+    env:
+      PROJECT_PATH: HermesMobile.xcodeproj
+      SCHEME: HermesMobile
+      DERIVED_DATA_PATH: DerivedData
+      RESULT_BUNDLE_PATH: TestResults.xcresult
+      # The Xcode used locally and for release builds (DEVELOPMENT.md
+      # § Xcode version); update these pins deliberately. iOS 27 is the
+      # image's only runtime: CI skips iOS 26 rather than download one.
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      SIMULATOR_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-27-0
+      SIMULATOR_NAME: iPhone 17
+      CI_LOG_DIR: ci-logs
+      TEST_WORKER_COUNT: 1
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Verify Xcode
+        id: toolchain
+        run: |
+          set -euo pipefail
+          mkdir -p "${CI_LOG_DIR}"
+          {
+            if [[ ! -d "${DEVELOPER_DIR}" ]]; then
+              echo "Pinned Xcode is missing: ${DEVELOPER_DIR}" >&2
+              exit 1
+            fi
+            xcodebuild -version
+            xcrun --find simctl
+          } 2>&1 | tee "${CI_LOG_DIR}/toolchain.log"
+
+      - name: Select simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available --json > "${CI_LOG_DIR}/devices.json"
+          python3 - <<'PYTHON' 2>&1 | tee "${CI_LOG_DIR}/selection.log"
+          import json, os
+          from pathlib import Path
+
+          devices = json.loads(Path(os.environ["CI_LOG_DIR"], "devices.json").read_text())["devices"]
+          runtime = os.environ["SIMULATOR_RUNTIME"]
+          name = os.environ["SIMULATOR_NAME"]
+          matches = [d for d in devices.get(runtime, []) if d.get("isAvailable") and d["name"] == name]
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one available {name} on {runtime}, found {len(matches)}. See devices.json; no fallback runtime is used.")
+          udid = matches[0]["udid"]
+          print(f"Using {name} on {runtime}: {udid}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"udid={udid}\n")
+          PYTHON
+
+      - name: Build for testing
+        id: build
+        env:
+          SIMULATOR_UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -euo pipefail
+          start_seconds=${SECONDS}
+          report_duration() {
+            echo "- Build for testing: $((SECONDS - start_seconds))s" >> "${GITHUB_STEP_SUMMARY}"
+          }
+          trap report_duration EXIT
+          xcodebuild build-for-testing \
+            -project "${PROJECT_PATH}" \
+            -scheme "${SCHEME}" \
+            -destination "platform=iOS Simulator,id=${SIMULATOR_UDID}" \
+            -derivedDataPath "${DERIVED_DATA_PATH}" \
+            -disableAutomaticPackageResolution \
+            -showBuildTimingSummary \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "${CI_LOG_DIR}/build.log"
+
+      - name: Test without building
+        id: tests
+        # Bound worker clone/boot and suite execution, leaving time for diagnostics.
+        timeout-minutes: 30
+        env:
+          SIMULATOR_UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -euo pipefail
+          start_seconds=${SECONDS}
+          report_duration() {
+            echo "- Tests (one worker): $((SECONDS - start_seconds))s" >> "${GITHUB_STEP_SUMMARY}"
+          }
+          trap report_duration EXIT
+          xcodebuild test-without-building \
+            -project "${PROJECT_PATH}" \
+            -scheme "${SCHEME}" \
+            -destination "platform=iOS Simulator,id=${SIMULATOR_UDID}" \
+            -derivedDataPath "${DERIVED_DATA_PATH}" \
+            -resultBundlePath "${RESULT_BUNDLE_PATH}" \
+            -disableAutomaticPackageResolution \
+            -parallel-testing-enabled YES \
+            -parallel-testing-worker-count "${TEST_WORKER_COUNT}" \
+            -collect-test-diagnostics never \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "${CI_LOG_DIR}/tests.log"
+
+      - name: Check String Catalog coverage
+        # Reads the .stringsdata the build step already wrote; no extra build.
+        # Runs after failed tests too, so a flake can't hide a missing key,
+        # but only when the build succeeded and its output exists.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 ci/check_string_catalog.py --derived-data "${DERIVED_DATA_PATH}"
+
+      - name: Report results
+        if: always()
+        continue-on-error: true
+        env:
+          TOOLCHAIN_OUTCOME: ${{ steps.toolchain.outcome }}
+          SELECTION_OUTCOME: ${{ steps.sim.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+        run: python3 ci/report_test_results.py
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: |
+            ${{ env.RESULT_BUNDLE_PATH }}
+            ${{ env.CI_LOG_DIR }}
+          if-no-files-found: ignore
+
+  tooling:
+    name: Tooling Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Run tooling tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/tests
+          python3 -m unittest discover -s ci -p 'test_*.py'
+          ruby ci/select_testflight_build_number_test.rb
+
+  gate:
+    name: CI Gate
+    needs: [changes, test, tooling]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        run: |
+          set -euo pipefail
+          echo "changes: ${{ needs.changes.result }}"
+          echo "test: ${{ needs.test.result }}"
+          echo "tooling: ${{ needs.tooling.result }}"
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "Path detection failed — failing the gate." >&2
+            exit 1
+          fi
+          if [[ "${{ needs.tooling.result }}" != "success" ]]; then
+            echo "Tooling tests did not pass — failing the gate." >&2
+            exit 1
+          fi
+          case "${{ needs.test.result }}" in
+            success|skipped) echo "Gate passed." ;;
+            *) echo "Build and Test did not pass — failing the gate." >&2; exit 1 ;;
+          esac

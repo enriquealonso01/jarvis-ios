@@ -1,0 +1,112 @@
+import Foundation
+import SwiftData
+
+enum CachePolicy {
+    static let ttl: TimeInterval = 7 * 24 * 60 * 60
+    static let maxMessages = 5_000
+    /// How stale an unchanged cached message may get before a window write
+    /// bumps its `cachedAt`/`expiresAt` again (see `CachedMessage.refresh`).
+    static let rowRefreshInterval: TimeInterval = 60 * 60
+}
+
+@Model
+final class CachedSession {
+    @Attribute(.unique) var cacheKey: String
+    var serverURLString: String
+    var sessionID: String
+    var title: String?
+    var workspace: String?
+    var model: String?
+    var modelProvider: String?
+    var messageCount: Int?
+    var createdAt: Double?
+    var updatedAt: Double?
+    var lastMessageAt: Double?
+    var pinned: Bool?
+    var archived: Bool?
+    var projectId: String?
+    var profile: String?
+    var inputTokens: Int?
+    var outputTokens: Int?
+    var estimatedCost: Double?
+    var activeStreamId: String?
+    var isStreaming: Bool?
+    var isCliSession: Bool?
+    var userMessageCount: Int?
+    var hasPendingUserMessage: Bool?
+    var pendingStartedAt: Double?
+    var worktreePath: String?
+    var sourceTag: String?
+    var rawSource: String?
+    var sessionSource: String?
+    var sourceLabel: String?
+    var parentSessionId: String?
+    var relationshipType: String?
+    var readOnly: Bool?
+    var isReadOnly: Bool?
+    /// A Hermes row's identity across a legacy compression chain (#1054), which `sessionID`'s
+    /// tip opens. Nil on a webui row. These three were added after the initial schema, so
+    /// SwiftData migrates them as nullable columns on existing stores.
+    var lineageRoot: String?
+    /// The Hermes host's read mark.
+    var unread: Bool?
+    /// The first prompt, as an untitled Hermes row shows it.
+    var preview: String?
+    var cachedAt: Date
+    var expiresAt: Date
+
+    /// `cacheKey` is a Hermes row's (`CacheStore.hermesSessionKey`); a webui row's is derived.
+    init(serverURLString: String, session: SessionSummary, cacheKey: String? = nil, cachedAt: Date = Date()) {
+        let sessionID = session.sessionId ?? session.id
+        self.cacheKey = cacheKey ?? Self.cacheKey(serverURLString: serverURLString, sessionID: sessionID)
+        self.serverURLString = serverURLString
+        self.sessionID = sessionID
+        self.cachedAt = cachedAt
+        self.expiresAt = cachedAt.addingTimeInterval(CachePolicy.ttl)
+        apply(session, cachedAt: cachedAt)
+    }
+
+    static func cacheKey(serverURLString: String, sessionID: String) -> String {
+        "\(serverURLString)|session|\(sessionID)"
+    }
+
+    func apply(_ session: SessionSummary, cachedAt: Date = Date()) {
+        // A Hermes row keeps its key, its lineage root, while its tip can move.
+        if let tip = session.sessionId { sessionID = tip }
+        title = session.title
+        workspace = session.workspace
+        model = session.model
+        modelProvider = session.modelProvider
+        messageCount = session.messageCount
+        createdAt = session.createdAt
+        updatedAt = session.updatedAt
+        lastMessageAt = session.lastMessageAt
+        pinned = session.pinned
+        archived = session.archived
+        projectId = session.projectId
+        profile = session.profile
+        inputTokens = session.inputTokens
+        outputTokens = session.outputTokens
+        estimatedCost = session.estimatedCost
+        activeStreamId = session.activeStreamId
+        isStreaming = session.isStreaming
+        isCliSession = session.isCliSession
+        userMessageCount = session.userMessageCount
+        hasPendingUserMessage = session.hasPendingUserMessage
+        pendingStartedAt = session.pendingStartedAt
+        worktreePath = session.worktreePath
+        sourceTag = session.sourceTag
+        rawSource = session.rawSource
+        sessionSource = session.sessionSource
+        sourceLabel = session.sourceLabel
+        parentSessionId = session.parentSessionId
+        relationshipType = session.relationshipType
+        readOnly = session.readOnly
+        isReadOnly = session.isReadOnly
+        lineageRoot = session.hermes?.lineageRoot
+        unread = session.hermes?.unread
+        preview = session.hermes?.preview
+        self.cachedAt = cachedAt
+        expiresAt = cachedAt.addingTimeInterval(CachePolicy.ttl)
+    }
+}

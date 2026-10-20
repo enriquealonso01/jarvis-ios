@@ -1,0 +1,381 @@
+import XCTest
+import AVFoundation
+import ImageIO
+import SwiftData
+import UIKit
+import UniformTypeIdentifiers
+@testable import HermesMobile
+
+final class APIClientAuthAndErrorTests: APIClientTestCase {
+    func testOnboardingPasswordValidationOnlyRequiresKnownAuthEnabledPassword() {
+        XCTAssertEqual(
+            OnboardingViewModel.passwordValidationMessage(
+                authStatus: AuthStatusResponse(authEnabled: true, loggedIn: false),
+                password: " \n "
+            ),
+            OnboardingViewModel.emptyPasswordMessage
+        )
+        XCTAssertNil(
+            OnboardingViewModel.passwordValidationMessage(
+                authStatus: AuthStatusResponse(authEnabled: true, loggedIn: false),
+                password: "secret"
+            )
+        )
+        XCTAssertNil(
+            OnboardingViewModel.passwordValidationMessage(
+                authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false),
+                password: ""
+            )
+        )
+        XCTAssertNil(OnboardingViewModel.passwordValidationMessage(authStatus: nil, password: ""))
+    }
+
+    @MainActor
+    func testAuthManagerConnectsToNoPasswordTailscaleServerWithoutLogin() async throws {
+        let keychain = InMemoryKeychainStore()
+        let client = MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false))
+        var requestedURLs: [URL] = []
+        let manager = AuthManager(
+            keychain: keychain,
+            clientFactory: { url in
+                requestedURLs.append(url)
+                return client
+            },
+            serverRegistry: ServerRegistry.inMemory()
+        )
+
+        await manager.configure(serverURLString: "100.96.12.34:9119", password: "")
+
+        let expectedURL = try XCTUnwrap(URL(string: "http://100.96.12.34:9119"))
+        XCTAssertEqual(requestedURLs, [expectedURL])
+        XCTAssertEqual(client.loginPasswords, [])
+        XCTAssertEqual(keychain.savedValues[.serverURL], expectedURL.absoluteString)
+        XCTAssertEqual(manager.state, .loggedIn(server: expectedURL))
+        XCTAssertNil(manager.lastErrorMessage)
+    }
+
+    func testServerURLNormalizationDropsAccidentalWWWBeforeWebUISubdomain() throws {
+        XCTAssertEqual(
+            try AuthManager.normalizedServerURL(from: "https://www.webui.example.test"),
+            URL(string: "https://webui.example.test")
+        )
+        XCTAssertEqual(
+            try AuthManager.normalizedServerURL(from: "www.webui.example.test"),
+            URL(string: "https://webui.example.test")
+        )
+        XCTAssertEqual(
+            try AuthManager.normalizedServerURL(from: "https://www.example.com"),
+            URL(string: "https://www.example.com")
+        )
+    }
+
+    @MainActor
+    func testAuthManagerPreservesPasswordRequiredEmptyPasswordBehavior() async throws {
+        let keychain = InMemoryKeychainStore()
+        let client = MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: true, loggedIn: false))
+        let manager = AuthManager(
+            keychain: keychain,
+            clientFactory: { _ in client },
+            serverRegistry: ServerRegistry.inMemory()
+        )
+
+        await manager.configure(serverURLString: "https://example.test", password: "")
+
+        XCTAssertEqual(client.loginPasswords, [])
+        XCTAssertNil(keychain.savedValues[.serverURL])
+        XCTAssertEqual(manager.state, .unconfigured)
+        XCTAssertEqual(manager.lastErrorMessage, OnboardingViewModel.emptyPasswordMessage)
+    }
+
+    @MainActor
+    func testAuthManagerLogsInWhenPasswordIsRequired() async throws {
+        let keychain = InMemoryKeychainStore()
+        let client = MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: true, loggedIn: false))
+        let manager = AuthManager(
+            keychain: keychain,
+            clientFactory: { _ in client },
+            serverRegistry: ServerRegistry.inMemory()
+        )
+
+        await manager.configure(serverURLString: "https://example.test", password: "secret")
+
+        let expectedURL = try XCTUnwrap(URL(string: "https://example.test"))
+        XCTAssertEqual(client.loginPasswords, ["secret"])
+        XCTAssertEqual(keychain.savedValues[.serverURL], expectedURL.absoluteString)
+        XCTAssertEqual(manager.state, .loggedIn(server: expectedURL))
+        XCTAssertNil(manager.lastErrorMessage)
+    }
+
+    func testUnauthorizedResponseThrowsUnauthorized() async {
+        let client = makeClient { request in
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 401,
+                httpVersion: nil,
+                headerFields: nil
+            )
+            return (try XCTUnwrap(response), Data())
+        }
+
+        do {
+            _ = try await client.sessions()
+            XCTFail("Expected unauthorized error")
+        } catch APIError.unauthorized {
+            // Expected path.
+        } catch {
+            XCTFail("Expected unauthorized error, got \(error)")
+        }
+    }
+
+    func testVanishedSessionResponseUsesRecoveryMessage() async throws {
+        let client = makeClient { request in
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 404,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )
+            let body = Data(#"{"error":"Session not found"}"#.utf8)
+            return (try XCTUnwrap(response), body)
+        }
+
+        do {
+            _ = try await client.session(id: "missing-session")
+            XCTFail("Expected vanished-session HTTP error")
+        } catch let APIError.http(statusCode, body) {
+            XCTAssertEqual(statusCode, 404)
+            XCTAssertEqual(body, #"{"error":"Session not found"}"#)
+            XCTAssertEqual(
+                APIError.http(statusCode: statusCode, body: body).localizedDescription,
+                "That session no longer exists on the server. Reopen another session or create a new one."
+            )
+        } catch {
+            XCTFail("Expected vanished-session HTTP error, got \(error)")
+        }
+    }
+
+    func testCloudflareErrorDoesNotExposeRawHTMLBody() async throws {
+        let client = makeClient { request in
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 502,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/html"]
+            )
+            let body = Data("<html><title>Bad gateway</title><body>cloudflare</body></html>".utf8)
+            return (try XCTUnwrap(response), body)
+        }
+
+        do {
+            _ = try await client.sessions()
+            XCTFail("Expected HTTP error")
+        } catch let APIError.http(statusCode, body) {
+            let message = APIError.http(statusCode: statusCode, body: body).localizedDescription
+            XCTAssertEqual(
+                message,
+                "Could not connect to the server. Check that hermes-webui is running and the tunnel is connected."
+            )
+            XCTAssertFalse(message.contains("<html>"))
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("bad gateway"))
+        } catch {
+            XCTFail("Expected HTTP error, got \(error)")
+        }
+    }
+
+    // MARK: - HTTP 403 (issue #333)
+
+    func testForbiddenChatStartSurfacesServerReasonInsteadOfPasswordCopy() async throws {
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/start")
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 403,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )
+            let body = Data(#"{"error":"Read-only imported sessions cannot be continued from WebUI"}"#.utf8)
+            return (try XCTUnwrap(response), body)
+        }
+
+        do {
+            _ = try await client.startChat(
+                sessionID: "20260831_041231_abc",
+                message: "hello",
+                workspace: nil,
+                model: nil
+            )
+            XCTFail("Expected HTTP 403 error")
+        } catch let error as APIError {
+            XCTAssertEqual(
+                error.localizedDescription,
+                "The server refused the request: Read-only imported sessions cannot be continued from WebUI"
+            )
+            XCTAssertFalse(error.localizedDescription.localizedCaseInsensitiveContains("password"))
+            XCTAssertEqual(error.privacySafeLogCategory, "http.403")
+        } catch {
+            XCTFail("Expected APIError, got \(error)")
+        }
+    }
+
+    func testForbiddenSurfacesMessageAndDetailPayloadShapes() {
+        XCTAssertEqual(
+            APIError.http(statusCode: 403, body: #"{"message":"Workspace is locked"}"#).localizedDescription,
+            "The server refused the request: Workspace is locked"
+        )
+        XCTAssertEqual(
+            APIError.http(statusCode: 403, body: #"{"detail":"Not permitted"}"#).localizedDescription,
+            "The server refused the request: Not permitted"
+        )
+    }
+
+    func testForbiddenWithoutStructuredBodyUsesGenericFallback() {
+        let fallback = "The server refused the request. Check the server permissions and try again."
+        let bodies: [String?] = [
+            nil,
+            "",
+            "   ",
+            "not json",
+            #"{"error":""}"#,
+            "<html><title>Forbidden</title><body>cloudflare access denied</body></html>",
+        ]
+
+        for body in bodies {
+            let message = APIError.http(statusCode: 403, body: body).localizedDescription
+            XCTAssertEqual(message, fallback, "body: \(String(describing: body))")
+            XCTAssertFalse(message.contains("<"))
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("password"))
+        }
+    }
+
+    func testDisplayedServerMessageIsBoundedAcrossHTTPBranches() {
+        let long = String(repeating: "x", count: 500)
+        let body = #"{"error":"\#(long)"}"#
+        let clipped = String(repeating: "x", count: 200) + "…"
+
+        XCTAssertEqual(
+            APIError.http(statusCode: 403, body: body).localizedDescription,
+            "The server refused the request: \(clipped)"
+        )
+        XCTAssertEqual(
+            APIError.http(statusCode: 400, body: body).localizedDescription,
+            "The server rejected the request: \(clipped)"
+        )
+        XCTAssertEqual(
+            APIError.http(statusCode: 418, body: body).localizedDescription,
+            "Server returned HTTP 418: \(clipped)"
+        )
+        // The raw body is still available to callers that inspect it programmatically.
+        XCTAssertEqual(APIError.http(statusCode: 403, body: body).serverMessage, long)
+    }
+
+    // MARK: - Durable compression continuation
+
+    func testSessionRotationRequiresExactConflictContractAndValidID() {
+        let body = #"{"code":"session_rotated","continuation_session_id":"20261008-abc_def","future":{"x":1}}"#
+        XCTAssertEqual(APIError.http(statusCode: 409, body: body).sessionRotation?.continuationSessionID,
+                       "20261008-abc_def")
+        for status in [200, 400, 404, 500] {
+            XCTAssertNil(APIError.http(statusCode: status, body: body).sessionRotation)
+        }
+        for invalid in [
+            "not json", "{}",
+            #"{"code":"session_profile_mismatch","continuation_session_id":"next"}"#,
+            #"{"continuation_session_id":"next"}"#,
+            #"{"code":"session_rotated"}"#,
+            #"{"code":"session_rotated","continuation_session_id":null}"#,
+            #"{"code":"session_rotated","continuation_session_id":42}"#,
+            #"{"code":"session_rotated","continuation_session_id":{}}"#,
+            #"{"code":"session_rotated","continuation_session_id":""}"#,
+            #"{"code":"session_rotated","continuation_session_id":" next "}"#,
+            #"{"code":"session_rotated","continuation_session_id":"next\nchat"}"#,
+            #"{"code":"session_rotated","continuation_session_id":"../next"}"#,
+            #"{"code":"session_rotated","continuation_session_id":"https://other.test"}"#
+        ] {
+            XCTAssertNil(APIError.http(statusCode: 409, body: invalid).sessionRotation, invalid)
+        }
+    }
+
+    func testMalformedContinuationDoesNotHideExistingErrorMetadata() {
+        let error = APIError.http(statusCode: 409, body:
+            #"{"error":"Already running","active_stream_id":"stream-1","continuation_session_id":42}"#)
+        XCTAssertNil(error.sessionRotation)
+        XCTAssertEqual(error.activeStreamID, "stream-1")
+        XCTAssertEqual(error.serverMessage, "Already running")
+        XCTAssertEqual(error.privacySafeLogCategory, "http.409")
+    }
+
+    // MARK: - HTTP 409 agent_runtime_stale (issue #955)
+
+    /// hermes-webui's `agent_runtime_stale_payload`, plus a field it might add later.
+    private func staleRuntimeBody(updateState: String?) -> String {
+        let state = updateState.map { #", "agent_update_state": "\#($0)""# } ?? ""
+        return #"{"error": "Hermes Agent was updated while Hermes WebUI was running. WebUI cannot verify that the Agent update completed safely. Check the Agent update outcome and environment first. Restart Hermes WebUI manually before retrying this action.", "type": "agent_runtime_stale", "retryable": true, "restart_scheduled": false, "future_field": {"nested": [1]}\#(state)}"#
+    }
+
+    func testStaleAgentRuntimeConflictUsesRestartCopy() {
+        let updated = "Hermes was updated on your server. Restart Hermes WebUI there, then try again."
+        for state in [nil, "stale", "unverified", "unknown", "some_future_state"] {
+            let error = APIError.http(statusCode: 409, body: staleRuntimeBody(updateState: state))
+            XCTAssertEqual(error.localizedDescription, updated, "agent_update_state: \(String(describing: state))")
+            XCTAssertEqual(error.agentRuntimeStale, .updated, "agent_update_state: \(String(describing: state))")
+        }
+
+        let updating = APIError.http(statusCode: 409, body: staleRuntimeBody(updateState: "active"))
+        XCTAssertEqual(
+            updating.localizedDescription,
+            "Hermes is still updating on your server. Wait for it to finish, restart Hermes WebUI, then try again."
+        )
+        // While the update runs the fix is to wait, so chat offers no prompt.
+        XCTAssertEqual(updating.agentRuntimeStale, .updating)
+        XCTAssertNil(AgentRuntimeStale.updating.fixPrompt)
+
+        let incomplete = APIError.http(statusCode: 409, body: staleRuntimeBody(updateState: "incomplete"))
+        XCTAssertEqual(
+            incomplete.localizedDescription,
+            "A Hermes update on your server didn't finish. Check it, restart Hermes WebUI, then try again."
+        )
+        XCTAssertEqual(incomplete.agentRuntimeStale, .incomplete)
+    }
+
+    func testOtherConflictsKeepServerCopy() {
+        XCTAssertEqual(
+            APIError.http(
+                statusCode: 409,
+                body: #"{"ok": false, "error": "Approval prompt expired or not found.", "stale": true}"#
+            ).localizedDescription,
+            "Server returned HTTP 409: Approval prompt expired or not found."
+        )
+        XCTAssertEqual(
+            APIError.http(
+                statusCode: 409,
+                body: #"{"error": "Session belongs to a different profile", "code": "session_profile_mismatch", "profile": "work"}"#
+            ).localizedDescription,
+            "Server returned HTTP 409: Session belongs to a different profile"
+        )
+        XCTAssertNil(APIError.http(statusCode: 409, body: #"{"stale": true}"#).agentRuntimeStale)
+        // A `type` of another shape never hides the fields read before #955.
+        let oddType = APIError.http(
+            statusCode: 409,
+            body: #"{"error": "A response is already running", "active_stream_id": "stream-1", "type": {"kind": 1}}"#
+        )
+        XCTAssertEqual(oddType.localizedDescription, "Server returned HTTP 409: A response is already running")
+        XCTAssertEqual(oddType.activeStreamID, "stream-1")
+        XCTAssertNil(oddType.agentRuntimeStale)
+        // The type only means a stale runtime on the 409 the server sends it with.
+        XCTAssertNil(APIError.http(statusCode: 400, body: staleRuntimeBody(updateState: nil)).agentRuntimeStale)
+    }
+
+    func testHTTPErrorPrivacySafeLogCategoryDoesNotExposeServerBody() {
+        let error = APIError.http(
+            statusCode: 400,
+            body: #"{"error":"password=secret prompt=private raw response"}"#
+        )
+
+        let category = error.privacySafeLogCategory
+
+        XCTAssertEqual(category, "http.400")
+        XCTAssertFalse(category.contains("secret"))
+        XCTAssertFalse(category.contains("private"))
+        XCTAssertFalse(category.contains("raw response"))
+    }
+}

@@ -1,0 +1,622 @@
+import Foundation
+import Observation
+
+/// Sendable because quota probes run concurrently in a task group: the client
+/// is handed to child tasks off the main actor. A webui server's is its `APIClient`;
+/// a Hermes host's is `HermesInsightsClient` (#1074).
+protocol InsightsDataClient: Sendable {
+    /// What this server's insights report, which decides what the Usage screen offers.
+    var insightsFeatures: InsightsFeatures { get }
+    func sessions() async throws -> SessionsResponse
+    func insights(days: Int) async throws -> InsightsResponse
+    func providers() async throws -> ProvidersResponse
+    func providerQuota(provider: String, refresh: Bool) async throws -> ProviderQuotaResponse
+}
+
+extension APIClient: InsightsDataClient {
+    nonisolated var insightsFeatures: InsightsFeatures { .webui }
+}
+
+/// What one server's insights can report.
+struct InsightsFeatures: Equatable, Sendable {
+    /// The windows the picker offers. Today is the only hourly one.
+    let timeframes: [AnalyticsTimeframe]
+    /// Message counts cover only part of the window, so the totals mark them "≈".
+    let approximatesMessages: Bool
+    /// A failed insights read is rebuilt from `/api/sessions`, which is also the only source of
+    /// top sessions. Without it, the failure is the screen's error.
+    let fallsBackToSessions: Bool
+
+    static let webui = InsightsFeatures(timeframes: AnalyticsTimeframe.allCases, approximatesMessages: false,
+                                        fallsBackToSessions: true)
+    /// A Hermes host (#1074) reports no hours, counts messages over at most its newest 500 visible
+    /// sessions (`insights.get`), and has no sessions list here.
+    static let hermes = InsightsFeatures(timeframes: [.last7Days, .last30Days, .last90Days], approximatesMessages: true,
+                                         fallsBackToSessions: false)
+}
+
+/// The windows the Usage screen offers. Each maps to a `days` value the insights
+/// handler clamps to 1-365, and to a matching local filter for the session
+/// metadata fallback.
+enum AnalyticsTimeframe: String, CaseIterable, Identifiable {
+    case today
+    case last7Days
+    case last30Days
+    case last90Days
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .today:
+            // "Today", not "24h": the handler's days=1 means midnight-to-now,
+            // and the local fallback filters on the same calendar day to match.
+            String(localized: "Today")
+        case .last7Days:
+            String(localized: "7 days")
+        case .last30Days:
+            String(localized: "30 days")
+        case .last90Days:
+            String(localized: "90 days")
+        }
+    }
+
+    var serverDays: Int {
+        switch self {
+        case .today:
+            1
+        case .last7Days:
+            7
+        case .last30Days:
+            30
+        case .last90Days:
+            90
+        }
+    }
+
+    /// True when the window plots hours rather than days. The server reports
+    /// session counts per hour and nothing else, so this window has no metric.
+    var isHourly: Bool {
+        self == .today
+    }
+
+    func contains(_ session: SessionSummary, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let timestamp = session.analyticsTimestamp else {
+            return false
+        }
+
+        let sessionDate = Date(timeIntervalSince1970: timestamp)
+
+        switch self {
+        case .today:
+            return calendar.isDate(sessionDate, inSameDayAs: now)
+        case .last7Days, .last30Days, .last90Days:
+            let earliest = calendar.date(byAdding: .day, value: -serverDays, to: now) ?? now
+            return sessionDate >= earliest && sessionDate <= now
+        }
+    }
+}
+
+struct SessionUsageAnalytics {
+    let sessions: [SessionSummary]
+
+    var totalInputTokens: Int {
+        sessions.compactMap { $0.inputTokens }.reduce(0, +)
+    }
+
+    var totalOutputTokens: Int {
+        sessions.compactMap { $0.outputTokens }.reduce(0, +)
+    }
+
+    var totalTokens: Int {
+        totalInputTokens + totalOutputTokens
+    }
+
+    var totalMessages: Int {
+        sessions.compactMap { $0.messageCount }.reduce(0, +)
+    }
+
+    var estimatedCost: Double {
+        sessions.compactMap { $0.estimatedCost }.reduce(0, +)
+    }
+
+    var sessionCount: Int {
+        sessions.count
+    }
+
+    var topSessions: [SessionSummary] {
+        sessions.sorted {
+            let leftTotal = ($0.inputTokens ?? 0) + ($0.outputTokens ?? 0)
+            let rightTotal = ($1.inputTokens ?? 0) + ($1.outputTokens ?? 0)
+            return leftTotal > rightTotal
+        }
+    }
+}
+
+enum InsightsDataSource: Equatable {
+    case server
+    case localFallback
+    case local
+}
+
+@MainActor
+@Observable
+final class InsightsViewModel {
+    private(set) var sessions: [SessionSummary] = []
+    private(set) var serverInsights: InsightsResponse?
+    var selectedTimeframe: AnalyticsTimeframe = .last30Days
+    private(set) var loadedTimeframe: AnalyticsTimeframe = .last30Days
+    private(set) var isLoading = false
+    private(set) var errorMessage: String?
+    private(set) var lastError: Error?
+    private(set) var dataSource: InsightsDataSource = .local
+    private(set) var fallbackReason: String?
+    /// The provider quota cards above the window picker (#415). Empty until a
+    /// provider qualifies, and empty again the moment one stops qualifying.
+    private(set) var limitCards: [ProviderLimitCard] = []
+    /// True only while quota probes for at least one candidate provider are in
+    /// flight. It exists so the Limits slot can be reserved before the answers
+    /// arrive instead of popping in and shoving the analytics down (#415), so a
+    /// server with no keyed provider must never set it.
+    private(set) var isLoadingLimits = false
+    private var activeLoadID: UUID?
+    /// Same generation guard as `ProvidersViewModel`: quota has three
+    /// overlapping entry points (`.task`, `.refreshable`, the toolbar button),
+    /// and a superseded probe must never overwrite a newer one's cards.
+    private var limitsGeneration = 0
+
+    private let client: any InsightsDataClient
+
+    init(client: any InsightsDataClient) {
+        self.client = client
+    }
+
+    func load() async {
+        let loadID = UUID()
+        let timeframe = selectedTimeframe
+        activeLoadID = loadID
+        isLoading = true
+        errorMessage = nil
+        lastError = nil
+        fallbackReason = nil
+        let hadLoadedAnalytics = hasLoadedAnalytics
+        defer {
+            if activeLoadID == loadID {
+                isLoading = false
+            }
+        }
+
+        do {
+            let response = try await client.insights(days: timeframe.serverDays)
+            guard activeLoadID == loadID, !Task.isCancelled else { return }
+
+            serverInsights = response
+            sessions = []
+            loadedTimeframe = timeframe
+            dataSource = .server
+        } catch is CancellationError {
+            return
+        } catch {
+            guard activeLoadID == loadID, !Task.isCancelled else { return }
+            lastError = error
+            guard features.fallsBackToSessions else {
+                // Nothing to rebuild the window from, and what is on screen is another window or
+                // unconfirmed: the failure replaces it.
+                serverInsights = nil
+                dataSource = .local
+                errorMessage = error.localizedDescription
+                return
+            }
+            fallbackReason = error.localizedDescription
+
+            do {
+                let response = try await client.sessions()
+                guard activeLoadID == loadID, !Task.isCancelled else { return }
+
+                serverInsights = nil
+                sessions = response.sessions ?? []
+                loadedTimeframe = timeframe
+                dataSource = .localFallback
+            } catch is CancellationError {
+                return
+            } catch {
+                guard activeLoadID == loadID, !Task.isCancelled else { return }
+                lastError = error
+                if hadLoadedAnalytics {
+                    fallbackReason = error.localizedDescription
+                } else {
+                    errorMessage = error.localizedDescription
+                    dataSource = .local
+                }
+            }
+        }
+    }
+
+    /// Loads the quota cards. Deliberately separate from `load()`: a cold
+    /// account-limits probe can take several seconds upstream, and the chart
+    /// must never wait on it.
+    ///
+    /// Every failure here is silent. Quota is a bonus panel, so a 404 on an
+    /// older server, a decode failure, or a dead provider hides the group
+    /// rather than putting an error over the analytics the user came for —
+    /// which is why this never touches `errorMessage` or `lastError`.
+    ///
+    /// `refresh` bypasses the server's 45 s probe cache and belongs only to the
+    /// toolbar button and pull-to-refresh.
+    func loadLimits(refresh: Bool = false) async {
+        limitsGeneration += 1
+        let generation = limitsGeneration
+        // The newest generation owns `isLoadingLimits`, and clears it on every
+        // way out — including the silent failures below. A superseded load
+        // leaves it alone so it cannot cancel the placeholder of the load that
+        // replaced it.
+        defer {
+            if generation == limitsGeneration {
+                isLoadingLimits = false
+            }
+        }
+
+        let selection: [String]
+        do {
+            selection = providerQuotaSelection(from: try await client.providers())
+        } catch {
+            // Nothing to correct the cards with — leave whatever is on screen.
+            return
+        }
+
+        guard generation == limitsGeneration, !Task.isCancelled else { return }
+        guard !selection.isEmpty else {
+            limitCards = []
+            return
+        }
+
+        isLoadingLimits = true
+
+        let fetchedAt = Date()
+        let cards = await withTaskGroup(of: (Int, ProviderLimitCard?).self) { group in
+            for (index, provider) in selection.enumerated() {
+                group.addTask { [client] in
+                    guard let response = try? await client.providerQuota(provider: provider, refresh: refresh) else {
+                        return (index, nil)
+                    }
+
+                    return (index, ProviderLimitCard(provider: provider, response: response, fetchedAt: fetchedAt))
+                }
+            }
+
+            var collected: [(Int, ProviderLimitCard)] = []
+            for await (index, card) in group {
+                if let card {
+                    collected.append((index, card))
+                }
+            }
+
+            // Selection order, not completion order: cards must not reshuffle
+            // because one provider answered faster this time.
+            return collected.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+
+        guard generation == limitsGeneration, !Task.isCancelled else { return }
+        limitCards = cards
+    }
+
+    /// What this server's insights report.
+    var features: InsightsFeatures {
+        client.insightsFeatures
+    }
+
+    /// The windows the picker offers.
+    var timeframes: [AnalyticsTimeframe] {
+        features.timeframes
+    }
+
+    // MARK: - Aggregates
+
+    var analytics: SessionUsageAnalytics {
+        SessionUsageAnalytics(sessions: filteredSessions)
+    }
+
+    var filteredSessions: [SessionSummary] {
+        sessions.filter { loadedTimeframe.contains($0) }
+    }
+
+    var totalInputTokens: Int {
+        serverInsights?.totalInputTokens ?? analytics.totalInputTokens
+    }
+
+    var totalOutputTokens: Int {
+        serverInsights?.totalOutputTokens ?? analytics.totalOutputTokens
+    }
+
+    var totalTokens: Int {
+        serverInsights?.totalTokens ?? analytics.totalTokens
+    }
+
+    var totalMessages: Int {
+        serverInsights?.totalMessages ?? analytics.totalMessages
+    }
+
+    var estimatedCost: Double {
+        serverInsights?.totalCost ?? analytics.estimatedCost
+    }
+
+    /// Cache stats only exist in server insights — nil hides the cards on
+    /// the local fallback and on older servers that don't report them (#24).
+    var totalCacheReadTokens: Int? {
+        serverInsights?.totalCacheReadTokens
+    }
+
+    var totalCacheHitPercent: Double? {
+        serverInsights?.totalCacheHitPercent
+    }
+
+    var sessionCount: Int {
+        serverInsights?.totalSessions ?? analytics.sessionCount
+    }
+
+    var hasLoadedAnalytics: Bool {
+        serverInsights != nil || dataSource == .localFallback
+    }
+
+    /// A re-fetch of something already on screen. The first load and a server
+    /// that never answers both render a placeholder instead, so neither can pin
+    /// the refresh spinner on.
+    var isRefreshing: Bool {
+        isLoading && hasLoadedAnalytics
+    }
+
+    /// Whether the Limits group has anything to occupy its slot: real cards, or
+    /// the placeholder standing in for a first load. False once a load settles
+    /// with nothing to show, which is how the group disappears again.
+    var showsLimits: Bool {
+        !limitCards.isEmpty || isLoadingLimits
+    }
+
+    var sourceDescription: String {
+        switch dataSource {
+        case .server:
+            return String(localized: "Source: server insights from the last \(periodDays) days.")
+        case .localFallback:
+            if let fallbackReason, !fallbackReason.isEmpty {
+                return String(localized: "Source: local session metadata fallback. Server insights failed: \(fallbackReason)")
+            }
+            return String(localized: "Source: local session metadata fallback.")
+        case .local:
+            return String(localized: "Source: local session metadata.")
+        }
+    }
+
+    var periodTitle: String {
+        loadedTimeframe.title
+    }
+
+    var periodDays: Int {
+        serverInsights?.periodDays ?? selectedTimeframe.serverDays
+    }
+
+    var modelBreakdowns: [InsightsModelBreakdown] {
+        serverInsights?.models ?? []
+    }
+
+    var activityByDay: [InsightsActivityByDay] {
+        serverInsights?.activityByDay ?? []
+    }
+
+    var activityByHour: [InsightsActivityByHour] {
+        serverInsights?.activityByHour ?? []
+    }
+
+    var peakDay: InsightsActivityByDay? {
+        activityByDay.max { ($0.sessions ?? 0) < ($1.sessions ?? 0) }
+    }
+
+    var peakHour: InsightsActivityByHour? {
+        activityByHour.max { ($0.sessions ?? 0) < ($1.sessions ?? 0) }
+    }
+
+    // MARK: - Chart
+
+    /// The metric the user picked, or nil while the screen is following the data.
+    private var chosenMetric: UsageMetric?
+
+    /// The hero and chart metric. A window the server prices at zero opens on
+    /// tokens rather than a confident $0.00, until the user says otherwise.
+    var metric: UsageMetric {
+        get { chosenMetric ?? (estimatedCost > 0 ? .cost : .tokens) }
+        set { chosenMetric = newValue }
+    }
+
+    /// Hidden on the hourly window, which has only one figure to show.
+    var showsMetricToggle: Bool {
+        !loadedTimeframe.isHourly
+    }
+
+    /// The bars for the loaded window: one per hour on the 24-hour window, one
+    /// per calendar day otherwise.
+    var chartBuckets: [UsageBucket] {
+        guard let serverInsights else { return [] }
+
+        if loadedTimeframe.isHourly {
+            return UsageBuckets.hourly(from: serverInsights.activityByHour ?? [])
+        }
+
+        return UsageBuckets.daily(
+            from: serverInsights.dailyTokens ?? [],
+            windowDays: periodDays
+        )
+    }
+
+    /// Daily rows regardless of window, so "per active day" means the same thing
+    /// on every screen.
+    private var dailyBuckets: [UsageBucket] {
+        guard let serverInsights else { return [] }
+        return UsageBuckets.daily(from: serverInsights.dailyTokens ?? [], windowDays: periodDays)
+    }
+
+    /// Days in the window that actually did something. Dividing by the window
+    /// length instead would quietly deflate every average.
+    var activeDayCount: Int {
+        dailyBuckets.filter(\.hasActivity).count
+    }
+
+    /// The window total, shown whenever the user is not dragging the chart.
+    var heroFigure: UsageHeroFigure {
+        if loadedTimeframe.isHourly {
+            return UsageHeroFigure(
+                label: String(localized: "Sessions"),
+                value: sessionCount.formatted(.number),
+                caption: String(localized: "Started or updated today.")
+            )
+        }
+
+        switch metric {
+        case .cost:
+            return UsageHeroFigure(
+                label: String(localized: "Estimated cost"),
+                value: usageFormattedCost(estimatedCost),
+                caption: String(localized: "Estimated by the server from session metadata.")
+            )
+        case .tokens:
+            // "Processed", not "total": this is the server's `total_tokens`,
+            // which excludes cache reads. The chart stacks those separately and
+            // the totals grid names them, so the two labels have to agree.
+            return UsageHeroFigure(
+                label: String(localized: "Processed tokens"),
+                value: usageFormattedTokens(totalTokens),
+                caption: String(localized: "Across \(String(localized: "\(sessionCount) sessions")).")
+            )
+        }
+    }
+
+    var chartAccessibilityLabel: String {
+        if loadedTimeframe.isHourly {
+            return String(localized: "Sessions per hour, \(loadedTimeframe.title)")
+        }
+
+        switch metric {
+        case .cost:
+            return String(localized: "Estimated cost per day, \(loadedTimeframe.title)")
+        case .tokens:
+            return String(localized: "Tokens per day, \(loadedTimeframe.title)")
+        }
+    }
+
+    /// The caption under the hourly chart, which plots something the metric
+    /// toggle cannot describe.
+    var hourlyChartNote: String? {
+        guard loadedTimeframe.isHourly else { return nil }
+        return String(localized: "Sessions per hour — the server does not report hourly tokens or cost.")
+    }
+
+    // MARK: - Totals
+
+    /// The two-up grid under the chart. Cache cells drop out entirely on servers
+    /// that do not report them (#24) and on the local fallback.
+    var totalsCells: [UsageTotalsCell] {
+        var cells: [UsageTotalsCell] = [
+            UsageTotalsCell(
+                id: "processedTokens",
+                label: String(localized: "Processed tokens"),
+                value: usageFormattedTokens(totalTokens),
+                detail: perActiveDayDetail
+            )
+        ]
+
+        if let cacheReadTokens = totalCacheReadTokens {
+            cells.append(UsageTotalsCell(
+                id: "cachedInput",
+                label: String(localized: "Cached input"),
+                value: usageFormattedTokens(cacheReadTokens),
+                detail: cachedInputDetail(cacheReadTokens: cacheReadTokens)
+            ))
+        }
+
+        if let cacheHitPercent = totalCacheHitPercent {
+            cells.append(UsageTotalsCell(
+                id: "cacheHitRate",
+                label: String(localized: "Cache hit rate"),
+                value: insightsFormattedPercent(cacheHitPercent),
+                detail: String(localized: "reported by the server")
+            ))
+        }
+
+        cells.append(UsageTotalsCell(
+            id: "input",
+            label: String(localized: "Input"),
+            value: usageFormattedTokens(totalInputTokens),
+            detail: String(localized: "uncached")
+        ))
+
+        cells.append(UsageTotalsCell(
+            id: "output",
+            label: String(localized: "Output"),
+            value: usageFormattedTokens(totalOutputTokens),
+            detail: nil
+        ))
+
+        cells.append(UsageTotalsCell(
+            id: "messages",
+            label: String(localized: "Messages"),
+            value: (features.approximatesMessages ? "≈" : "") + usageFormattedTokens(totalMessages),
+            detail: String(localized: "across \(String(localized: "\(sessionCount) sessions"))")
+        ))
+
+        if let peakDay, let day = peakDay.day, !day.isEmpty {
+            cells.append(UsageTotalsCell(
+                id: "busiestWeekday",
+                label: String(localized: "Busiest weekday"),
+                value: day,
+                detail: String(localized: "\(peakDay.sessions ?? 0) sessions")
+            ))
+        }
+
+        if let peakHour, let hour = peakHour.hour {
+            cells.append(UsageTotalsCell(
+                id: "busiestHour",
+                label: String(localized: "Busiest hour"),
+                value: usageHourLabel(hour),
+                detail: String(localized: "\(peakHour.sessions ?? 0) sessions")
+            ))
+        }
+
+        return cells
+    }
+
+    private var perActiveDayDetail: String? {
+        let activeDays = activeDayCount
+        guard activeDays > 0 else { return nil }
+        return String(localized: "\(usageFormattedTokens(totalTokens / activeDays)) per active day")
+    }
+
+    /// Cached reads as a share of everything the model was shown, which is
+    /// ordinary input plus cache reads — the same denominator the server uses.
+    private func cachedInputDetail(cacheReadTokens: Int) -> String? {
+        let observedInput = totalInputTokens + cacheReadTokens
+        guard observedInput > 0 else { return nil }
+        let share = Double(cacheReadTokens) / Double(observedInput) * 100
+        return String(localized: "\(insightsFormattedPercent(share)) of observed input")
+    }
+
+    // MARK: - Top sessions
+
+    /// All sessions sorted by total tokens (descending), with cost shown when available.
+    /// Falls back to input-only or output-only if one is missing.
+    var topSessions: [SessionSummary] {
+        guard dataSource != .server else { return [] }
+        return analytics.topSessions
+    }
+}
+
+/// One cell in the Usage totals grid.
+struct UsageTotalsCell: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let value: String
+    let detail: String?
+}
+
+private extension SessionSummary {
+    var analyticsTimestamp: Double? {
+        lastMessageAt ?? updatedAt ?? createdAt
+    }
+}

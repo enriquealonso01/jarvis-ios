@@ -1,0 +1,208 @@
+import Foundation
+
+enum SessionNavigationDestination: Hashable, Identifiable {
+    case session(SessionSummary)
+    case newChat(PendingNewChatRoute)
+    case utility(SessionListUtilityDestination)
+
+    var id: Self { self }
+
+    var selectedSessionID: String? {
+        guard case .session(let session) = self else { return nil }
+        return session.sessionId
+    }
+}
+
+struct SessionNavigationState: Equatable {
+    private(set) var destination: SessionNavigationDestination?
+    private(set) var lastSelectedSessionID: String?
+    private(set) var rootRevision = 0
+    private var newChatSessionID: String?
+    private var deepLinkedSessionLoadID: String?
+
+    init(lastSelectedSessionID: String? = nil) {
+        self.lastSelectedSessionID = Self.normalized(lastSelectedSessionID)
+    }
+
+    var selectedSessionID: String? {
+        destination?.selectedSessionID ?? newChatSessionID
+    }
+
+    var isCreatingNewChat: Bool {
+        guard case .newChat = destination else { return false }
+        return newChatSessionID == nil
+    }
+
+    mutating func select(_ session: SessionSummary) {
+        rootRevision += 1
+        newChatSessionID = nil
+        destination = .session(session)
+        remember(session)
+    }
+
+    mutating func select(_ route: PendingNewChatRoute) {
+        rootRevision += 1
+        newChatSessionID = nil
+        destination = .newChat(route)
+    }
+
+    mutating func select(_ utility: SessionListUtilityDestination) {
+        rootRevision += 1
+        newChatSessionID = nil
+        destination = .utility(utility)
+    }
+
+    mutating func remember(_ session: SessionSummary) {
+        guard let sessionID = Self.normalized(session.sessionId) else { return }
+        lastSelectedSessionID = sessionID
+        if case .newChat = destination {
+            newChatSessionID = sessionID
+        }
+    }
+
+    /// Explicit list navigation must also discard the previous restore target.
+    mutating func openSessionList() {
+        rootRevision += 1
+        clearDestination()
+        lastSelectedSessionID = nil
+    }
+
+    mutating func clearDestination() {
+        destination = nil
+        newChatSessionID = nil
+    }
+
+    mutating func beginDeepLinkedSessionLoad(id: String?) -> String? {
+        guard deepLinkedSessionLoadID == nil,
+              let sessionID = Self.normalized(id)
+        else { return nil }
+
+        deepLinkedSessionLoadID = sessionID
+        return sessionID
+    }
+
+    mutating func finishDeepLinkedSessionLoad(id: String?) {
+        guard Self.normalized(id) == deepLinkedSessionLoadID else { return }
+        deepLinkedSessionLoadID = nil
+    }
+
+    /// Restores only when no explicit route already won. Deep links, shared drafts,
+    /// and App Intent requests therefore take precedence over the stored selection.
+    /// A pending or in-flight deep link (not yet resolved into a destination) also
+    /// blocks the restore, so its network load is never pre-empted by the stored
+    /// selection; the stored ID is kept for a later restore.
+    mutating func restoreIfNeeded(
+        from sessions: [SessionSummary],
+        clearsMissingSelection: Bool = true,
+        pendingDeepLinkedSessionID: String? = nil
+    ) {
+        guard destination == nil,
+              deepLinkedSessionLoadID == nil,
+              Self.normalized(pendingDeepLinkedSessionID) == nil,
+              let lastSelectedSessionID
+        else { return }
+
+        guard let session = sessions.first(where: {
+            Self.normalized($0.sessionId) == lastSelectedSessionID
+        }) else {
+            if clearsMissingSelection {
+                self.lastSelectedSessionID = nil
+            }
+            return
+        }
+
+        destination = .session(session)
+    }
+
+    /// Invalidates both the visible detail and stored restoration target when the
+    /// removed session is the selected or most recently selected session.
+    mutating func remove(sessionID: String?) {
+        guard let sessionID = Self.normalized(sessionID) else { return }
+
+        if selectedSessionID == sessionID {
+            destination = nil
+            newChatSessionID = nil
+        }
+
+        if lastSelectedSessionID == sessionID {
+            lastSelectedSessionID = nil
+        }
+    }
+
+    private static func normalized(_ sessionID: String?) -> String? {
+        guard let sessionID else { return nil }
+        let trimmed = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+/// Resolves the hardware-keyboard chat shortcuts (⌘1–⌘9, Next and Previous
+/// Chat) against the ordinary chat rows in on-screen order.
+enum ChatShortcutNavigation {
+    /// The chat at a 1-based list position, or nil when the list is shorter.
+    static func chat(atPosition position: Int, in chats: [SessionSummary]) -> SessionSummary? {
+        chats.indices.contains(position - 1) ? chats[position - 1] : nil
+    }
+
+    /// The chat `offset` rows from the selection, wrapping at the ends. Without
+    /// a selection in the list, next starts at the first chat and previous at
+    /// the last.
+    static func adjacentChat(
+        offset: Int,
+        from selectedSessionID: String?,
+        in chats: [SessionSummary]
+    ) -> SessionSummary? {
+        guard !chats.isEmpty else { return nil }
+        guard let selectedSessionID,
+              let selectedIndex = chats.firstIndex(where: { $0.sessionId == selectedSessionID })
+        else {
+            return offset > 0 ? chats.first : chats.last
+        }
+
+        let count = chats.count
+        return chats[((selectedIndex + offset) % count + count) % count]
+    }
+}
+
+enum SessionNavigationPersistence {
+    private static let keyPrefix = "sessionNavigation.lastSelectedSessionID."
+
+    static func key(for server: URL) -> String {
+        keyPrefix + server.absoluteString
+    }
+
+    static func load(for server: URL, defaults: UserDefaults = .standard) -> String? {
+        defaults.string(forKey: key(for: server))
+    }
+
+    static func save(_ sessionID: String?, for server: URL, defaults: UserDefaults = .standard) {
+        let key = key(for: server)
+        if let sessionID {
+            defaults.set(sessionID, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
+    }
+}
+
+/// Device-local last-seen server timestamps for session rows. The server URL
+/// scopes equal session IDs on different configured servers independently.
+struct SessionUnreadStore {
+    var defaults: UserDefaults = .standard
+
+    private func key(for server: URL) -> String {
+        "session-inbox-seen." + server.absoluteString
+    }
+
+    func load(for server: URL) -> [String: Double] {
+        defaults.dictionary(forKey: key(for: server)) as? [String: Double] ?? [:]
+    }
+
+    func save(_ seen: [String: Double], for server: URL) {
+        defaults.set(seen, forKey: key(for: server))
+    }
+
+    func remove(for server: URL) {
+        defaults.removeObject(forKey: key(for: server))
+    }
+}

@@ -1,0 +1,37 @@
+{
+  "strictness": 2,
+  "commentTypes": ["logic", "syntax", "style", "info"],
+  "confidenceThreshold": 0.6,
+  "triggerOnUpdates": true,
+  "updateSummaryOnly": false,
+  "impactAnalysis": true,
+  "fileChangeLimit": 150,
+  "ignorePatterns": ["*.pbxproj", "*.xcstrings", "*.strings"],
+  "excludeAuthors": ["dependabot[bot]", "github-actions[bot]"],
+  "ignoreKeywords": ["[skip-review]", "[no-review]"],
+  "disabledLabels": ["skip-review"],
+  "customRules": [
+    {
+      "id": "swiftui-animation-transaction",
+      "rule": "SwiftUI state changes intended to animate must occur inside withAnimation or have an applicable implicit animation; .transition insertions and removals must receive an animation transaction. Flag changes that add a transition or animation modifier without a driving transaction.",
+      "scope": ["*.swift"],
+      "severity": "medium",
+      "enabled": true
+    },
+    {
+      "id": "accessibility-regression",
+      "rule": "Do not silently drop accessibility labels, hints, traits, identifiers, or usable tap targets when refactoring a view. Compare the old and new implementations and flag any removed accessibility affordance.",
+      "scope": ["*.swift"],
+      "severity": "high",
+      "enabled": true
+    },
+    {
+      "id": "task-cancellation-stale-results",
+      "rule": "Async work in views and view models must handle Task cancellation and stale results: flag unguarded awaits that mutate state after the owning view or task is gone, and missing cancellation on disappear or repeated invocation.",
+      "scope": ["*.swift"],
+      "severity": "medium",
+      "enabled": true
+    }
+  ],
+  "disabledRules": []
+}

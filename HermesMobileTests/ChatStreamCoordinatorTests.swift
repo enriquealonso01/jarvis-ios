@@ -1,0 +1,2633 @@
+import Observation
+import SwiftData
+import XCTest
+@testable import HermesMobile
+
+final class ChatStreamCoordinatorTests: APIClientTestCase {
+    @MainActor
+    func testStartBuildsReplayURLAndStartsLiveActivity() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        )
+
+        coordinator.start(streamID: "stream-123", replayAfterSeq: 4, recoveryState: .reconnecting)
+
+        let url = try XCTUnwrap(streamClient.startedURLs.first)
+        let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(url.path, "/api/chat/stream")
+        XCTAssertEqual(queryItems.first(where: { $0.name == "stream_id" })?.value, "stream-123")
+        XCTAssertEqual(queryItems.first(where: { $0.name == "replay" })?.value, "1")
+        XCTAssertEqual(queryItems.first(where: { $0.name == "after_seq" })?.value, "4")
+        XCTAssertEqual(coordinator.activeStreamID, "stream-123")
+        XCTAssertEqual(coordinator.recoveryState, .reconnecting)
+        XCTAssertTrue(coordinator.isReplayConnection)
+        XCTAssertEqual(delegate.startMonitoringCount, 1)
+        XCTAssertEqual(liveActivityManager.starts, [
+            CoordinatorSpyLiveActivityManager.Start(
+                sessionID: "session-abc",
+                sessionTitle: "Planning",
+                streamID: "stream-123"
+            )
+        ])
+        // The run's own server, so a paired server's relay can take over on suspend (#566).
+        XCTAssertEqual(liveActivityManager.servers, [URL(string: "https://example.test")!])
+    }
+
+    @MainActor
+    func testActiveRunStartDateSurvivesSameStreamRestartAndClearsOnFinish() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+        XCTAssertNil(coordinator.activeRunStartedAt)
+
+        coordinator.start(streamID: "stream-123")
+        let startedAt = try XCTUnwrap(coordinator.activeRunStartedAt)
+
+        // A foreground reattach restarts the same stream; the counter must not reset.
+        coordinator.suspendActiveStreamConnection()
+        coordinator.start(streamID: "stream-123", replayAfterSeq: 4, recoveryState: .reconnecting)
+        XCTAssertEqual(coordinator.activeRunStartedAt, startedAt)
+
+        streamClient.emit(.streamEnd)
+        XCTAssertNil(coordinator.activeStreamID)
+        XCTAssertNil(coordinator.activeRunStartedAt)
+
+        // A replacement stream is a new run with its own start date.
+        coordinator.start(streamID: "stream-new")
+        XCTAssertNotNil(coordinator.activeRunStartedAt)
+        XCTAssertNotEqual(coordinator.activeRunStartedAt, startedAt)
+    }
+
+    @MainActor
+    func testSessionLoadSeedsRunStartFromServerAndReEntryKeepsIt() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient)
+        // The server says this run has been going for 95s (`pending_started_at`).
+        let serverStart = Date().addingTimeInterval(-95)
+
+        coordinator.reconcileSessionLoad(
+            loadedActiveStreamID: "stream-123",
+            preparation: coordinator.prepareForSessionLoad(),
+            usedCacheFallback: false,
+            runStartedAt: serverStart
+        )
+
+        XCTAssertEqual(coordinator.activeStreamID, "stream-123")
+        XCTAssertEqual(coordinator.activeRunStartedAt, serverStart)
+
+        // Reattaching to the same run, then leaving and re-entering the session,
+        // both keep counting from the server's start instead of restarting at 0s.
+        coordinator.start(streamID: "stream-123")
+        XCTAssertEqual(coordinator.activeRunStartedAt, serverStart)
+
+        coordinator.reconcileSessionLoad(
+            loadedActiveStreamID: "stream-123",
+            preparation: coordinator.prepareForSessionLoad(),
+            usedCacheFallback: false,
+            runStartedAt: serverStart
+        )
+        XCTAssertEqual(coordinator.activeRunStartedAt, serverStart)
+    }
+
+    @MainActor
+    func testFutureDatedSeedDoesNotMoveTheRunStartForwardOnReSeed() throws {
+        let coordinator = makeCoordinator()
+        // A server clock running ahead of the phone reports a start in the future.
+        let t0 = Date()
+        let skewedServerStart = t0.addingTimeInterval(600)
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.seedActiveRunStartForTesting(skewedServerStart, now: t0)
+        XCTAssertEqual(coordinator.activeRunStartedAt, t0)
+
+        // Reloading the same running session re-seeds the same skewed stamp later
+        // on. Clamping alone would pin the start to the new `now` and restart
+        // "Working for"; the earliest known start has to win instead.
+        coordinator.seedActiveRunStartForTesting(skewedServerStart, now: t0.addingTimeInterval(30))
+        XCTAssertEqual(coordinator.activeRunStartedAt, t0)
+    }
+
+    @MainActor
+    func testLiveActivityStartsFromTheSeededRunStartRatherThanNow() throws {
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        // The coordinator holds its delegate weakly, so the spy has to outlive
+        // `makeCoordinator` for `startLiveActivity` to see a session ID.
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(liveActivityManager: liveActivityManager, delegate: delegate)
+        let serverStart = Date().addingTimeInterval(-95)
+
+        coordinator.start(streamID: "stream-123", runStartedAt: serverStart)
+
+        // The widget's system elapsed timer counts the run, not the moment this
+        // process attached to it, so it agrees with the in-app "Working for".
+        XCTAssertEqual(liveActivityManager.startedAts, [serverStart])
+
+        // Without a seed the widget still starts counting from discovery time.
+        let beforeUnseeded = Date()
+        coordinator.start(streamID: "stream-456")
+        let unseeded = try XCTUnwrap(liveActivityManager.startedAts.last)
+        XCTAssertGreaterThanOrEqual(unseeded, beforeUnseeded)
+        XCTAssertLessThanOrEqual(unseeded, Date())
+    }
+
+    @MainActor
+    func testRunStartFallsBackToDiscoveryAndNeverCountsFromTheFuture() throws {
+        let coordinator = makeCoordinator()
+
+        // No server start for the adopted run: fall back to discovery time.
+        let beforeLoad = Date()
+        coordinator.reconcileSessionLoad(
+            loadedActiveStreamID: "stream-123",
+            preparation: coordinator.prepareForSessionLoad(),
+            usedCacheFallback: false
+        )
+        let discovered = try XCTUnwrap(coordinator.activeRunStartedAt)
+        XCTAssertGreaterThanOrEqual(discovered, beforeLoad)
+        XCTAssertLessThanOrEqual(discovered, Date())
+
+        // A nil seed on re-entry leaves that discovery stamp alone.
+        coordinator.reconcileSessionLoad(
+            loadedActiveStreamID: "stream-123",
+            preparation: coordinator.prepareForSessionLoad(),
+            usedCacheFallback: false
+        )
+        XCTAssertEqual(coordinator.activeRunStartedAt, discovered)
+
+        // Clock skew can date a server start in the future; clamp it so the
+        // "Working for" label can never show a negative elapsed time.
+        coordinator.start(streamID: "stream-456", runStartedAt: Date().addingTimeInterval(600))
+        let clamped = try XCTUnwrap(coordinator.activeRunStartedAt)
+        XCTAssertLessThanOrEqual(clamped, Date())
+    }
+
+    @MainActor
+    func testRecordedRunEndingSpansFromTheServerSeededStart() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient)
+        let serverStart = Date().addingTimeInterval(-90)
+
+        coordinator.reconcileSessionLoad(
+            loadedActiveStreamID: "stream-123",
+            preparation: coordinator.prepareForSessionLoad(),
+            usedCacheFallback: false,
+            runStartedAt: serverStart
+        )
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.streamEnd)
+
+        // "Worked for" lands on the server's span immediately, without waiting
+        // for the post-completion transcript refresh to carry `_turnDuration`.
+        let ending = try XCTUnwrap(coordinator.latestRunEnding)
+        XCTAssertEqual(ending.startedAt, serverStart)
+        XCTAssertEqual(ending.ending, .completed)
+        XCTAssertGreaterThanOrEqual(ending.endedAt.timeIntervalSince(ending.startedAt), 90)
+    }
+
+    @MainActor
+    func testFreshSendSeedsRunStartFromChatStartResponse() throws {
+        let coordinator = makeCoordinator()
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let sentAt = Date()
+
+        let response = try decoder.decode(ChatStartResponse.self, from: Data(#"""
+        {"stream_id": "stream-123", "session_id": "session-abc", "pending_started_at": 1700000000.5}
+        """#.utf8))
+        XCTAssertEqual(response.pendingStartedAt, 1_700_000_000.5)
+
+        coordinator.start(streamID: "stream-123", runStartedAt: response.runStartedAt(sentAt: sentAt))
+        XCTAssertEqual(coordinator.activeRunStartedAt, Date(timeIntervalSince1970: 1_700_000_000.5))
+
+        // A server that omits the field leaves the run counting from the send.
+        let withoutStart = try decoder.decode(
+            ChatStartResponse.self,
+            from: Data(#"{"stream_id": "stream-456"}"#.utf8)
+        )
+        XCTAssertNil(withoutStart.pendingStartedAt)
+
+        coordinator.start(streamID: "stream-456", runStartedAt: withoutStart.runStartedAt(sentAt: sentAt))
+        XCTAssertEqual(coordinator.activeRunStartedAt, sentAt)
+    }
+
+    @MainActor
+    func testSessionLoadPreparationBelongsOnlyToCapturedStreamRun() {
+        let coordinator = makeCoordinator()
+
+        coordinator.start(streamID: "stream-old")
+        let preparation = coordinator.prepareForSessionLoad()
+
+        XCTAssertTrue(coordinator.shouldPreserveLocalOptimisticMessages(
+            for: preparation,
+            loadedActiveStreamID: "stream-old"
+        ))
+        XCTAssertFalse(coordinator.shouldPreserveLocalOptimisticMessages(
+            for: preparation,
+            loadedActiveStreamID: nil
+        ))
+        XCTAssertFalse(coordinator.shouldPreserveLocalOptimisticMessages(
+            for: preparation,
+            loadedActiveStreamID: "stream-new"
+        ))
+
+        coordinator.start(streamID: "stream-old")
+
+        XCTAssertTrue(coordinator.shouldPreserveLocalOptimisticMessages(
+            for: preparation,
+            loadedActiveStreamID: "stream-old"
+        ))
+
+        coordinator.start(streamID: "stream-new")
+
+        XCTAssertFalse(coordinator.shouldPreserveLocalOptimisticMessages(
+            for: preparation,
+            loadedActiveStreamID: "stream-old"
+        ))
+    }
+
+    @MainActor
+    func testSessionLoadPreparationExpiresWhenCapturedRunFinishes() {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient)
+
+        coordinator.start(streamID: "stream-123")
+        let preparation = coordinator.prepareForSessionLoad()
+
+        streamClient.emit(.streamEnd)
+
+        XCTAssertFalse(coordinator.shouldPreserveLocalOptimisticMessages(
+            for: preparation,
+            loadedActiveStreamID: "stream-123"
+        ))
+    }
+
+    @MainActor
+    func testSuspendSavesLastEventStopsStreamAndMarksLiveActivityStale() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        )
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.token("Partial answer."), lastEventID: "session-abc:7")
+        coordinator.suspendActiveStreamConnection()
+
+        XCTAssertEqual(coordinator.lastEventID, "session-abc:7")
+        XCTAssertTrue(coordinator.isConnectionSuspended)
+        XCTAssertEqual(streamClient.stopCount, 1)
+        XCTAssertEqual(delegate.saveSnapshotCount, 1)
+        XCTAssertEqual(delegate.stopMonitoringClearPromptValues, [true])
+        XCTAssertEqual(liveActivityManager.markStaleCount, 1)
+    }
+
+    @MainActor
+    func testForegroundReconnectActiveStreamReloadsAndRestartsWithoutReplay() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        XCTAssertEqual(delegate.loadMessagesCount, 1)
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+        let resumedURL = try XCTUnwrap(streamClient.startedURLs.last)
+        let queryItems = URLComponents(url: resumedURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertNil(queryItems.first(where: { $0.name == "replay" }))
+    }
+
+    @MainActor
+    func testForegroundReconnectSnapshotWithoutCursorDoesNotReplayFromStart() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.restoresSnapshot = true
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(
+                #"{"active": true, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+        delegate.onLoadMessages = {
+            let preparation = coordinator.prepareForSessionLoad()
+            coordinator.reconcileSessionLoad(
+                loadedActiveStreamID: "stream-123",
+                preparation: preparation,
+                usedCacheFallback: false
+            )
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        let resumedURL = try XCTUnwrap(streamClient.startedURLs.last)
+        let queryItems = URLComponents(url: resumedURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertNil(queryItems.first(where: { $0.name == "replay" }))
+        XCTAssertNil(queryItems.first(where: { $0.name == "after_seq" }))
+    }
+
+    @MainActor
+    func testSuccessfulReconnectConfirmsRecoveryAfterTransientStatusFailure() async {
+        let statusRequestCount = CoordinatorLockedCounter()
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let delaySeconds = CoordinatorLockedBox<[TimeInterval]>([])
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            delegate: delegate,
+            reconnectDelay: { seconds in
+                delaySeconds.mutate { $0.append(seconds) }
+            }
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            if statusRequestCount.increment() == 1 {
+                throw URLError(.timedOut)
+            }
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        XCTAssertEqual(statusRequestCount.value, 2)
+        XCTAssertEqual(delaySeconds.value, [1])
+        XCTAssertEqual(delegate.recoveryErrors.count, 0)
+        XCTAssertEqual(delegate.confirmedRecoveryCount, 1)
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+    }
+
+    @MainActor
+    func testReconnectExhaustsTransientProbeBudgetThenSurfacesRecoveryError() async {
+        let statusRequestCount = CoordinatorLockedCounter()
+        let delaySeconds = CoordinatorLockedBox<[TimeInterval]>([])
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            delegate: delegate,
+            reconnectDelay: { seconds in
+                delaySeconds.mutate { $0.append(seconds) }
+            }
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            _ = statusRequestCount.increment()
+            throw URLError(.cannotConnectToHost)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        XCTAssertEqual(statusRequestCount.value, 4)
+        XCTAssertEqual(delaySeconds.value, [1, 2, 4])
+        XCTAssertEqual(delegate.recoveryErrors.count, 1)
+        XCTAssertEqual(delegate.confirmedRecoveryCount, 0)
+        XCTAssertTrue(coordinator.isConnectionSuspended)
+        XCTAssertEqual(streamClient.startedURLs.count, 1)
+
+        let statusRequestCountAfterBudget = statusRequestCount.value
+        await coordinator.reconnectIfNeeded()
+        XCTAssertGreaterThan(statusRequestCount.value, statusRequestCountAfterBudget)
+    }
+
+    @MainActor
+    func testReconnectWaitsForNetworkWithoutSpendingProbeBudget() async {
+        let statusRequestCount = CoordinatorLockedCounter()
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            delegate: delegate,
+            isOnline: CoordinatorLockedBox(false)
+        ) { request in
+            _ = statusRequestCount.increment()
+            throw URLError(.notConnectedToInternet)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.transportError("The network connection was lost."))
+        await coordinator.reconnectIfNeeded()
+
+        XCTAssertEqual(statusRequestCount.value, 0)
+        XCTAssertEqual(coordinator.recoveryState, .waitingForNetwork)
+        XCTAssertEqual(delegate.recoveryErrors, [])
+        XCTAssertTrue(coordinator.isConnectionSuspended)
+    }
+
+    @MainActor
+    func testTransientFailureWaitsForNetworkWhenThePathDrops() async {
+        let isOnline = CoordinatorLockedBox(true)
+        let statusRequestCount = CoordinatorLockedCounter()
+        let delaySeconds = CoordinatorLockedBox<[TimeInterval]>([])
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            delegate: delegate,
+            reconnectDelay: { seconds in
+                delaySeconds.mutate { $0.append(seconds) }
+            },
+            isOnline: isOnline
+        ) { request in
+            // The probe fails because the phone just lost its network.
+            _ = statusRequestCount.increment()
+            isOnline.mutate { $0 = false }
+            throw URLError(.notConnectedToInternet)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+        await coordinator.reconnectIfNeeded()
+
+        XCTAssertEqual(statusRequestCount.value, 1)
+        XCTAssertEqual(delaySeconds.value, [])
+        XCTAssertEqual(coordinator.recoveryState, .waitingForNetwork)
+        XCTAssertEqual(delegate.recoveryErrors, [])
+        XCTAssertTrue(coordinator.isConnectionSuspended)
+    }
+
+    @MainActor
+    func testNetworkReturnReconnectsSuspendedStreamOnce() async {
+        let isOnline = CoordinatorLockedBox(true)
+        let isServerReachable = CoordinatorLockedBox(false)
+        let statusRequestCount = CoordinatorLockedCounter()
+        let reattachProbeStarted = expectation(description: "reattach status probe started")
+        let releaseReattachProbe = DispatchSemaphore(value: 0)
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            delegate: delegate,
+            isOnline: isOnline
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            _ = statusRequestCount.increment()
+            guard isServerReachable.value else { throw URLError(.cannotConnectToHost) }
+            reattachProbeStarted.fulfill()
+            releaseReattachProbe.wait()
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        // Online but the server is out of reach: the budget runs out and the
+        // error shows, as before.
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+        await coordinator.reconnectIfNeeded()
+        XCTAssertEqual(statusRequestCount.value, 4)
+        XCTAssertEqual(delegate.recoveryErrors.count, 1)
+
+        // Going offline parks the stream without probing.
+        isOnline.mutate { $0 = false }
+        await coordinator.networkPathDidChange()
+        XCTAssertEqual(statusRequestCount.value, 4)
+        XCTAssertEqual(coordinator.recoveryState, .waitingForNetwork)
+
+        // The network returns and the path flaps: both updates share one reattach.
+        isOnline.mutate { $0 = true }
+        isServerReachable.mutate { $0 = true }
+        let firstPathChange = Task { @MainActor in
+            await coordinator.networkPathDidChange()
+        }
+        await fulfillment(of: [reattachProbeStarted], timeout: 1)
+
+        let secondPathChangeStarted = expectation(description: "second path change started")
+        let secondPathChange = Task { @MainActor in
+            secondPathChangeStarted.fulfill()
+            await coordinator.networkPathDidChange()
+        }
+        await fulfillment(of: [secondPathChangeStarted], timeout: 1)
+
+        releaseReattachProbe.signal()
+        await firstPathChange.value
+        await secondPathChange.value
+
+        XCTAssertEqual(statusRequestCount.value, 5)
+        XCTAssertEqual(delegate.loadMessagesCount, 1)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+    }
+
+    @MainActor
+    func testReconnectSurfacesNonTransientFailuresAfterOneProbe() async {
+        let cases: [(String, (URLRequest) throws -> (HTTPURLResponse, Data))] = [
+            ("unauthorized", { request in
+                apiTestJSONResponse(#"{"error":"nope"}"#, for: request, status: 401)
+            }),
+            ("decoding", { request in
+                apiTestJSONResponse("not-json", for: request)
+            }),
+            ("arbitrary404", { request in
+                apiTestJSONResponse(#"{"error":"endpoint not found"}"#, for: request, status: 404)
+            }),
+        ]
+
+        for (name, handler) in cases {
+            let statusRequestCount = CoordinatorLockedCounter()
+            let delaySeconds = CoordinatorLockedBox<[TimeInterval]>([])
+            let streamClient = CoordinatorSpySSEStreamingClient()
+            let delegate = CoordinatorDelegateSpy()
+            let coordinator = makeCoordinator(
+                streamClient: streamClient,
+                delegate: delegate,
+                reconnectDelay: { seconds in
+                    delaySeconds.mutate { $0.append(seconds) }
+                }
+            ) { request in
+                XCTAssertEqual(request.url?.path, "/api/chat/stream/status", name)
+                _ = statusRequestCount.increment()
+                return try handler(request)
+            }
+
+            coordinator.start(streamID: "stream-123")
+            coordinator.suspendActiveStreamConnection()
+
+            await coordinator.reconnectIfNeeded()
+
+            XCTAssertEqual(statusRequestCount.value, 1, name)
+            XCTAssertEqual(delaySeconds.value, [], name)
+            XCTAssertEqual(delegate.recoveryErrors.count, 1, name)
+            XCTAssertEqual(delegate.confirmedRecoveryCount, 0, name)
+            XCTAssertTrue(coordinator.isConnectionSuspended, name)
+            XCTAssertEqual(streamClient.startedURLs.count, 1, name)
+        }
+    }
+
+    @MainActor
+    func testReconnectStopsDuringBackoffWhenStreamIsReplaced() async {
+        let statusRequestCount = CoordinatorLockedCounter()
+        let enteredDelay = expectation(description: "entered reconnect backoff")
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            delegate: delegate,
+            reconnectDelay: { _ in
+                enteredDelay.fulfill()
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            _ = statusRequestCount.increment()
+            throw URLError(.timedOut)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        let reconnect = Task { @MainActor in
+            await coordinator.reconnectIfNeeded()
+        }
+        await fulfillment(of: [enteredDelay], timeout: 2)
+
+        coordinator.start(streamID: "stream-new")
+        await reconnect.value
+
+        XCTAssertEqual(statusRequestCount.value, 1)
+        XCTAssertEqual(delegate.recoveryErrors.count, 0)
+        XCTAssertEqual(delegate.confirmedRecoveryCount, 0)
+        XCTAssertEqual(coordinator.activeStreamID, "stream-new")
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+    }
+
+    @MainActor
+    func testValidStreamActivityConfirmsRecovery() {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.token("Recovered response"))
+        streamClient.emit(.heartbeat)
+
+        XCTAssertEqual(delegate.confirmedRecoveryCount, 2)
+    }
+
+    @MainActor
+    func testConcurrentForegroundReconnectRequestsShareOneRecoveryAttempt() async {
+        let firstStatusStarted = expectation(description: "first stream status request started")
+        let releaseFirstStatus = DispatchSemaphore(value: 0)
+        let statusRequestCount = CoordinatorLockedCounter()
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            if statusRequestCount.increment() == 1 {
+                firstStatusStarted.fulfill()
+                releaseFirstStatus.wait()
+            }
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        let firstReconnect = Task { @MainActor in
+            await coordinator.reconnectIfNeeded()
+        }
+        await fulfillment(of: [firstStatusStarted], timeout: 1)
+
+        let secondReconnectStarted = expectation(description: "second reconnect request started")
+        let secondReconnectReturned = CoordinatorLockedCounter()
+        let secondReconnect = Task { @MainActor in
+            secondReconnectStarted.fulfill()
+            await coordinator.reconnectIfNeeded()
+            _ = secondReconnectReturned.increment()
+        }
+        await fulfillment(of: [secondReconnectStarted], timeout: 1)
+
+        XCTAssertEqual(statusRequestCount.value, 1)
+        XCTAssertEqual(secondReconnectReturned.value, 0)
+
+        releaseFirstStatus.signal()
+        await firstReconnect.value
+        await secondReconnect.value
+
+        XCTAssertEqual(secondReconnectReturned.value, 1)
+        XCTAssertEqual(delegate.loadMessagesCount, 1)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+    }
+
+    @MainActor
+    func testJoiningReconnectUsesNonNilModelContextBeforeTranscriptReload() async throws {
+        let firstStatusStarted = expectation(description: "first stream status request started")
+        let releaseFirstStatus = DispatchSemaphore(value: 0)
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            firstStatusStarted.fulfill()
+            releaseFirstStatus.wait()
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+        let modelContext = try makeModelContext()
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+        let firstReconnect = Task { @MainActor in
+            await coordinator.reconnectIfNeeded()
+        }
+        await fulfillment(of: [firstStatusStarted], timeout: 1)
+
+        let joiningReconnectStarted = expectation(description: "joining reconnect request started")
+        let secondReconnect = Task { @MainActor in
+            joiningReconnectStarted.fulfill()
+            await coordinator.reconnectIfNeeded(modelContext: modelContext)
+        }
+        await fulfillment(of: [joiningReconnectStarted], timeout: 1)
+
+        releaseFirstStatus.signal()
+        await firstReconnect.value
+        await secondReconnect.value
+
+        XCTAssertEqual(delegate.loadMessageReceivedModelContextValues, [true])
+    }
+
+    @MainActor
+    func testJoiningReconnectRepeatsInFlightNilContextLoadWithModelContext() async throws {
+        let firstLoadSuspended = expectation(description: "nil-context transcript load suspended")
+        let joiningReconnectStarted = expectation(description: "joining reconnect request started")
+        var releaseFirstLoad: CheckedContinuation<Void, Never>?
+        let statusRequestCount = CoordinatorLockedCounter()
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            _ = statusRequestCount.increment()
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+        delegate.onLoadMessages = {
+            guard delegate.loadMessagesCount == 1 else { return }
+            await withCheckedContinuation { continuation in
+                releaseFirstLoad = continuation
+                firstLoadSuspended.fulfill()
+            }
+        }
+        let modelContext = try makeModelContext()
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+        let firstReconnect = Task { @MainActor in
+            await coordinator.reconnectIfNeeded()
+        }
+        await fulfillment(of: [firstLoadSuspended], timeout: 1)
+
+        let joiningReconnect = Task { @MainActor in
+            joiningReconnectStarted.fulfill()
+            await coordinator.reconnectIfNeeded(modelContext: modelContext)
+        }
+        await fulfillment(of: [joiningReconnectStarted], timeout: 1)
+
+        let continuation = try XCTUnwrap(releaseFirstLoad)
+        releaseFirstLoad = nil
+        continuation.resume()
+        await firstReconnect.value
+        await joiningReconnect.value
+
+        XCTAssertEqual(statusRequestCount.value, 1)
+        XCTAssertEqual(delegate.loadMessageReceivedModelContextValues, [false, true])
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+    }
+
+    @MainActor
+    func testForegroundReconnectDoesNotResumeSupersededSameStreamGeneration() async {
+        let firstStatusStarted = expectation(description: "first stream status request started")
+        let secondStatusStarted = expectation(description: "second stream status request started")
+        let releaseFirstStatus = DispatchSemaphore(value: 0)
+        let statusRequestCount = CoordinatorLockedCounter()
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            let requestNumber = statusRequestCount.increment()
+            if requestNumber == 1 {
+                firstStatusStarted.fulfill()
+                releaseFirstStatus.wait()
+            } else if requestNumber == 2 {
+                secondStatusStarted.fulfill()
+            }
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+        let firstReconnect = Task { @MainActor in
+            await coordinator.reconnectIfNeeded()
+        }
+        await fulfillment(of: [firstStatusStarted], timeout: 1)
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+        let secondReconnect = Task { @MainActor in
+            await coordinator.reconnectIfNeeded()
+        }
+        releaseFirstStatus.signal()
+        await fulfillment(of: [secondStatusStarted], timeout: 1)
+        await firstReconnect.value
+        await secondReconnect.value
+
+        XCTAssertEqual(statusRequestCount.value, 2)
+        XCTAssertEqual(streamClient.startedURLs.count, 3)
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+    }
+
+    @MainActor
+    func testForegroundReconnectStartsNewRecoveryAfterSessionLoadReplacesStream() async {
+        let firstStatusStarted = expectation(description: "first stream status request started")
+        let secondStatusStarted = expectation(description: "second stream status request started")
+        let releaseFirstStatus = DispatchSemaphore(value: 0)
+        let statusRequestCount = CoordinatorLockedCounter()
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            let requestNumber = statusRequestCount.increment()
+            if requestNumber == 1 {
+                firstStatusStarted.fulfill()
+                releaseFirstStatus.wait()
+            } else if requestNumber == 2 {
+                secondStatusStarted.fulfill()
+            }
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-new"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-old")
+        coordinator.suspendActiveStreamConnection()
+        let firstReconnect = Task { @MainActor in
+            await coordinator.reconnectIfNeeded()
+        }
+        await fulfillment(of: [firstStatusStarted], timeout: 1)
+
+        let preparation = coordinator.prepareForSessionLoad()
+        coordinator.reconcileSessionLoad(
+            loadedActiveStreamID: "stream-new",
+            preparation: preparation,
+            usedCacheFallback: false
+        )
+        let secondReconnect = Task { @MainActor in
+            await coordinator.reconnectIfNeeded()
+        }
+        releaseFirstStatus.signal()
+        await fulfillment(of: [secondStatusStarted], timeout: 1)
+        await firstReconnect.value
+        await secondReconnect.value
+
+        XCTAssertEqual(statusRequestCount.value, 2)
+        XCTAssertEqual(coordinator.activeStreamID, "stream-new")
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+    }
+
+    @MainActor
+    func testForegroundReconnectActiveStreamDoesNotRestartAfterReplacementDuringLoad() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+        delegate.onLoadMessages = {
+            coordinator.start(streamID: "stream-new")
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        XCTAssertEqual(coordinator.activeStreamID, "stream-new")
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+        XCTAssertEqual(delegate.loadMessagesCount, 1)
+    }
+
+    @MainActor
+    func testForegroundReconnectInactiveReplayUsesRestoredEventID() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(
+                #"{"active": false, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.token("Partial answer."), lastEventID: "session-abc:9")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        let replayURL = try XCTUnwrap(streamClient.startedURLs.last)
+        let queryItems = URLComponents(url: replayURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(queryItems.first(where: { $0.name == "replay" })?.value, "1")
+        XCTAssertEqual(queryItems.first(where: { $0.name == "after_seq" })?.value, "9")
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+    }
+
+    @MainActor
+    func testForegroundReconnectInactiveCompletedTranscriptFinishesStream() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = true
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        delegate.onLoadMessages = {
+            let preparation = coordinator.prepareForSessionLoad()
+            coordinator.reconcileSessionLoad(
+                loadedActiveStreamID: nil,
+                preparation: preparation,
+                usedCacheFallback: false
+            )
+            XCTAssertNil(coordinator.activeStreamID)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        XCTAssertNil(coordinator.activeStreamID)
+        XCTAssertEqual(coordinator.successfulResponseCompletion?.streamID, "stream-123")
+        XCTAssertEqual(coordinator.successfulResponseCompletion?.needsTranscriptRefresh, false)
+        XCTAssertEqual(delegate.loadMessagesCount, 1)
+        XCTAssertEqual(delegate.completedNeedsTranscriptRefreshValues, [false])
+        XCTAssertEqual(liveActivityManager.ends.last?.status, .complete)
+    }
+
+    @MainActor
+    func testForegroundReconnectInactiveWithoutAssistantFinalizesFailedAndEndsLiveActivity() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        // The reloaded transcript surfaced no assistant reply after the user message.
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = false
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        // #246: this path previously re-armed and returned, leaving the Live
+        // Activity stuck on "running". It must now finalize as failed and end it.
+        XCTAssertNil(coordinator.activeStreamID)
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+        XCTAssertEqual(delegate.loadMessagesCount, 1)
+        XCTAssertEqual(liveActivityManager.ends.last?.status, .failed)
+    }
+
+    @MainActor
+    func testRefreshTranscriptIfCompletedWithoutAssistantKeepsWaitingWithoutEndingLiveActivity() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = false
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+
+        await coordinator.refreshTranscriptIfCompleted(streamID: "stream-123")
+
+        // The live SSE is still connected here, so the foreground safety net must
+        // keep waiting for the real completion rather than finalizing (#246). This
+        // is the deliberate counterpart to the reconnect-after-suspend fix.
+        XCTAssertEqual(coordinator.activeStreamID, "stream-123")
+        XCTAssertEqual(delegate.loadMessagesCount, 1)
+        XCTAssertTrue(liveActivityManager.ends.isEmpty)
+    }
+
+    @MainActor
+    func testRefreshTranscriptCompletionOwnsTeardownBeforeQueuedTerminalEventsArrive() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = true
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+
+        await coordinator.refreshTranscriptIfCompleted(streamID: "stream-123")
+        streamClient.emit(.streamEnd)
+        streamClient.emit(.transportError("connection closed"))
+
+        XCTAssertEqual(delegate.finishCount, 1)
+        XCTAssertEqual(delegate.drainQueueCount, 1)
+        XCTAssertEqual(delegate.refreshTitleCount, 1)
+        XCTAssertEqual(liveActivityManager.ends.map(\.status), [.complete])
+    }
+
+    @MainActor
+    func testRefreshTranscriptIfCompletedBailsWhenStreamReplacedDuringLoad() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = true
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+        // A newer run starts while the transcript reload is suspended.
+        delegate.onLoadMessages = {
+            coordinator.start(streamID: "stream-new")
+        }
+
+        coordinator.start(streamID: "stream-123")
+
+        await coordinator.refreshTranscriptIfCompleted(streamID: "stream-123")
+
+        // PR #266: the post-load guard must bail so the newer stream is neither
+        // finalized nor clobbered by the now-stale refresh.
+        XCTAssertEqual(coordinator.activeStreamID, "stream-new")
+        XCTAssertTrue(liveActivityManager.ends.isEmpty)
+    }
+
+    @MainActor
+    func testRefreshTranscriptIfCompletedSkipsFinalizeWhenRunCompletesDuringLoad() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = true
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+        // The live SSE delivers completion while the transcript reload is suspended.
+        delegate.onLoadMessages = {
+            streamClient.emit(.done(DoneStreamEvent()))
+        }
+
+        coordinator.start(streamID: "stream-123")
+
+        await coordinator.refreshTranscriptIfCompleted(streamID: "stream-123")
+
+        // PR #266 #2: only the live-SSE completion finalizes; the now-stale refresh
+        // must not finalize again (no double end / double finishStream). The run
+        // generation captured before the load changed, so the refresh bails.
+        XCTAssertEqual(liveActivityManager.ends.map(\.status), [.complete])
+        XCTAssertNil(coordinator.activeStreamID)
+    }
+
+    @MainActor
+    func testForegroundReconnectInactiveCompletedStreamDoesNotFinishReplacementAfterLoad() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = true
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+        delegate.onLoadMessages = {
+            coordinator.start(streamID: "stream-new")
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.suspendActiveStreamConnection()
+
+        await coordinator.reconnectIfNeeded()
+
+        XCTAssertEqual(coordinator.activeStreamID, "stream-new")
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+        XCTAssertTrue(delegate.completedNeedsTranscriptRefreshValues.isEmpty)
+        XCTAssertTrue(liveActivityManager.ends.isEmpty)
+    }
+
+    @MainActor
+    func testStaleDetectionWaitsForTransportQuietThresholdThenPollsStatus() async throws {
+        var statusRequests = 0
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            timing: ChatStreamCoordinatorTiming(
+                checkingInterval: 5,
+                reconnectInterval: 18,
+                runningToolReconnectInterval: 25,
+                statusPollCooldown: 4,
+                transportFreshInterval: 12
+            )
+        ) { request in
+            statusRequests += 1
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: start)
+
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(4.9))
+        XCTAssertEqual(statusRequests, 0)
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+
+        // #227: semantically quiet past checkingInterval, but the transport was
+        // active 5.1s ago — still within transportFreshInterval, so no chip and
+        // no status poll yet.
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(5.1))
+        XCTAssertEqual(statusRequests, 0)
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(12.1))
+        XCTAssertEqual(statusRequests, 1)
+        XCTAssertEqual(coordinator.recoveryState, .checking)
+    }
+
+    @MainActor
+    func testStaleRecoverySkipsProbesWhileOffline() async {
+        let isOnline = CoordinatorLockedBox(false)
+        let statusRequestCount = CoordinatorLockedCounter()
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            isOnline: isOnline
+        ) { request in
+            _ = statusRequestCount.increment()
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: start)
+
+        // Quiet past the forced-reconnect threshold, but offline: wait, don't probe.
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(18.1))
+        XCTAssertEqual(statusRequestCount.value, 0)
+        XCTAssertEqual(coordinator.recoveryState, .waitingForNetwork)
+        XCTAssertEqual(streamClient.startedURLs.count, 1)
+
+        // The network returns: the live stream drops back to idle, and the
+        // next stale tick probes it.
+        isOnline.mutate { $0 = true }
+        await coordinator.networkPathDidChange()
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(19))
+        XCTAssertEqual(statusRequestCount.value, 1)
+    }
+
+    @MainActor
+    func testHeartbeatKeepsSemanticallyQuietStreamOnOriginalConnection() async throws {
+        var statusRequests = 0
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient) { request in
+            statusRequests += 1
+            return apiTestJSONResponse(
+                #"{"active": true, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: Date().addingTimeInterval(-60))
+        streamClient.emit(.heartbeat)
+
+        await coordinator.recoverStaleStreamIfNeeded(now: Date().addingTimeInterval(1))
+
+        // #227: the heartbeat 1s ago proves the transport is alive, so the
+        // semantically quiet stream stays idle with zero status polls — no
+        // "Checking stream" chip and no reconnect.
+        XCTAssertEqual(statusRequests, 0)
+        XCTAssertEqual(streamClient.startedURLs.count, 1)
+        XCTAssertEqual(streamClient.stopCount, 0)
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+    }
+
+    @MainActor
+    func testHeartbeatDemotesCheckingStateToIdle() async throws {
+        var statusRequests = 0
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient) { request in
+            statusRequests += 1
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: Date().addingTimeInterval(-13))
+
+        await coordinator.recoverStaleStreamIfNeeded(now: Date())
+        XCTAssertEqual(statusRequests, 1)
+        XCTAssertEqual(coordinator.recoveryState, .checking)
+
+        streamClient.emit(.heartbeat)
+
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+        XCTAssertEqual(streamClient.startedURLs.count, 1)
+        XCTAssertEqual(streamClient.stopCount, 0)
+    }
+
+    @MainActor
+    func testRecoveryIdleEarlyReturnsDoNotNotifyWhenStateIsUnchanged() async {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+
+        let noActiveStream = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.recoveryState
+        } onChange: {
+            noActiveStream.increment()
+        }
+        await coordinator.recoverStaleStreamIfNeeded()
+        XCTAssertEqual(noActiveStream.value, 0)
+
+        coordinator.start(streamID: "stream-123")
+        delegate.streamCoordinatorHasPendingPrompt = true
+        let pendingPrompt = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.recoveryState
+        } onChange: {
+            pendingPrompt.increment()
+        }
+        await coordinator.recoverStaleStreamIfNeeded()
+        XCTAssertEqual(pendingPrompt.value, 0)
+
+        delegate.streamCoordinatorHasPendingPrompt = false
+        let progressDate = Date(timeIntervalSince1970: 1_770_000_000)
+        coordinator.markProgress(now: progressDate)
+        let freshProgress = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.recoveryState
+        } onChange: {
+            freshProgress.increment()
+        }
+        await coordinator.recoverStaleStreamIfNeeded(now: progressDate.addingTimeInterval(1))
+        XCTAssertEqual(freshProgress.value, 0)
+
+        coordinator.markProgress(now: Date().addingTimeInterval(-60))
+        streamClient.emit(.heartbeat)
+        let freshTransport = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.recoveryState
+        } onChange: {
+            freshTransport.increment()
+        }
+        await coordinator.recoverStaleStreamIfNeeded(now: Date().addingTimeInterval(1))
+        XCTAssertEqual(freshTransport.value, 0)
+    }
+
+    @MainActor
+    func testRecoveryStateNotifiesOnlyForTransitionsAndSkipsCheckingCooldownWrite() async {
+        var statusRequests = 0
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            timing: ChatStreamCoordinatorTiming(
+                checkingInterval: 5,
+                reconnectInterval: 18,
+                runningToolReconnectInterval: 25,
+                statusPollCooldown: 4,
+                transportFreshInterval: 12
+            )
+        ) { request in
+            statusRequests += 1
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: start)
+
+        let enteredChecking = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.recoveryState
+        } onChange: {
+            enteredChecking.increment()
+        }
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(12.1))
+        XCTAssertEqual(enteredChecking.value, 1)
+        XCTAssertEqual(coordinator.recoveryState, .checking)
+        XCTAssertEqual(statusRequests, 1)
+
+        let cooldown = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.recoveryState
+        } onChange: {
+            cooldown.increment()
+        }
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(13))
+        XCTAssertEqual(cooldown.value, 0)
+        XCTAssertEqual(coordinator.recoveryState, .checking)
+        XCTAssertEqual(statusRequests, 1)
+
+        let returnedToIdle = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.recoveryState
+        } onChange: {
+            returnedToIdle.increment()
+        }
+        coordinator.markProgress(now: start.addingTimeInterval(13))
+        XCTAssertEqual(returnedToIdle.value, 1)
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+    }
+
+    // The MockURLProtocol handler runs on URLSession's protocol thread while the
+    // coordinator's status-poll await has suspended the main actor, so a
+    // main-queue sync hop delivers the heartbeat deterministically *mid-flight*
+    // — before the poll's continuation resumes (PR #238 review).
+    @MainActor
+    func testHeartbeatDuringStatusPollKeepsIdleStateWithoutReassertingChecking() async throws {
+        var statusRequests = 0
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient) { request in
+            statusRequests += 1
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated { streamClient.emit(.heartbeat) }
+            }
+            return apiTestJSONResponse(#"{"active": true, "stream_id": "stream-123"}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: Date().addingTimeInterval(-13))
+
+        await coordinator.recoverStaleStreamIfNeeded(now: Date())
+
+        XCTAssertEqual(statusRequests, 1)
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+        XCTAssertEqual(streamClient.startedURLs.count, 1)
+        XCTAssertEqual(streamClient.stopCount, 0)
+    }
+
+    @MainActor
+    func testHeartbeatDuringForceReconnectStatusPollSkipsReconnect() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient) { request in
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated { streamClient.emit(.heartbeat) }
+            }
+            return apiTestJSONResponse(
+                #"{"active": true, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: Date().addingTimeInterval(-19))
+
+        await coordinator.recoverStaleStreamIfNeeded(now: Date())
+
+        XCTAssertEqual(coordinator.recoveryState, .idle)
+        XCTAssertEqual(streamClient.startedURLs.count, 1)
+        XCTAssertEqual(streamClient.stopCount, 0)
+    }
+
+    @MainActor
+    func testHeartbeatDoesNotDemoteReconnectingState() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient) { request in
+            apiTestJSONResponse(
+                #"{"active": true, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: Date().addingTimeInterval(-20))
+
+        await coordinator.recoverStaleStreamIfNeeded(now: Date())
+        XCTAssertEqual(coordinator.recoveryState, .reconnecting)
+
+        streamClient.emit(.heartbeat)
+
+        XCTAssertEqual(coordinator.recoveryState, .reconnecting)
+    }
+
+    @MainActor
+    func testMissingTransportActivityReconnectsStaleActiveStream() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient) { request in
+            apiTestJSONResponse(
+                #"{"active": true, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: start)
+
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(18.1))
+
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+        XCTAssertEqual(streamClient.stopCount, 1)
+        XCTAssertEqual(coordinator.recoveryState, .reconnecting)
+    }
+
+    @MainActor
+    func testSilentInitialConnectionReconnectsWhenStale() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: streamClient) { request in
+            apiTestJSONResponse(
+                #"{"active": true, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+
+        coordinator.start(streamID: "stream-123")
+        XCTAssertNil(coordinator.lastProgressDate)
+        let connectionStartedAt = try XCTUnwrap(coordinator.lastTransportActivityDate)
+
+        await coordinator.recoverStaleStreamIfNeeded(
+            now: connectionStartedAt.addingTimeInterval(18.1)
+        )
+
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+        XCTAssertEqual(streamClient.stopCount, 1)
+        XCTAssertEqual(coordinator.recoveryState, .reconnecting)
+    }
+
+    @MainActor
+    func testStaleRecoveryDoesNotFinishReplacementStreamAfterTranscriptLoad() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = true
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate,
+            timing: ChatStreamCoordinatorTiming(
+                checkingInterval: 5,
+                reconnectInterval: 18,
+                runningToolReconnectInterval: 25,
+                statusPollCooldown: 4,
+                transportFreshInterval: 12
+            )
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+        delegate.onLoadMessages = {
+            coordinator.start(streamID: "stream-new")
+        }
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: start)
+
+        // 12.1s: past transportFreshInterval, so the stale-recovery status poll
+        // actually fires (#227).
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(12.1))
+
+        XCTAssertEqual(coordinator.activeStreamID, "stream-new")
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+        XCTAssertTrue(delegate.completedNeedsTranscriptRefreshValues.isEmpty)
+        XCTAssertTrue(liveActivityManager.ends.isEmpty)
+    }
+
+    @MainActor
+    func testStaleRecoverySkipsFinalizeWhenRunCompletesDuringLoad() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = true
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate,
+            timing: ChatStreamCoordinatorTiming(
+                checkingInterval: 5,
+                reconnectInterval: 18,
+                runningToolReconnectInterval: 25,
+                statusPollCooldown: 4,
+                transportFreshInterval: 12
+            )
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+        // The live SSE delivers completion while the stale-recovery transcript
+        // reload is suspended.
+        delegate.onLoadMessages = {
+            streamClient.emit(.done(DoneStreamEvent()))
+        }
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: start)
+
+        // 12.1s: past transportFreshInterval, so the stale-recovery status poll
+        // actually fires (#227).
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(12.1))
+
+        // PR #266 review #3: the run generation captured before the load changed
+        // when `.done` finalized the run, so the now-stale stale-recovery path
+        // bails via the shared canFinalizeRunAfterLoad guard instead of finalizing
+        // a second time (no double end / double finishStream).
+        XCTAssertEqual(liveActivityManager.ends.map(\.status), [.complete])
+        XCTAssertNil(coordinator.activeStreamID)
+    }
+
+    @MainActor
+    func testStaleRecoveryFinalizesInactiveStreamAndEndsLiveActivity() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        // The reloaded transcript surfaced the assistant reply for the completed run.
+        delegate.latestServerLoadHadAssistantResponseAfterLatestUser = true
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate,
+            timing: ChatStreamCoordinatorTiming(
+                checkingInterval: 5,
+                reconnectInterval: 18,
+                runningToolReconnectInterval: 25,
+                statusPollCooldown: 4,
+                transportFreshInterval: 12
+            )
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(#"{"active": false, "stream_id": "stream-123"}"#, for: request)
+        }
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+
+        coordinator.start(streamID: "stream-123")
+        coordinator.markProgress(now: start)
+
+        // 12.1s: past transportFreshInterval, so the stale-recovery status poll
+        // actually fires (#227).
+        await coordinator.recoverStaleStreamIfNeeded(now: start.addingTimeInterval(12.1))
+
+        // Happy path: server reports the stale run inactive and no concurrent run or
+        // completion intervened, so canFinalizeRunAfterLoad lets the stale-recovery
+        // path complete from the refreshed transcript and end the Live Activity.
+        XCTAssertNil(coordinator.activeStreamID)
+        XCTAssertFalse(coordinator.isConnectionSuspended)
+        XCTAssertEqual(liveActivityManager.ends.map(\.status), [.complete])
+    }
+
+    @MainActor
+    func testTransportErrorSuspendsAndReconnectsWithReplay() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(
+                #"{"active": false, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+
+        coordinator.start(streamID: "stream-123")
+        let reconnected = expectation(description: "the stream reconnected")
+        streamClient.onStart = { _ in reconnected.fulfill() }
+        streamClient.emit(.token("Partial answer."), lastEventID: "session-abc:4")
+        streamClient.emit(.transportError("lost connection"), lastEventID: "session-abc:4")
+
+        await fulfillment(of: [reconnected], timeout: 2)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+
+        let replayURL = try XCTUnwrap(streamClient.startedURLs.last)
+        let queryItems = URLComponents(url: replayURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(queryItems.first(where: { $0.name == "after_seq" })?.value, "4")
+        XCTAssertEqual(delegate.saveSnapshotCount, 1)
+        XCTAssertEqual(liveActivityManager.markStaleCount, 1)
+    }
+
+    /// #599: a cursorless re-attach to a live run can replay it from the start.
+    @MainActor
+    func testTransportErrorOnLiveRunReconnectsFromLastEventCursor() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(
+                #"{"active": true, "stream_id": "stream-123", "replay_available": true}"#,
+                for: request
+            )
+        }
+
+        coordinator.start(streamID: "stream-123")
+        let reconnected = expectation(description: "the stream reconnected")
+        streamClient.onStart = { _ in reconnected.fulfill() }
+        streamClient.emit(.token("Partial answer."), lastEventID: "stream-123:4")
+        streamClient.emit(.transportError("lost connection"), lastEventID: "stream-123:4")
+
+        await fulfillment(of: [reconnected], timeout: 2)
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+
+        let resumedURL = try XCTUnwrap(streamClient.startedURLs.last)
+        let queryItems = URLComponents(url: resumedURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(queryItems.first(where: { $0.name == "replay" })?.value, "1")
+        XCTAssertEqual(queryItems.first(where: { $0.name == "after_seq" })?.value, "4")
+        XCTAssertTrue(coordinator.isReplayConnection)
+    }
+
+    /// #599 review: a reload that adopts a different live stream must not resume
+    /// it from the previous stream's seq.
+    @MainActor
+    func testSessionLoadAdoptingNewStreamDropsPreviousStreamCursor() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/stream/status")
+            return apiTestJSONResponse(
+                #"{"active": true, "stream_id": "stream-new", "replay_available": true}"#,
+                for: request
+            )
+        }
+        delegate.onLoadMessages = {
+            let preparation = coordinator.prepareForSessionLoad()
+            coordinator.reconcileSessionLoad(
+                loadedActiveStreamID: "stream-new",
+                preparation: preparation,
+                usedCacheFallback: false
+            )
+        }
+
+        coordinator.start(streamID: "stream-old")
+        streamClient.emit(.token("Old answer."), lastEventID: "stream-old:500")
+        coordinator.suspendActiveStreamConnection()
+        await delegate.onLoadMessages?()
+
+        XCTAssertNil(coordinator.lastEventID)
+
+        await coordinator.reconnectIfNeeded()
+
+        let resumedURL = try XCTUnwrap(streamClient.startedURLs.last)
+        let queryItems = URLComponents(url: resumedURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(queryItems.first(where: { $0.name == "stream_id" })?.value, "stream-new")
+        XCTAssertEqual(queryItems.first(where: { $0.name == "after_seq" })?.value, "0")
+    }
+
+    @MainActor
+    func testCancelDoesNotFinishReplacementStreamWhenResponseReturnsLate() async throws {
+        let cancelRequestStarted = expectation(description: "cancel request started")
+        let releaseCancelResponse = DispatchSemaphore(value: 0)
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/cancel")
+            cancelRequestStarted.fulfill()
+            _ = releaseCancelResponse.wait(timeout: .now() + 2)
+            return apiTestJSONResponse(#"{"ok": true}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-cancel")
+        let cancelTask = Task { @MainActor in
+            try await coordinator.cancelActiveStream()
+        }
+
+        await fulfillment(of: [cancelRequestStarted], timeout: 1)
+        coordinator.start(streamID: "stream-new")
+        releaseCancelResponse.signal()
+        let response = try await cancelTask.value
+
+        XCTAssertEqual(response?.ok, true)
+        XCTAssertEqual(coordinator.activeStreamID, "stream-new")
+        XCTAssertEqual(streamClient.startedURLs.count, 2)
+        XCTAssertTrue(liveActivityManager.ends.isEmpty)
+        XCTAssertEqual(delegate.finishCount, 0)
+    }
+
+    @MainActor
+    func testCompletionErrorAndCancelFinalizeLiveActivity() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            XCTAssertEqual(request.url?.path, "/api/chat/cancel")
+            return apiTestJSONResponse(#"{"ok": true}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-complete")
+        streamClient.emit(.done(DoneStreamEvent()))
+        XCTAssertNil(coordinator.activeStreamID)
+        XCTAssertEqual(delegate.completedNeedsTranscriptRefreshValues, [true])
+        XCTAssertEqual(liveActivityManager.ends.last?.status, .complete)
+
+        coordinator.start(streamID: "stream-error")
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.25,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 12.25)
+        streamClient.emit(.error("server failed"))
+        XCTAssertNil(coordinator.activeStreamID)
+        XCTAssertNil(coordinator.liveTokensPerSecond)
+        XCTAssertEqual(delegate.errorMessages, ["server failed"])
+        XCTAssertEqual(liveActivityManager.ends.last?.status, .failed)
+
+        coordinator.start(streamID: "stream-cancel")
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 24.5,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 24.5)
+        let response = try await coordinator.cancelActiveStream()
+        XCTAssertEqual(response?.ok, true)
+        XCTAssertNil(coordinator.activeStreamID)
+        XCTAssertNil(coordinator.liveTokensPerSecond)
+        XCTAssertEqual(liveActivityManager.ends.last?.status, .cancelled)
+    }
+
+    @MainActor
+    func testSuccessfulCompletionRetainsOwnerAndHydrationAcrossDuplicateDoneAndTeardown() {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+        coordinator.start(streamID: "owned-run")
+        XCTAssertNil(coordinator.successfulResponseCompletion)
+        streamClient.emit(.done(DoneStreamEvent()))
+        XCTAssertEqual(coordinator.successfulResponseCompletion?.streamID, "owned-run")
+        XCTAssertEqual(coordinator.successfulResponseCompletion?.needsTranscriptRefresh, true)
+        streamClient.emit(.done(DoneStreamEvent()))
+        streamClient.emit(.streamEnd)
+        XCTAssertEqual(coordinator.successfulResponseCompletion?.streamID, "owned-run")
+        XCTAssertEqual(coordinator.successfulResponseCompletion?.needsTranscriptRefresh, true)
+        coordinator.start(streamID: "new-run")
+        XCTAssertNil(coordinator.successfulResponseCompletion)
+        streamClient.emit(.error("failed"))
+        XCTAssertNil(coordinator.successfulResponseCompletion)
+    }
+
+    @MainActor
+    func testRunEndingRecordsEachRunAndNeverLeaksAStopIntoTheNextCompletion() async throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        ) { request in
+            apiTestJSONResponse(#"{"ok": true}"#, for: request)
+        }
+
+        coordinator.start(streamID: "stream-cancel")
+        _ = try await coordinator.cancelActiveStream()
+        XCTAssertEqual(coordinator.latestRunEnding?.ending, .cancelled)
+
+        // A normal completion clears the run start on `done`, before the
+        // trailing `streamEnd` teardown; the ending must still be recorded as
+        // completed rather than inheriting the previous stop.
+        coordinator.start(streamID: "stream-complete")
+        XCTAssertNil(coordinator.latestRunEnding, "A new run clears the previous ending")
+        streamClient.emit(.done(DoneStreamEvent()))
+        XCTAssertEqual(coordinator.latestRunEnding?.ending, .completed)
+        streamClient.emit(.streamEnd)
+        XCTAssertEqual(coordinator.latestRunEnding?.ending, .completed)
+
+        coordinator.start(streamID: "stream-error")
+        streamClient.emit(.error("server failed"))
+        XCTAssertEqual(coordinator.latestRunEnding?.ending, .failed)
+    }
+
+    @MainActor
+    func testLiveResponseSpeedAcceptsOnlyCurrentSessionExactReadingsAndClearsOnLifecycleChanges() {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+
+        coordinator.start(streamID: "stream-one")
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.25,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 12.25)
+
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 99,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "another-session"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 12.25)
+
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.25,
+            isTokensPerSecondAvailable: true,
+            isEstimated: true,
+            sessionId: "session-abc"
+        )))
+        XCTAssertNil(coordinator.liveTokensPerSecond)
+
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 24.5,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        _ = coordinator.prepareForSessionLoad()
+        XCTAssertNil(coordinator.liveTokensPerSecond)
+
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 24.5,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        coordinator.start(streamID: "stream-two")
+        XCTAssertNil(coordinator.liveTokensPerSecond)
+
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 36.75,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        streamClient.emit(.done(DoneStreamEvent(usage: ContextWindowSnapshot(
+            contextLength: nil,
+            thresholdTokens: nil,
+            lastPromptTokens: nil,
+            inputTokens: nil,
+            outputTokens: nil,
+            estimatedCost: nil,
+            tokensPerSecond: 40.5
+        ))))
+
+        XCTAssertNil(coordinator.liveTokensPerSecond)
+        XCTAssertEqual(delegate.donePayloads.last?.usage?.tokensPerSecond, 40.5)
+    }
+
+    @MainActor
+    func testMeteringDoesNotNotifyWhenTokensPerSecondUnchanged() {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+        coordinator.start(streamID: "stream-one")
+
+        let first = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.liveTokensPerSecond
+        } onChange: {
+            first.increment()
+        }
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.25,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(first.value, 1)
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 12.25)
+
+        let duplicate = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.liveTokensPerSecond
+        } onChange: {
+            duplicate.increment()
+        }
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.25,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(duplicate.value, 0)
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 12.25)
+
+        let cleared = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.liveTokensPerSecond
+        } onChange: {
+            cleared.increment()
+        }
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.25,
+            isTokensPerSecondAvailable: true,
+            isEstimated: true,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(cleared.value, 1)
+        XCTAssertNil(coordinator.liveTokensPerSecond)
+
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 24.5,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 24.5)
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 99,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "another-session"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 24.5)
+    }
+
+    @MainActor
+    func testLiveResponseSpeedClearsImmediatelyWhenTransportFails() {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+
+        coordinator.start(streamID: "stream-one")
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.25,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 12.25)
+
+        streamClient.emit(.transportError("Connection lost"))
+
+        XCTAssertNil(coordinator.liveTokensPerSecond)
+        XCTAssertTrue(coordinator.isConnectionSuspended)
+    }
+
+    @MainActor
+    func testDecodedAppErrorEventTerminatesStreamAndSurfacesMessage() {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        )
+
+        coordinator.start(streamID: "stream-apperror")
+        streamClient.emit(SSEEventDecoder.decode(
+            eventType: "apperror",
+            data: #"{"message": "Auto-compression failed", "type": "compression_error"}"#
+        ))
+
+        // apperror rides the terminal `.error` path: message surfaced, run failed,
+        // socket stopped, stream fully finished (issue #25).
+        XCTAssertEqual(delegate.errorMessages, ["Auto-compression failed"])
+        XCTAssertEqual(liveActivityManager.ends.last?.status, .failed)
+        XCTAssertNil(coordinator.activeStreamID)
+        XCTAssertEqual(streamClient.stopCount, 1)
+        XCTAssertEqual(delegate.finishCount, 1)
+    }
+
+    // MARK: - Late events after completion (#288)
+
+    @MainActor
+    func testLateMeteringAndLifecycleAfterDoneContinueTeardown() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        )
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.done(DoneStreamEvent()))
+        XCTAssertTrue(coordinator.hasCompletedCurrentResponse)
+
+        // Metering after completion is allowed to update the TPS readout. The
+        // event must be production-shaped: displayableTokensPerSecond projects
+        // only when isTokensPerSecondAvailable == true and isEstimated != true.
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.5,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 12.5)
+
+        let duplicate = ObservationChangeProbe()
+        withObservationTracking {
+            _ = coordinator.liveTokensPerSecond
+        } onChange: {
+            duplicate.increment()
+        }
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 12.5,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "session-abc"
+        )))
+        XCTAssertEqual(duplicate.value, 0)
+
+        // Foreign-session metering must not update the readout.
+        streamClient.emit(.metering(MeteringStreamEvent(
+            tokensPerSecond: 99,
+            isTokensPerSecondAvailable: true,
+            isEstimated: false,
+            sessionId: "other-session"
+        )))
+        XCTAssertEqual(coordinator.liveTokensPerSecond, 12.5, "foreign session metering ignored")
+
+        // Lifecycle must continue so the stream finishes and the Live Activity
+        // is not left dangling on "running".
+        streamClient.emit(.streamEnd)
+
+        XCTAssertEqual(delegate.finishCount, 1)
+        XCTAssertFalse(coordinator.hasCompletedCurrentResponse, "finishStream resets for the next run")
+        XCTAssertEqual(liveActivityManager.ends.count, 1, "no duplicate end from a second finalize")
+        XCTAssertTrue(coordinator.isTerminalFenceActiveForTesting(), "terminal fence survives finishStream")
+
+        // Teardown is one-shot per run: later terminal events must not repeat
+        // delegate finish/drain/title-refresh side effects (PR #295 re-gate).
+        streamClient.emit(.error("late"))
+        streamClient.emit(.cancelled)
+        streamClient.emit(.streamEnd)
+
+        XCTAssertEqual(delegate.finishCount, 1, "teardown exactly once")
+        XCTAssertEqual(liveActivityManager.ends.count, 1)
+        XCTAssertTrue(coordinator.isTransportFinishedForTesting())
+    }
+
+    @MainActor
+    func testTransportErrorAfterDoneStillFinishesExactlyOnce() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        )
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.done(DoneStreamEvent()))
+        // Transport closes without delivering streamEnd.
+        streamClient.emit(.transportError("connection dropped"))
+
+        // Settled teardown still runs: finish, snapshot cleanup, drain,
+        // completed-title refresh — with the completed outcome preserved.
+        XCTAssertEqual(delegate.finishCount, 1, "transportError after done must not skip teardown")
+        XCTAssertEqual(liveActivityManager.ends.map(\.status), [.complete])
+        XCTAssertNil(coordinator.activeStreamID)
+
+        // And it is idempotent against further terminal events.
+        streamClient.emit(.streamEnd)
+        streamClient.emit(.cancelled)
+        XCTAssertEqual(delegate.finishCount, 1)
+    }
+
+    /// webui closes the socket right after `cancel` or `error`, and the SSE
+    /// library reports that close as a transport error. It must not replace the
+    /// server's message or show an error for a cancel.
+    @MainActor
+    func testServerCloseAfterErrorOrCancelShowsNoTransportError() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+
+        coordinator.start(streamID: "stream-error")
+        streamClient.emit(.error("server failed"))
+        streamClient.emit(.transportError("stream closed by server"))
+        XCTAssertEqual(delegate.errorMessages, ["server failed"])
+
+        coordinator.start(streamID: "stream-cancel")
+        streamClient.emit(.cancelled)
+        streamClient.emit(.transportError("stream closed by server"))
+        XCTAssertEqual(delegate.errorMessages, ["server failed"])
+        XCTAssertEqual(delegate.finishCount, 2)
+    }
+
+    @MainActor
+    func testNewRunResetsTeardownOwnerAndContentFence() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.done(DoneStreamEvent()))
+        streamClient.emit(.streamEnd)
+        XCTAssertTrue(coordinator.isTerminalFenceActiveForTesting())
+
+        // Next run disarms both the content fence and the teardown owner.
+        coordinator.prepareForNewResponse()
+        XCTAssertFalse(coordinator.isTerminalFenceActiveForTesting())
+        XCTAssertFalse(coordinator.isTransportFinishedForTesting())
+
+        // A token in the new run is accepted again.
+        coordinator.start(streamID: "stream-456")
+        streamClient.emit(.token("fresh answer"))
+        XCTAssertEqual(delegate.tokens.last, "fresh answer", "content accepted after new run starts")
+    }
+
+    @MainActor
+    func testTokenAfterStreamEndIsStillDroppedByTerminalFence() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.done(DoneStreamEvent()))
+        streamClient.emit(.streamEnd)
+        XCTAssertEqual(delegate.finishCount, 1)
+
+        // done → streamEnd → late token must still not corrupt the transcript
+        // (#288 review): finishStream clears hasCompletedCurrentResponse but the
+        // terminal fence stays armed until the next run starts.
+        streamClient.emit(.token("Casual Greeting Exchange"))
+
+        XCTAssertEqual(delegate.tokens, [], "token after streamEnd must be dropped")
+    }
+
+    @MainActor
+    func testLateTitlePayloadReachesDelegateAfterDone() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(streamClient: streamClient, delegate: delegate)
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.done(DoneStreamEvent()))
+
+        streamClient.emit(.title(TitleStreamEvent(sessionId: "session-abc", title: "Casual Greeting Exchange")))
+
+        XCTAssertEqual(
+            delegate.titles.last?.title,
+            "Casual Greeting Exchange",
+            "late title must actually route to streamCoordinatorUpdateTitle (not silently dropped)"
+        )
+    }
+
+    @MainActor
+    func testPostDoneErrorDoesNotDoubleEndLiveActivity() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        )
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.done(DoneStreamEvent()))
+        streamClient.emit(.error("late failure"))
+
+        // Exactly one end (.complete from done); the late error tears down the
+        // transport without publishing a failed end over a settled completion.
+        XCTAssertEqual(liveActivityManager.ends.map(\.status), [.complete])
+        XCTAssertEqual(delegate.errorMessages, [], "post-completion error must not surface as failure banner")
+        XCTAssertEqual(delegate.finishCount, 1)
+    }
+
+    /// Table-driven matrix: every content-family event after completion is
+    /// dropped, so a future enum case cannot silently land in the wrong bucket.
+    @MainActor
+    func testAllContentEventsAreDroppedAfterCompletion() throws {
+        let cases: [(String, SSEEvent)] = [
+            ("token", .token("late")),
+            ("interimAssistant", .interimAssistant(InterimAssistantStreamEvent(text: "late"))),
+            ("reasoning", .reasoning("late")),
+            ("toolStarted", .toolStarted(ToolStreamEvent(eventType: "tool.started", name: "bash", preview: nil, args: nil, duration: nil, isError: false))),
+            ("toolCompleted", .toolCompleted(ToolStreamEvent(eventType: "tool.completed", name: "bash", preview: nil, args: nil, duration: 0.1, isError: false)))
+        ]
+        for (name, event) in cases {
+            let streamClient = CoordinatorSpySSEStreamingClient()
+            let liveActivityManager = CoordinatorSpyLiveActivityManager()
+            let delegate = CoordinatorDelegateSpy()
+            let coordinator = makeCoordinator(
+                streamClient: streamClient,
+                liveActivityManager: liveActivityManager,
+                delegate: delegate
+            )
+
+            coordinator.start(streamID: "stream-123")
+            streamClient.emit(.done(DoneStreamEvent()))
+            streamClient.emit(event)
+
+            XCTAssertTrue(delegate.tokens.isEmpty, "\(name) after done leaked into transcript tokens")
+            XCTAssertTrue(delegate.interimPayloads.isEmpty, "\(name): interim projection must be empty")
+            XCTAssertTrue(delegate.reasoningTexts.isEmpty, "\(name): reasoning projection must be empty")
+            XCTAssertTrue(delegate.toolStartedPayloads.isEmpty, "\(name): tool-started projection must be empty")
+            XCTAssertTrue(delegate.toolCompletedPayloads.isEmpty, "\(name): tool-completed projection must be empty")
+            XCTAssertEqual(liveActivityManager.ends.map(\.status), [.complete], "\(name): exactly one complete end")
+        }
+    }
+
+    @MainActor
+    func testDuplicateDoneAfterCompletionIsIgnoredWithoutDoubleFinalize() throws {
+        let streamClient = CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = CoordinatorSpyLiveActivityManager()
+        let delegate = CoordinatorDelegateSpy()
+        let coordinator = makeCoordinator(
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            delegate: delegate
+        )
+
+        coordinator.start(streamID: "stream-123")
+        streamClient.emit(.done(DoneStreamEvent()))
+        streamClient.emit(.done(DoneStreamEvent()))
+
+        XCTAssertEqual(delegate.donePayloads.count, 1, "duplicate done must not re-apply")
+        XCTAssertEqual(delegate.completedNeedsTranscriptRefreshValues.count, 1, "single finalize only")
+        XCTAssertEqual(liveActivityManager.ends.count, 1)
+        XCTAssertNil(coordinator.activeStreamID)
+    }
+
+    @MainActor
+    func testRatingCounterCountsCompletionOnceAndExcludesCancelledOrFailedResponses() throws {
+        let state = try makeRatingState()
+        let stream = CoordinatorSpySSEStreamingClient()
+        let coordinator = makeCoordinator(streamClient: stream, ratingPromptState: state)
+        coordinator.start(streamID: "complete")
+        stream.emit(.done(DoneStreamEvent()))
+        stream.emit(.done(DoneStreamEvent()))
+        stream.emit(.streamEnd)
+        stream.emit(.done(DoneStreamEvent()))
+        XCTAssertEqual(state.policy.completedResponses, 11)
+
+        for event in [SSEEvent.cancelled, .error("failed"), .streamEnd] {
+            coordinator.prepareForNewResponse()
+            coordinator.start(streamID: UUID().uuidString)
+            stream.emit(event)
+        }
+        XCTAssertEqual(state.policy.completedResponses, 11)
+        coordinator.prepareForNewResponse()
+        coordinator.start(streamID: "second-complete")
+        stream.emit(.done(DoneStreamEvent()))
+        XCTAssertEqual(state.policy.completedResponses, 12)
+    }
+
+    @MainActor
+    func testRatingStreamGuardIsServerScopedAndDoesNotRetainCoordinator() throws {
+        let state = try makeRatingState()
+        let server = URL(staticString: "https://example.test")
+        var coordinator: ChatStreamCoordinator? = makeCoordinator(ratingPromptState: state)
+        coordinator?.start(streamID: "running")
+        coordinator?.suspendActiveStreamConnection()
+        XCTAssertTrue(state.hasActiveStream(on: server), "Suspending transport does not finish the stream")
+        XCTAssertFalse(state.hasActiveStream(on: URL(staticString: "https://other.test")))
+        weak var weakCoordinator = coordinator
+        coordinator = nil
+        XCTAssertNil(weakCoordinator)
+        XCTAssertFalse(state.hasActiveStream(on: server))
+    }
+
+    @MainActor
+    func testRatingRequestRechecksCoordinatorAfterServerRefresh() async throws {
+        let state = try makeRatingState()
+        let coordinator = makeCoordinator(ratingPromptState: state)
+        await state.requestWhenQuiet(
+            moment: .foreground,
+            server: URL(staticString: "https://example.test"),
+            isSessionListVisible: { true },
+            loadSessions: {
+                coordinator.start(streamID: "started-during-fetch")
+                return []
+            },
+            request: { XCTFail("A newly active coordinator must suppress the request") }
+        )
+        XCTAssertNil(state.policy.lastRequestDate)
+    }
+
+    @MainActor
+    private func makeRatingState() throws -> RatingPromptState {
+        let suite = "ChatStreamRatingTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(Date().addingTimeInterval(-4 * RatingPromptPolicy.day), forKey: RatingPromptSettings.firstLaunchDateKey)
+        defaults.set(10, forKey: TipJar.completedResponseCountKey)
+        return RatingPromptState(defaults: defaults)
+    }
+
+    private func makeModelContext() throws -> ModelContext {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(
+            for: CachedSession.self,
+            CachedMessage.self,
+            configurations: configuration
+        )
+        return ModelContext(container)
+    }
+
+    @MainActor
+    private func makeCoordinator(
+        streamClient: CoordinatorSpySSEStreamingClient? = nil,
+        liveActivityManager: CoordinatorSpyLiveActivityManager? = nil,
+        delegate: CoordinatorDelegateSpy? = nil,
+        timing: ChatStreamCoordinatorTiming = .standard,
+        ratingPromptState: RatingPromptState? = nil,
+        reconnectDelay: @escaping ChatStreamReconnectDelay = { _ in },
+        // Online unless a test passes its own box, so no test depends on the
+        // simulator's network path.
+        isOnline: CoordinatorLockedBox<Bool>? = nil,
+        handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data) = { request in
+            apiTestJSONResponse(#"{"active": true}"#, for: request)
+        }
+    ) -> ChatStreamCoordinator {
+        let streamClient = streamClient ?? CoordinatorSpySSEStreamingClient()
+        let liveActivityManager = liveActivityManager ?? CoordinatorSpyLiveActivityManager()
+        let delegate = delegate ?? CoordinatorDelegateSpy()
+        let coordinator = ChatStreamCoordinator(
+            client: makeClient(handler: handler),
+            streamClient: streamClient,
+            liveActivityManager: liveActivityManager,
+            showsLiveActivityResponseExcerpts: false,
+            timing: timing,
+            ratingPromptState: ratingPromptState ?? .shared,
+            reconnectDelay: reconnectDelay,
+            isNetworkAvailable: { isOnline?.value ?? true }
+        )
+        coordinator.attach(delegate: delegate)
+        return coordinator
+    }
+}
+
+@MainActor
+private final class CoordinatorDelegateSpy: ChatStreamCoordinatorDelegate {
+    var streamCoordinatorSessionID: String? = "session-abc"
+    var streamCoordinatorDisplayTitle = "Planning"
+    var streamCoordinatorHasRunningLiveToolCall = false
+    var streamCoordinatorHasPendingPrompt = false
+    var latestServerLoadHadAssistantResponseAfterLatestUser = false
+    var streamCoordinatorLatestServerLoadHadAssistantResponseAfterLatestUser: Bool {
+        latestServerLoadHadAssistantResponseAfterLatestUser
+    }
+    var streamCoordinatorStreamingAssistantMessageID: String?
+
+    private(set) var loadMessagesCount = 0
+    private(set) var loadMessageReceivedModelContextValues: [Bool] = []
+    private(set) var startMonitoringCount = 0
+    private(set) var stopMonitoringClearPromptValues: [Bool] = []
+    private(set) var saveSnapshotCount = 0
+    private(set) var restoredSnapshotStreamIDs: [String] = []
+    private(set) var removedSnapshotStreamIDs: [String?] = []
+    private(set) var flushedNoticeCount = 0
+    private(set) var drainQueueCount = 0
+    private(set) var refreshTitleCount = 0
+    private(set) var completedNeedsTranscriptRefreshValues: [Bool] = []
+    private(set) var finishCount = 0
+    private(set) var errorMessages: [String] = []
+    private(set) var recoveryErrors: [String] = []
+    private(set) var confirmedRecoveryCount = 0
+    private(set) var startConnectionReplayValues: [Bool] = []
+    private(set) var resetRecoveryCount = 0
+    private(set) var tokens: [String] = []
+    private(set) var donePayloads: [DoneStreamEvent] = []
+    private(set) var pendingSteerLeftovers: [String] = []
+    var latestAssistantMessageID: String? = "assistant-latest"
+    var restoresSnapshot = false
+    var restoredSnapshotEventID: String?
+    var appendTokenResult = true
+    var doneHasCompletedTranscript = false
+    var onLoadMessages: (() async -> Void)?
+
+    func streamCoordinatorLoadMessages(modelContext: ModelContext?) async {
+        loadMessagesCount += 1
+        loadMessageReceivedModelContextValues.append(modelContext != nil)
+        await onLoadMessages?()
+    }
+
+    func streamCoordinatorLatestAssistantMessageID() -> String? {
+        latestAssistantMessageID
+    }
+
+    func streamCoordinatorStartAuxiliaryMonitoring() {
+        startMonitoringCount += 1
+    }
+
+    func streamCoordinatorStopAuxiliaryMonitoring(clearPrompt: Bool) {
+        stopMonitoringClearPromptValues.append(clearPrompt)
+    }
+
+    func streamCoordinatorSaveSnapshotIfNeeded() {
+        saveSnapshotCount += 1
+    }
+
+    func streamCoordinatorRestoreSnapshotIfAvailable(streamID: String) -> ChatStreamSnapshotRestoreResult {
+        restoredSnapshotStreamIDs.append(streamID)
+        return ChatStreamSnapshotRestoreResult(
+            didRestoreSnapshot: restoresSnapshot || restoredSnapshotEventID != nil,
+            lastEventID: restoredSnapshotEventID
+        )
+    }
+
+    func streamCoordinatorRemoveSnapshot(streamID: String?) {
+        removedSnapshotStreamIDs.append(streamID)
+    }
+
+    func streamCoordinatorFlushPinnedLocalNoticesToTranscript() {
+        flushedNoticeCount += 1
+    }
+
+    func streamCoordinatorDrainQueuedSlashMessageIfIdle() {
+        drainQueueCount += 1
+    }
+
+    func streamCoordinatorRefreshCompletedResponseTitleIfNeeded() {
+        refreshTitleCount += 1
+    }
+
+    func streamCoordinatorDidCompleteCurrentResponse(needsTranscriptRefresh: Bool) {
+        completedNeedsTranscriptRefreshValues.append(needsTranscriptRefresh)
+    }
+
+    func streamCoordinatorDidFinishStream() {
+        finishCount += 1
+    }
+
+    func streamCoordinatorDidReceiveErrorMessage(_ message: String) {
+        errorMessages.append(message)
+    }
+
+    func streamCoordinatorDidReceiveRecoveryError(_ error: Error) {
+        recoveryErrors.append(error.localizedDescription)
+    }
+
+    func streamCoordinatorDidConfirmRecovery() {
+        confirmedRecoveryCount += 1
+    }
+
+    func streamCoordinatorDidStartConnection(isReplay: Bool) {
+        startConnectionReplayValues.append(isReplay)
+    }
+
+    func streamCoordinatorDidResetRecoveryState() {
+        resetRecoveryCount += 1
+    }
+
+    func streamCoordinatorAppendToken(_ text: String) -> Bool {
+        tokens.append(text)
+        return appendTokenResult
+    }
+
+    private(set) var interimPayloads: [InterimAssistantStreamEvent] = []
+    private(set) var reasoningTexts: [String] = []
+    private(set) var toolStartedPayloads: [ToolStreamEvent] = []
+    private(set) var toolCompletedPayloads: [ToolStreamEvent] = []
+
+    func streamCoordinatorAppendInterimAssistant(_ payload: InterimAssistantStreamEvent) -> Bool {
+        interimPayloads.append(payload)
+        return payload.text?.isEmpty == false
+    }
+
+    func streamCoordinatorAppendReasoning(_ text: String) -> Bool {
+        reasoningTexts.append(text)
+        return !text.isEmpty
+    }
+
+    func streamCoordinatorAppendToolCall(_ payload: ToolStreamEvent) -> Bool {
+        toolStartedPayloads.append(payload)
+        return true
+    }
+
+    func streamCoordinatorCompleteToolCall(_ payload: ToolStreamEvent) -> Bool {
+        toolCompletedPayloads.append(payload)
+        return true
+    }
+
+    private(set) var titles: [TitleStreamEvent] = []
+
+    func streamCoordinatorUpdateTitle(_ payload: TitleStreamEvent) -> Bool {
+        titles.append(payload)
+        return payload.title?.isEmpty == false
+    }
+
+    func streamCoordinatorApplyDone(_ payload: DoneStreamEvent) -> Bool {
+        donePayloads.append(payload)
+        return doneHasCompletedTranscript
+    }
+
+    func streamCoordinatorApplyApprovalUpdate(_ update: ApprovalPendingResponse) {}
+
+    func streamCoordinatorApplyClarificationUpdate(_ update: ClarificationPendingResponse) {}
+
+    func streamCoordinatorEnqueuePendingSteerLeftover(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        pendingSteerLeftovers.append(trimmed)
+        return true
+    }
+}
+
+private final class CoordinatorLockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        return count
+    }
+}
+
+private final class CoordinatorLockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Value
+
+    init(_ initial: Value) {
+        storage = initial
+    }
+
+    var value: Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func mutate(_ body: (inout Value) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        body(&storage)
+    }
+}
+
+@MainActor
+private final class CoordinatorSpySSEStreamingClient: SSEStreamingClient {
+    private(set) var startedURLs: [URL] = []
+    private(set) var stopCount = 0
+    private(set) var lastEventID: String?
+    private var onEvent: (@MainActor (SSEEvent) -> Void)?
+    /// Called after each start, so a test can wait on a reconnect instead of polling.
+    var onStart: ((URL) -> Void)?
+
+    func start(url: URL, onEvent: @escaping @MainActor (SSEEvent) -> Void) {
+        startedURLs.append(url)
+        lastEventID = nil
+        self.onEvent = onEvent
+        onStart?(url)
+    }
+
+    func stop() {
+        stopCount += 1
+    }
+
+    func emit(_ event: SSEEvent, lastEventID: String? = nil) {
+        self.lastEventID = lastEventID
+        onEvent?(event)
+    }
+}
+
+@MainActor
+private final class CoordinatorSpyLiveActivityManager: AgentLiveActivityManaging {
+    struct Start: Equatable {
+        let sessionID: String
+        let sessionTitle: String
+        let streamID: String?
+    }
+
+    struct End: Equatable {
+        let status: AgentRunActivityStatus
+        let activity: String
+        let errorSummary: String?
+    }
+
+    private(set) var starts: [Start] = []
+    /// Run starts handed to the widget, recorded alongside `starts` so the
+    /// existing `Start` equality assertions stay independent of timing (#406).
+    private(set) var startedAts: [Date] = []
+    /// The server each start named, so push registration finds its pairing (#566).
+    private(set) var servers: [URL] = []
+    private(set) var updates: [AgentLiveActivityEvent] = []
+    private(set) var markStaleCount = 0
+    private(set) var ends: [End] = []
+
+    func start(sessionID: String, server: URL, sessionTitle: String, streamID: String?, startedAt: Date) {
+        starts.append(Start(sessionID: sessionID, sessionTitle: sessionTitle, streamID: streamID))
+        startedAts.append(startedAt)
+        servers.append(server)
+    }
+
+    func update(_ event: AgentLiveActivityEvent) {
+        updates.append(event)
+    }
+
+    func markStale() {
+        markStaleCount += 1
+    }
+
+    func end(status: AgentRunActivityStatus, activity: String, errorSummary: String?) {
+        ends.append(End(status: status, activity: activity, errorSummary: errorSummary))
+    }
+}
+
+/// Counts `withObservationTracking` change callbacks; shared by the chat test classes.
+final class ObservationChangeProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+    }
+}
