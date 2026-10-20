@@ -183,7 +183,13 @@ public final class TranscriptViewModel: ObservableObject {
     /// §5 monotonic bottom buffer (added once, never removed).
     @Published public private(set) var bottomBuffer: CGFloat = 0
     /// Whether the user is currently scrolled to the bottom (auto-scroll gate).
-    @Published public var isAtBottom = true
+    /// NOT @Published: it is written from the bottom anchor's
+    /// onAppear/onDisappear (i.e. during layout) and only READ by the
+    /// auto-scroll decision. Publishing it re-rendered the whole transcript
+    /// from inside layout; with tall rich cards the lazy stack's estimates
+    /// made the anchor flip appear/disappear every frame — a 100% CPU
+    /// render loop (sampled in the QA lane: LazySubviewPlacements forever).
+    public var isAtBottom = true
 
     // MARK: Item 11 — rich blocks (additive)
 
