@@ -682,17 +682,23 @@ struct SidebarPanelView: View {
 
     // MARK: Recents (paginated from the store)
 
+    /// Recents = chats outside any project (ChatGPT grammar: project chats
+    /// live under their project, not twice in the drawer).
+    private var looseRecents: [StoredConversation] {
+        vm.filteredRecents.filter { $0.projectID == nil }
+    }
+
     private var recentsSection: some View {
         VStack(alignment: .leading, spacing: 2) {
             sectionLabel("Recents")
-            if vm.recents.isEmpty && vm.loaded {
+            if looseRecents.isEmpty && vm.loaded {
                 Text("No conversations yet")
                     .font(.footnote)
                     .foregroundStyle(Tokens.Palette.textMuted)
                     .padding(.horizontal, 12)
                     .padding(.vertical, Tokens.Spacing.s)
             }
-            ForEach(vm.filteredRecents) { conversation in
+            ForEach(looseRecents) { conversation in
                 conversationRow(conversation)
             }
         }
