@@ -32,9 +32,13 @@ name: "09 rich poll vote and chart data table toggle"
     id: "rich.poll.preview-poll.option.2"
 - tapOn:
     id: "rich.poll.preview-poll.submit"
-- extendedWaitUntil:
-    visible: "Rich responses · Your choice"
-    timeout: 10000
+# The vote posts as a message and the chat follows it to the bottom; the
+# results stay on the card above.
+- scrollUntilVisible:
+    element: "Rich responses · Your choice"
+    direction: UP
+    timeout: 20000
+- waitForAnimationToEnd
 - takeScreenshot: 09-poll-results
 - scrollUntilVisible:
     element:
