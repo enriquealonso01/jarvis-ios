@@ -186,7 +186,7 @@ import Observation
         for word in ["show", "hide", "off"] {
             let refused = await chat.model.executeSlashCommand(Self.command("reasoning"), args: word)
             XCTAssertEqual(refused, .unsupported(friendlyMessage:
-                "On a Hermes host, /reasoning \(word) changes display settings for every client, so Hermex doesn't send it."))
+                "On a Hermes host, /reasoning \(word) changes display settings for every client, so JARVIS doesn't send it."))
         }
         let usage = await chat.model.executeSlashCommand(Self.command("reasoning"), args: "")
         XCTAssertEqual(usage, .unsupported(friendlyMessage: "Usage: /reasoning none|minimal|low|medium|high|xhigh|max|ultra"))

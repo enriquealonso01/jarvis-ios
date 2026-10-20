@@ -1,0 +1,28 @@
+appId: com.enriquecodes.jarvis
+# Credentials are scripts/local-hermes's fixed loopback-only dev values.
+name: 01 first launch shows the JARVIS sign-in and signs in
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: signin.username
+    timeout: 30000
+- assertVisible: JARVIS
+- assertVisible: Personal Intelligence
+- takeScreenshot: 01-sign-in
+- tapOn:
+    id: signin.username
+- inputText: hermex
+- tapOn:
+    id: signin.password
+- inputText: hermex-local
+- tapOn:
+    id: signin.submit
+- extendedWaitUntil:
+    notVisible:
+      id: signin.submit
+    timeout: 45000
+- waitForAnimationToEnd:
+    timeout: 10000
+- takeScreenshot: 01-home-after-sign-in

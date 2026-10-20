@@ -266,7 +266,7 @@ struct HermesSessionListView: View {
             }
         } message: { failure in
             Text(verbatim: failure.reason + "\n\n"
-                 + String(localized: "Nothing was added. Discard deletes this saved share from Hermex."))
+                 + String(localized: "Nothing was added. Discard deletes this saved share from JARVIS."))
         }
         .modifier(SessionActionConfirmations(
             viewModel: viewModel, sessionPendingDeletion: $covers.deleting, projectPendingDeletion: $covers.deletingProject,
@@ -780,7 +780,7 @@ struct HermesShareFailure {
         case BotAttachmentFailure.unreadable:
             reason = String(localized: "One of the files couldn’t be read.")
         default:
-            reason = String(localized: "Hermex couldn’t save the files on this iPhone.")
+            reason = String(localized: "JARVIS couldn’t save the files on this iPhone.")
         }
     }
 }

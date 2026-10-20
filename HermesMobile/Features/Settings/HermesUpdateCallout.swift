@@ -21,7 +21,7 @@ import UIKit
             // Like push's restart, the run outlives Settings once the host has been asked.
             Button("Update", role: .destructive) { model.apply() }
         } message: {
-            Text("Running turns on this host stop and Hermes restarts. Hermex reconnects when it’s back. This can’t be undone.")
+            Text("Running turns on this host stop and Hermes restarts. JARVIS reconnects when it’s back. This can’t be undone.")
         }
     }
 
@@ -70,7 +70,7 @@ import UIKit
         case .done(let installed):
             return Card(symbol: "checkmark.circle.fill", tint: .green,
                         title: String(localized: "Updated to \(installed ?? version ?? "")"),
-                        message: String(localized: "Hermes is back and Hermex reconnected."))
+                        message: String(localized: "Hermes is back and JARVIS reconnected."))
         case .partial(let summary):
             return Card(symbol: warning, tint: .orange, title: String(localized: "Partly updated"),
                         message: summary ?? Self.noSummary, action: .lookAgain)
@@ -104,7 +104,7 @@ import UIKit
                     ?? String(localized: "A newer Hermes is available.")
                 guard check.canApply else {
                     return Card(symbol: "arrow.up.circle.fill", tint: .blue, title: String(localized: "Update available"),
-                                message: behind + " " + String(localized: "This install updates on your host, not from Hermex. Run:"),
+                                message: behind + " " + String(localized: "This install updates on your host, not from JARVIS. Run:"),
                                 command: check.hostCommand)
                 }
                 return Card(symbol: "arrow.up.circle.fill", tint: .blue, title: String(localized: "Update available"),

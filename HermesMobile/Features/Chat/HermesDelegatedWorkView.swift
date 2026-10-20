@@ -101,7 +101,7 @@ struct HermesDelegatedWorkButton: View {
                     }
                 }
             } message: {
-                Text("This stops this delegated worker now. Hermex cannot resume it. The parent and sibling workers keep running.")
+                Text("This stops this delegated worker now. JARVIS cannot resume it. The parent and sibling workers keep running.")
             }
         }
     }

@@ -807,7 +807,7 @@ final class PushRegistrationTests: XCTestCase {
             }
             let sealed = try XCTUnwrap(json["sealed"] as? String)
             let keys = PushPreviewKeys(installKey: installA, previewKey: pairing.previewKey)
-            XCTAssertEqual(PushPreview.open(sealed: sealed, keys: keys)?.title, "Hermex test notification")
+            XCTAssertEqual(PushPreview.open(sealed: sealed, keys: keys)?.title, "JARVIS test notification")
             events.append(json)
         }
         XCTAssertNotEqual(events[0]["event_id"] as? String, events[1]["event_id"] as? String,

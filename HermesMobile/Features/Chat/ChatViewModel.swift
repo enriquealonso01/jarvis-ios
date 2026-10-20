@@ -117,7 +117,7 @@ final class ListenRemoteControlController: ListenRemoteControlControlling {
     func update(_ snapshot: ListenNowPlayingSnapshot) {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = [
             MPMediaItemPropertyTitle: snapshot.title,
-            MPMediaItemPropertyArtist: "Hermex",
+            MPMediaItemPropertyArtist: "JARVIS",
             MPMediaItemPropertyPlaybackDuration: max(0, snapshot.duration),
             MPNowPlayingInfoPropertyElapsedPlaybackTime: max(0, snapshot.elapsedTime),
             MPNowPlayingInfoPropertyPlaybackRate: snapshot.isPlaying ? snapshot.speed.rawValue : 0,
@@ -649,7 +649,7 @@ final class ChatViewModel {
     // arriving after stop/switch carries a stale ID and is dropped instead of
     // starting audio the user no longer wants.
     private var activeListenRequestID: UUID?
-    private var listenPlaybackTitle = String(localized: "Hermex response")
+    private var listenPlaybackTitle = String(localized: "JARVIS response")
     private(set) var listenPlaybackPhase: ListenPlaybackPhase = .idle
     private(set) var listenPlaybackElapsedTime: TimeInterval = 0
     private(set) var listenPlaybackDuration: TimeInterval = 0
@@ -4150,7 +4150,7 @@ final class ChatViewModel {
             case .appOwned(let command):
                 return await executeSlashCommand(command, args: invocation.argument, modelContext: modelContext)
             case .held:
-                return .unsupported(friendlyMessage: String(localized: "Hermex can't run /\(name) in a Hermes chat yet (#702)."))
+                return .unsupported(friendlyMessage: String(localized: "JARVIS can't run /\(name) in a Hermes chat yet (#702)."))
             case .skill(let skill):
                 reply = try await slash.expand(skill, argument: invocation.argument, typed: line)
             case .text where !followsAlias:
@@ -4181,7 +4181,7 @@ final class ChatViewModel {
             // Run once, with the typed argument; an alias to another alias is refused.
             let line = invocation.argument.isEmpty ? "/\(target)" : "/\(target) \(invocation.argument)"
             guard !followsAlias, let next = BotSlashCatalog.invocation(in: line) else {
-                return notDelivered(String(localized: "/\(name) points to another alias, so Hermex didn't run it."))
+                return notDelivered(String(localized: "/\(name) points to another alias, so JARVIS didn't run it."))
             }
             return await runHermesSlashCommand(next, line: line, on: hermes, followsAlias: true, modelContext: modelContext)
         }
@@ -4525,7 +4525,7 @@ final class ChatViewModel {
         }
         guard HermesModelCatalog.effortLevels.contains(level) else {
             if Self.hermesReasoningDisplayArgs.contains(level) {
-                return .unsupported(friendlyMessage: String(localized: "On a Hermes host, /reasoning \(level) changes display settings for every client, so Hermex doesn't send it."))
+                return .unsupported(friendlyMessage: String(localized: "On a Hermes host, /reasoning \(level) changes display settings for every client, so JARVIS doesn't send it."))
             }
             return .unsupported(friendlyMessage: String(localized: "Unknown reasoning level: \(level)."))
         }
@@ -7323,7 +7323,7 @@ final class ChatViewModel {
     }
 
     private func beginListenPlaybackPreparation(for context: MessageActionContext) {
-        listenPlaybackTitle = String(localized: "Hermex response \(context.visibleIndex + 1)")
+        listenPlaybackTitle = String(localized: "JARVIS response \(context.visibleIndex + 1)")
         listenPlaybackPhase = .loading
         listenPlaybackElapsedTime = 0
         listenPlaybackDuration = 0

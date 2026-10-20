@@ -1,0 +1,128 @@
+# JARVIS v3 user-journey lane: builds a Debug simulator app (ad-hoc signed, so the Keychain
+# works), starts the pinned hermes-agent locally with its scripted stub model
+# (scripts/local-hermes: loopback only, fixed dev credentials, no model calls, never the real
+# JARVIS host), points the app at it with the Debug-only JarvisServerAddress default, and
+# drives it with Maestro (qa/maestro/*.yaml). Uploads screenshots, the JUnit report, the app
+# log and the hierarchy dumps. It is evidence for review, not a merge gate.
+
+name: iOS v3 Maestro QA
+
+on:
+  pull_request:
+    branches: [v3]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-maestro-qa-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  maestro:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      APP_ID: com.enriquecodes.jarvis
+      HERMES_PORT: "9199"
+      MAESTRO_CLI_NO_ANALYTICS: "1"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Java for Maestro
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install uv and Maestro
+        run: |
+          set -euo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Start local Hermes (pinned SHA, stub model)
+        run: |
+          set -euo pipefail
+          mkdir -p qa-out
+          nohup python3 scripts/local-hermes --port "$HERMES_PORT" > qa-out/local-hermes.log 2>&1 &
+          echo $! > /tmp/local-hermes.pid
+          for i in $(seq 1 240); do
+            if curl -fsS "http://127.0.0.1:$HERMES_PORT/api/status" > qa-out/status.json 2>/dev/null; then
+              echo "Hermes is up after ${i}s"; python3 -m json.tool qa-out/status.json | head -20; exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/local-hermes.pid)" 2>/dev/null; then cat qa-out/local-hermes.log; exit 1; fi
+            sleep 1
+          done
+          cat qa-out/local-hermes.log; exit 1
+
+      - name: Build app (Debug, simulator, ad-hoc signed)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project HermesMobile.xcodeproj \
+            -scheme HermesMobile \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath /tmp/dd \
+            -disableAutomaticPackageResolution \
+            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=JARVISQA00 2>&1 | tee qa-out/build.log | grep -E "error:|warning: .*JARVIS|BUILD" || true
+          test -d "$(find /tmp/dd/Build/Products -name 'HermesMobile.app' -path '*iphonesimulator*' | head -1)"
+
+      - name: Boot simulator, install, point at local Hermes
+        id: env
+        run: |
+          set -euo pipefail
+          UDID=$(xcrun simctl list devices available | grep -m1 "iPhone 17 (" | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
+          APP=$(find /tmp/dd/Build/Products -name "HermesMobile.app" -path "*iphonesimulator*" | head -1)
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Simulator: $UDID  App: $APP"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl spawn "$UDID" defaults write "$APP_ID" JarvisServerAddress "http://127.0.0.1:$HERMES_PORT"
+          xcrun simctl launch "$UDID" "$APP_ID"
+          sleep 8
+          xcrun simctl io "$UDID" screenshot qa-out/00-first-launch.png || true
+          maestro --device "$UDID" hierarchy > qa-out/hierarchy-first-launch.json 2>/dev/null || true
+          xcrun simctl terminate "$UDID" "$APP_ID" || true
+
+      - name: Run Maestro journeys
+        id: maestro
+        continue-on-error: true
+        run: |
+          cd qa-out
+          maestro --device "${{ steps.env.outputs.udid }}" test \
+            --format junit --output "$GITHUB_WORKSPACE/qa-out/report.xml" \
+            --test-output-dir "$GITHUB_WORKSPACE/qa-out/maestro" \
+            "$GITHUB_WORKSPACE/qa/maestro"
+
+      - name: Collect evidence
+        if: always()
+        run: |
+          UDID="${{ steps.env.outputs.udid }}"
+          maestro --device "$UDID" hierarchy > qa-out/hierarchy-final.json 2>/dev/null || true
+          xcrun simctl spawn "$UDID" log show --last 20m --style compact \
+            --predicate 'process == "HermesMobile"' > qa-out/app.log 2>&1 || true
+          cp -R ~/.maestro/tests qa-out/maestro-debug 2>/dev/null || true
+          for f in $(ls -t ~/Library/Logs/DiagnosticReports/HermesMobile* 2>/dev/null | head -3); do cp "$f" qa-out/; done
+          find qa-out -name "*.png" | sort
+          echo "---- JUnit ----"; cat qa-out/report.xml || true
+          kill "$(cat /tmp/local-hermes.pid)" 2>/dev/null || true
+
+      - name: Upload QA output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jarvis-v3-maestro-qa
+          path: qa-out/
+          if-no-files-found: warn
+
+      - name: Fail if any journey failed
+        if: steps.maestro.outcome == 'failure'
+        run: exit 1

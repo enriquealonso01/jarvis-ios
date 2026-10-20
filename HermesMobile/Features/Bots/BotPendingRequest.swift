@@ -293,12 +293,12 @@ struct BotCredentialRequest: Equatable {
     var handling: String {
         switch kind {
         case .sudo:
-            return String(localized: "Sent to this bot's Mac to run this command. Hermex never saves it.")
+            return String(localized: "Sent to this bot's Mac to run this command. JARVIS never saves it.")
         case .secret:
             guard let envVar else {
-                return String(localized: "Saved on this bot's Mac. Hermex never saves it.")
+                return String(localized: "Saved on this bot's Mac. JARVIS never saves it.")
             }
-            return String(localized: "Saved on this bot's Mac as \(envVar). Hermex never saves it.")
+            return String(localized: "Saved on this bot's Mac as \(envVar). JARVIS never saves it.")
         }
     }
 }

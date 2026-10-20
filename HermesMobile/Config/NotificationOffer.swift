@@ -107,9 +107,9 @@ private struct NotificationOfferAlertModifier: ViewModifier {
         } message: { offer in
             switch offer {
             case .localAlerts:
-                Text("Hermex can alert you when a reply finishes or fails while the app is in the background. You can change this in Settings → Notifications.")
+                Text("JARVIS can alert you when a reply finishes or fails while the app is in the background. You can change this in Settings → Notifications.")
             case .push:
-                Text("Push notifications reach this iPhone even when Hermex is closed. Setup can change your Hermes host, so it runs step by step in Settings.")
+                Text("Push notifications reach this iPhone even when JARVIS is closed. Setup can change your Hermes host, so it runs step by step in Settings.")
             }
         }
     }

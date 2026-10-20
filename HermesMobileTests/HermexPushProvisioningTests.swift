@@ -1076,7 +1076,7 @@ import XCTest
         await provisioner.enable()
         XCTAssertEqual(provisioner.failure, HermexPushProvisioner.Failure(
             title: HermexPushProvisioner.Step.pair.title,
-            message: "This Hermes host returned pairing keys Hermex cannot use. Update the hermex-push plugin.",
+            message: "This Hermes host returned pairing keys JARVIS cannot use. Update the hermex-push plugin.",
             remedy: .updatePlugin))
 
         await provisioner.updatePlugin()

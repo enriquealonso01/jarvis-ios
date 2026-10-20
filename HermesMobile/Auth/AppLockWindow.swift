@@ -176,7 +176,7 @@ struct AppLockView: View {
 
     private var locked: some View {
         VStack(spacing: 0) {
-            title("Hermex is locked")
+            title("JARVIS is locked")
 
             AppLockButton(title: String(localized: "Unlock"), systemImage: lock.capability.method.systemImage) {
                 Task { await lock.unlock() }
@@ -187,7 +187,7 @@ struct AppLockView: View {
 
     private var passcodeMissing: some View {
         VStack(spacing: 0) {
-            title("Hermex can’t lock")
+            title("JARVIS can’t lock")
 
             Text("This iPhone no longer has a passcode, so the lock is off. Set a passcode, then turn the lock back on in Settings.")
                 .font(AppFont.subheadline())

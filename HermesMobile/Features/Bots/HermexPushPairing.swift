@@ -105,7 +105,7 @@ enum HermexPushFailure: Error, Equatable, LocalizedError {
         case .pluginLeftOff:
             return String(localized: "Hermes still has the plugin turned off, so notifications stop when Hermes restarts. Try again to turn it back on.")
         case .unusablePairing:
-            return String(localized: "This Hermes host returned pairing keys Hermex cannot use. Update the hermex-push plugin.")
+            return String(localized: "This Hermes host returned pairing keys JARVIS cannot use. Update the hermex-push plugin.")
         case .pairingUnavailable:
             return String(localized: "The plugin did not answer after the restart. Check that Hermes came back up, then try again.")
         case .noConnection:

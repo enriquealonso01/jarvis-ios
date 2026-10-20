@@ -161,37 +161,24 @@ enum SessionListDestinationReturn {
     }
 }
 
+/// The home header's wordmark: the Orbital mark and JARVIS, tinted with the header color
+/// (Jarvis Cyan by default). Static, so it never repaints.
 struct HermesHeaderLogo: View {
     let selectedColor: Color
 
-    private static let aspectRatio = 643.0 / 185.0
-
     var body: some View {
-        ZStack {
-            Image("hermes-fill-mask")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
+        HStack(spacing: 8) {
+            OrbitalCoreView(state: .idle, isStatic: true)
+                .frame(width: 30, height: 30)
+            Text(verbatim: "JARVIS")
+                .font(.system(size: 22, weight: .semibold))
+                .tracking(5)
                 .foregroundStyle(selectedColor)
-
-            Image("hermes-shading-overlay")
-                .resizable()
-                .scaledToFit()
-                .blendMode(.multiply)
-
-            Image("hermes-highlight")
-                .resizable()
-                .scaledToFit()
-                .blendMode(.screen)
-
-            Image("hermes-outline-shadow")
-                .resizable()
-                .scaledToFit()
+                .lineLimit(1)
+                .fixedSize()
         }
-        .aspectRatio(Self.aspectRatio, contentMode: .fit)
-        .compositingGroup()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("HERMEX")
+        .accessibilityLabel(Text(verbatim: "JARVIS"))
     }
 }
 

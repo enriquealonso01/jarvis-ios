@@ -127,7 +127,7 @@ import Observation
                 DisclosureGroup("Manual setup") {
                     Text("Keep Hermes Desktop running. In Settings → Advanced, enable Keep computer awake. The display may dim.")
                     Text("In Settings → Plugins, enable Bots for the intended Profile. Applies to selects the Profile configuration being edited.")
-                    Text("Desktop and Hermex must use the same password-protected backend. Remote gateway connects Desktop to a backend; it does not expose Desktop’s private local backend to your phone.")
+                    Text("Desktop and JARVIS must use the same password-protected backend. Remote gateway connects Desktop to a backend; it does not expose Desktop’s private local backend to your phone.")
                     Text("Open each bot’s Bot Chat in Desktop first. Do not start a second backend using the same Profile storage.")
                 }
             }
@@ -158,7 +158,7 @@ import Observation
             if setup.hostStatus == nil || setup.hostStatus == .checking { await setup.checkStatus() }
         }
         .onDisappear { operation?.cancel(); statusCheck?.cancel(); setup.cancel() }
-        .confirmationDialog("Remove this connection from Hermex?", isPresented: $confirmingRemoval, titleVisibility: .visible) {
+        .confirmationDialog("Remove this connection from JARVIS?", isPresented: $confirmingRemoval, titleVisibility: .visible) {
             Button("Remove Hermes connection", role: .destructive) {
                 operation = Task { if await setup.remove(), !Task.isCancelled { dismiss() } }
             }
@@ -641,7 +641,7 @@ struct BotConnectionWelcomeView: View {
             .accessibilityHidden(true)
             VStack(spacing: 12) {
                 Text("Your bots, together.").font(.title2.bold())
-                Text("Bots live in your Hermes dashboard. WebUI uses a separate connection, so sign in once here to bring them to Hermex.")
+                Text("Bots live in your Hermes dashboard. WebUI uses a separate connection, so sign in once here to bring them to JARVIS.")
                     .foregroundStyle(.secondary)
             }
             .multilineTextAlignment(.center)

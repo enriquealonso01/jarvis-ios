@@ -261,7 +261,7 @@ final class ResponseSelectionInput: UIView, UITextInput, UITextInteractionDelega
         guard builder.system == .context else { return }
 
         let ask = UICommand(
-            title: String(localized: "Ask Hermex"),
+            title: String(localized: "Ask JARVIS"),
             image: UIImage(systemName: "quote.opening"),
             action: #selector(askHermex(_:))
         )

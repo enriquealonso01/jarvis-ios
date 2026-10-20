@@ -93,10 +93,10 @@ private struct StagedPhotoLibraryVideo {
         }
 
         let directoryURL = fileManager.temporaryDirectory
-            .appendingPathComponent("Hermex-Photo-Import-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("JARVIS-Photo-Import-\(UUID().uuidString)", isDirectory: true)
         do {
             try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: false)
-            let filename = sourceURL.lastPathComponent.isEmpty ? "Hermex Video.mp4" : sourceURL.lastPathComponent
+            let filename = sourceURL.lastPathComponent.isEmpty ? "JARVIS Video.mp4" : sourceURL.lastPathComponent
             let fileURL = directoryURL.appendingPathComponent(filename, isDirectory: false)
             try fileManager.copyItem(at: sourceURL, to: fileURL)
             self.fileURL = fileURL
@@ -123,7 +123,7 @@ enum PhotoLibrarySaveError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .notAuthorized:
-            String(localized: "Allow Photos access to save media from Hermex.")
+            String(localized: "Allow Photos access to save media from JARVIS.")
         case .notImage:
             String(localized: "This file is not an image that can be saved to Photos.")
         case .notPhotosMedia:
