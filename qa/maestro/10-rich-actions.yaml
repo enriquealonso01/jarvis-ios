@@ -65,7 +65,7 @@ name: "10 rich buttons and form submit send real messages"
 - tapOn: "Breck day 3.*"
 - scrollUntilVisible:
     element: "Buy lift tickets"
-    direction: DOWN
+    direction: UP
     timeout: 20000
 - waitForAnimationToEnd
 - takeScreenshot: 10-breck-buttons
