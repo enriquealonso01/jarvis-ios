@@ -467,7 +467,6 @@ public struct V2TranscriptView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: row.isUser ? .trailing : .leading)
                         }
-                        workingIndicator
                         Color.clear
                             .frame(height: vm.bottomBuffer)
                             .id(TranscriptViewModel.bottomAnchorID)
@@ -478,6 +477,15 @@ public struct V2TranscriptView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, Tokens.Layout.gutter)
                     .padding(.top, Tokens.Spacing.m)
+                }
+                // The animated indicator lives OUTSIDE the lazy stack: its
+                // 30 fps orbital ticks inside the LazyVStack re-measured every
+                // rich card each frame (QA-lane samples: 100% main thread
+                // while a stalled stream kept the indicator up).
+                .overlay(alignment: .bottomLeading) {
+                    workingIndicator
+                        .padding(.horizontal, Tokens.Layout.gutter)
+                        .padding(.bottom, 6)
                 }
                 .onChange(of: vm.displayRows) { _, _ in
                     // §5: auto-scroll ONLY when already at bottom — never
@@ -552,13 +560,21 @@ public struct V2TranscriptView: View {
     private var workingIndicator: some View {
         if vm.isStreaming,
            vm.displayRows.last?.text.isEmpty ?? false {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 OrbitalCoreView(state: .thinking)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 22, height: 22)
                 Text("JARVIS is working…")
                     .font(.footnote)
-                    .foregroundStyle(Tokens.Palette.textMuted)
+                    .foregroundStyle(Tokens.Palette.textSecondary)
             }
+            .padding(.leading, 6)
+            .padding(.trailing, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule().fill(Tokens.Palette.elevated))
+            .overlay(
+                Capsule().strokeBorder(Tokens.Palette.border, lineWidth: 1))
+            .allowsHitTesting(false)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("transcript.workingIndicator")
         }
