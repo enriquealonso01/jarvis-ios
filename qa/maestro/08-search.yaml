@@ -24,7 +24,9 @@ name: "08 sidebar search finds chats by title and by message content"
 - extendedWaitUntil:
     visible: "Pedal trainer.*"
     timeout: 10000
-- assertNotVisible: "Breck day 3.*"
+# (by id: the dimmed header behind the drawer may show the open chat's title)
+- assertNotVisible:
+    id: "sidebar.searchResult.D3EA0000-0000-0000-0000-000000000001"
 - takeScreenshot: 08-search-title
 - tapOn:
     id: "sidebar.searchClear"

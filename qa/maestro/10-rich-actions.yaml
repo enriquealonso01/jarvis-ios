@@ -42,7 +42,7 @@ name: "10 rich buttons and form submit send real messages"
     timeout: 20000
 - waitForAnimationToEnd
 - tapOn:
-    id: "rich.form.preview-form.field.cr-title"
+    id: "rich.form.preview-form.input.cr-title"
 - inputText: "Compact cards"
 - pressKey: Enter
 - waitForAnimationToEnd
