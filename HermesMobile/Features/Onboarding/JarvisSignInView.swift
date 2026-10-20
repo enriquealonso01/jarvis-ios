@@ -96,8 +96,9 @@ struct JarvisSignInView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
+        // No focus on appear: the test host launches into this screen, and a raised keyboard
+        // would cover the windows hosted UI tests present.
         .preferredColorScheme(.dark)
-        .onAppear { if username.isEmpty { focused = .username } }
     }
 
     /// Signs in on a connection of its own, then saves the record and makes the host the

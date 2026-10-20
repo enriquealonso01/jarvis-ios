@@ -134,7 +134,7 @@ final class PushRegistrationTests: XCTestCase {
         harness.store.pairings[serverA] = try JSONDecoder().decode(PushPairing.self, from: JSONEncoder().encode(pending))
         let relaunched = PushRegistrar(store: harness.store, relay: harness.relay,
             remoteNotifications: harness.remoteNotifications, authorization: harness.authorization,
-            identity: PushBuildIdentity(bundleID: "com.uzairansar.hermesmobile", environment: .sandbox))
+            identity: PushBuildIdentity(bundleID: "com.enriquecodes.jarvis", environment: .sandbox))
         harness.relay.registerError = PushRelayError.transport
         relaunched.refreshOnLaunch()
         relaunched.didRegisterForRemoteNotifications(deviceToken: Data(hex: "abcd"))
@@ -266,7 +266,7 @@ final class PushRegistrationTests: XCTestCase {
     /// like a dev one, so the environment must follow the signed entitlement.
     func testEnvironmentFollowsTheSignedEntitlementNotTheBundleSuffix() {
         let branchProduction = TestBundle(
-            values: ["HermesAPSEnvironment": "production", "CFBundleIdentifier": "com.uzairansar.hermesmobile.branch"]
+            values: ["HermesAPSEnvironment": "production", "CFBundleIdentifier": "com.enriquecodes.jarvis.branch"]
         )
         XCTAssertEqual(PushEnvironment.current(bundle: branchProduction), .production)
 
@@ -305,7 +305,7 @@ final class PushRegistrationTests: XCTestCase {
         XCTAssertEqual(registration.token, "0a1b")
         XCTAssertEqual(registration.installKey, installA)
         XCTAssertEqual(registration.environment, .sandbox)
-        XCTAssertEqual(registration.bundleID, "com.uzairansar.hermesmobile")
+        XCTAssertEqual(registration.bundleID, "com.enriquecodes.jarvis")
         XCTAssertEqual(harness.store.pairings[serverA]?.registeredToken, "0a1b")
     }
 
@@ -722,7 +722,7 @@ final class PushRegistrationTests: XCTestCase {
         pairing.preferences = PushPreferences(replies: false, muteSubagents: false, previews: false)
         try await client.registerDevice(
             token: "0a1b",
-            identity: PushBuildIdentity(bundleID: "com.uzairansar.hermesmobile", environment: .sandbox),
+            identity: PushBuildIdentity(bundleID: "com.enriquecodes.jarvis", environment: .sandbox),
             pairing: pairing
         )
 
@@ -735,7 +735,7 @@ final class PushRegistrationTests: XCTestCase {
         // The relay rejects unknown fields with a 400, so the body is exactly these.
         XCTAssertEqual(Set(json.keys), ["device_token", "bundle_id", "environment", "prefs"])
         XCTAssertEqual(json["device_token"] as? String, "0a1b")
-        XCTAssertEqual(json["bundle_id"] as? String, "com.uzairansar.hermesmobile")
+        XCTAssertEqual(json["bundle_id"] as? String, "com.enriquecodes.jarvis")
         XCTAssertEqual(json["environment"] as? String, "sandbox")
         XCTAssertEqual(json["prefs"] as? [String: Bool],
                        ["replies": false, "mute_subagents": false, "previews": false, "presence_suppression": true])
@@ -1352,7 +1352,7 @@ private final class Harness {
             relay: relay,
             remoteNotifications: remoteNotifications,
             authorization: authorization,
-            identity: PushBuildIdentity(bundleID: "com.uzairansar.hermesmobile", environment: .sandbox)
+            identity: PushBuildIdentity(bundleID: "com.enriquecodes.jarvis", environment: .sandbox)
         )
     }
 
@@ -1494,7 +1494,7 @@ private final class TestBundle: Bundle, @unchecked Sendable {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     override func object(forInfoDictionaryKey key: String) -> Any? { values[key] }
-    override var bundleIdentifier: String? { values["CFBundleIdentifier"] ?? "com.uzairansar.hermesmobile" }
+    override var bundleIdentifier: String? { values["CFBundleIdentifier"] ?? "com.enriquecodes.jarvis" }
 }
 
 private final class RecordedRequest: @unchecked Sendable {

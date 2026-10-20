@@ -36,12 +36,11 @@ enum PushEnvironment: String, Codable, Equatable, Sendable {
     }
 }
 
-/// The two bundle identifiers the relay accepts. Anything else means this build
-/// was renamed for a fork and cannot use the maintainer's relay.
+/// The bundle identifier JARVIS's relay (`server/push-relay`) sends to. Anything else is a
+/// build the relay has no APNs topic for.
 enum PushBundleIdentifier {
     static let supported: Set<String> = [
-        "com.uzairansar.hermesmobile",
-        "com.uzairansar.hermesmobile.branch"
+        "com.enriquecodes.jarvis"
     ]
 
     static func current(bundle: Bundle = .main) -> String? {

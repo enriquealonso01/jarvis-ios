@@ -1,15 +1,41 @@
 appId: com.enriquecodes.jarvis
-# Exploratory until the home's ids are mapped from this run's hierarchy dump.
-name: 03 home and new session
+# A real turn against scripts/local-hermes's stub model: it answers "Let me run a quick
+# check.", asks to approve python3 -c "print(1)", then "The command returned: 1."
+name: 03 new session send approve and reply
 ---
 - launchApp:
     stopApp: true
 - extendedWaitUntil:
     visible: Settings
     timeout: 30000
+- tapOn: New Session
+- extendedWaitUntil:
+    visible: Ask anything.*
+    timeout: 15000
+- tapOn: Ask anything.*
+- inputText: Automated QA ping
 - tapOn:
-    text: New Session
+    text: Send
     optional: true
-- waitForAnimationToEnd:
-    timeout: 8000
-- takeScreenshot: 03-new-session
+- extendedWaitUntil:
+    visible: Automated QA ping
+    timeout: 15000
+- takeScreenshot: 03-sent
+- extendedWaitUntil:
+    visible: Let me run a quick check.*
+    timeout: 60000
+- takeScreenshot: 03-approval
+- tapOn:
+    text: Approve.*
+    optional: true
+- tapOn:
+    text: Allow.*
+    optional: true
+- tapOn:
+    text: Run.*
+    optional: true
+- extendedWaitUntil:
+    visible: The command returned.*
+    timeout: 60000
+    optional: true
+- takeScreenshot: 03-reply

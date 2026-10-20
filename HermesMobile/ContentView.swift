@@ -524,6 +524,9 @@ struct HermesServerHome: View {
     /// so a sign-in changed in Settings or the inbox gets a fresh list.
     @State private var sessions: HermesSessionsSide?
     @State private var isShowingSettings = false
+    /// JARVIS asks once, after the first sign-in, whether to turn on the Face ID lock.
+    @State private var isOfferingAppLock = false
+    @AppStorage("jarvis.appLockOffered") private var appLockOffered = false
 
     init(authManager: AuthManager, server: URL, pendingBotDestination: Binding<BotDestination?>,
          pendingSessionDestination: Binding<HermesSessionDestination?>, pendingNewChat: Binding<HermesNewChatDestination?>,
@@ -570,6 +573,21 @@ struct HermesServerHome: View {
         // A Hermes chat's Update sign-in (#942) signs the server out to its sign-in form, which
         // keeps the saved values and focuses the password; saving signs it back in.
         .modifier(HermesUpdateSignInModifier { authManager.hermesSignInRejected(server: server) })
+        .task {
+            // The lock itself is Hermex's app lock (#885): Face ID with the passcode as fallback,
+            // a cover in the app switcher, relock after a minute away. It needs the owner's
+            // authentication to turn on, so JARVIS offers it once instead of defaulting it on.
+            if !appLockOffered, !AppLock.shared.isEnabled { isOfferingAppLock = true }
+        }
+        .alert("Lock JARVIS with Face ID?", isPresented: $isOfferingAppLock) {
+            Button("Turn On") {
+                appLockOffered = true
+                Task { await AppLock.shared.setEnabled(true) }
+            }
+            Button("Not Now", role: .cancel) { appLockOffered = true }
+        } message: {
+            Text("JARVIS hides its screen in the app switcher and asks for Face ID or your passcode when you come back. You can change this in Settings.")
+        }
         // A connection the inbox's sheet saved or changed closes no screen, so the switch reads too.
         .onChange(of: tab, readConnection)
         // A bot route lands on the inbox, so Settings (and an Archived screen pushed from it, #1146)
