@@ -1073,7 +1073,8 @@ struct RichFormView: View {
                     Text(field.label)
                 }
                 .font(.footnote)
-                .foregroundStyle(Tokens.Palette.textPrimary))
+                .foregroundStyle(Tokens.Palette.textPrimary)
+                .accessibilityIdentifier("rich.form.\(block.id).input.\(field.id)"))
         }
     }
 }
