@@ -121,6 +121,54 @@ jobs:
           cp /tmp/sample.txt "$GITHUB_WORKSPACE/qa-out/idle-sample.txt" 2>/dev/null || true
           xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
 
+      - name: Hang probe - main-thread samples in the states that froze
+        continue-on-error: true
+        run: |
+          UDID="${{ steps.env.outputs.udid }}"
+          probe() {
+            label="$1"; shift
+            xcrun simctl terminate "$UDID" com.enriquecodes.jarvis 2>/dev/null || true
+            sleep 1
+            xcrun simctl launch "$UDID" com.enriquecodes.jarvis "$@" || true
+            sleep 14
+            PID=$(pgrep -f "JarvisApp.app/JarvisApp" | head -1)
+            echo "==== probe $label pid=$PID"
+            for i in 1 2; do ps -o %cpu=,rss= -p "$PID" | awk '{print "cpu% " $1 "  rss_kb " $2}'; sleep 1; done
+            xcrun simctl io "$UDID" screenshot "$GITHUB_WORKSPACE/qa-out/00-probe-$label.png" || true
+            sample "$PID" 4 -file "/tmp/probe-$label.txt" >/dev/null 2>&1 || true
+            cp "/tmp/probe-$label.txt" "$GITHUB_WORKSPACE/qa-out/probe-$label.txt" 2>/dev/null || true
+            python3 - "/tmp/probe-$label.txt" <<'PY' || true
+          import re, sys
+          lines = open(sys.argv[1]).read().splitlines()
+          start = None
+          for i, l in enumerate(lines):
+              if "com.apple.main-thread" in l:
+                  start = i; break
+          if start is None:
+              print("no main thread in sample"); raise SystemExit
+          base = len(lines[start]) - len(lines[start].lstrip())
+          out = []
+          for l in lines[start + 1:]:
+              ind = len(l) - len(l.lstrip())
+              if l.strip() == "" or ind <= base:
+                  break
+              out.append(l)
+          # Heaviest path: keep frames whose count is >= 50% of the root count.
+          root = int(re.match(r"\s*(\d+)", lines[start]).group(1))
+          for l in out:
+              m = re.match(r"\s*\+?\s*[!:|]*\s*(\d+)\s+(.*)", l)
+              if m and int(m.group(1)) * 2 >= root:
+                  print(l[:220])
+          PY
+          }
+          # 1) drawer restored OPEN at launch on the rich chat (froze in 01/10)
+          probe sidebar-open -SCREENSHOT_SEED -SCREENSHOT_SIDEBAR_OPEN
+          # 2) Krendora chat (streaming row + markdown + poll + form; froze in 03)
+          probe krendora -SCREENSHOT_SEED -SCREENSHOT_SELECT D3EA0000-0000-0000-0000-000000000002
+          # 3) plain relaunch on the rich chat, drawer closed
+          probe rich -SCREENSHOT_SEED -SCREENSHOT_SELECT D3EA0000-0000-0000-0000-000000000004
+          xcrun simctl terminate "$UDID" com.enriquecodes.jarvis || true
+
       - name: Dump UI hierarchy (ids + labels) of the launch screen
         continue-on-error: true
         env:

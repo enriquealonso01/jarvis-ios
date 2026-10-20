@@ -20,10 +20,11 @@ name: "09 rich poll vote and chart data table toggle"
     notVisible:
       id: "sidebar.newChat"
     timeout: 10000
+# The chat opens at the newest content; the poll sits above it.
 - scrollUntilVisible:
     element:
       id: "rich.poll.preview-poll.option.2"
-    direction: DOWN
+    direction: UP
     timeout: 20000
 - takeScreenshot: 09-poll-before
 - tapOn:

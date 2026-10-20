@@ -16,7 +16,8 @@ name: "06 projects section in the sidebar"
 - tapOn:
     id: "chat.menuButton"
 - extendedWaitUntil:
-    visible: "JARVIS UI"
+    visible:
+      id: "sidebar.project.D3EA0000-0000-0000-0000-0000000000A1"
     timeout: 10000
 - takeScreenshot: 06-projects-expanded
 - tapOn:

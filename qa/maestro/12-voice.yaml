@@ -1,0 +1,36 @@
+appId: com.enriquecodes.jarvis
+# The composer voice button opens the voice screen in its honest READY state
+# (nothing recorded until Start). CI never taps Start: there is no real call
+# to place with the demo token. Close returns to the same chat.
+name: "12 voice button opens the voice screen ready state and closes back to chat"
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "chat.menuButton"
+    timeout: 30000
+    optional: true
+- runFlow: common/close-sidebar.yaml
+- extendedWaitUntil:
+    visible:
+      id: "composer.waveformButton"
+    timeout: 30000
+- tapOn:
+    id: "composer.waveformButton"
+- extendedWaitUntil:
+    visible: "Ready to speak"
+    timeout: 10000
+- assertVisible:
+    id: "voice.primaryButton"
+- assertVisible: "Start voice"
+- waitForAnimationToEnd
+- takeScreenshot: 12-voice-ready
+- tapOn:
+    id: "voice.closeButton"
+- extendedWaitUntil:
+    visible:
+      id: "composer.textField"
+    timeout: 10000
+- assertNotVisible: "Ready to speak"
+- takeScreenshot: 12-voice-closed

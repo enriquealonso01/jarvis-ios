@@ -1,17 +1,19 @@
-# Maestro suite — "use it like Enrique would" pass over the v2 app.
-# Order matters: read-only journeys first, the send journey (mutates the
-# store) last.
+# Maestro suite - "use it like Enrique would" pass over the v2 app.
+# Order matters: read-only journeys first, the journeys that mutate the store
+# (rich actions, new chats, the send) last. flowsOrder matches each flow's
+# `name:` (not its filename) - with filenames Maestro ignored the order.
 executionOrder:
   continueOnFailure: true
   flowsOrder:
-    - 01-launch
-    - 02-sidebar
-    - 03-open-conversations
-    - 04-composer
-    - 05-export
-    - 06-projects
-    - 08-search
-    - 09-rich-interactions
-    - 10-rich-actions
-    - 11-header-new-chat
-    - 07-send-message
+    - "01 launch lands on the v2 chat shell not login no crash"
+    - "02 sidebar opens and lists chats search new chat"
+    - "03 open each seeded chat from the sidebar and read it"
+    - "04 composer type plus-menu model chooser"
+    - "05 export chat as PDF opens the export sheet"
+    - "06 projects section in the sidebar"
+    - "08 sidebar search finds chats by title and by message content"
+    - "09 rich poll vote and chart data table toggle"
+    - "12 voice button opens the voice screen ready state and closes back to chat"
+    - "10 rich buttons and form submit send real messages"
+    - "11 header new chat shows the welcome state"
+    - "07 new chat send a message bubble appears app stays responsive"
