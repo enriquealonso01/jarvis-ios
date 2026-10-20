@@ -430,7 +430,12 @@ public struct V2TranscriptView: View {
         GeometryReader { geo in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: Tokens.Layout.messageSpacing) {
+                    // Eager VStack, not LazyVStack: the transcript is already
+                    // windowed (≤ maxVisibleMessages rows), and the lazy stack's
+                    // off-screen height estimates for tall rich cards never
+                    // settled (QA-lane samples: LazySubviewPlacements at 100%
+                    // CPU after a card above the viewport changed height).
+                    VStack(alignment: .leading, spacing: Tokens.Layout.messageSpacing) {
                         if vm.displayRows.isEmpty {
                             welcome(minHeight: geo.size.height * 0.72)
                         } else {
@@ -470,8 +475,6 @@ public struct V2TranscriptView: View {
                         Color.clear
                             .frame(height: vm.bottomBuffer)
                             .id(TranscriptViewModel.bottomAnchorID)
-                            .onAppear { vm.isAtBottom = true }
-                            .onDisappear { vm.isAtBottom = false }
                     }
                     .frame(maxWidth: Tokens.Layout.transcriptMaxWidth)
                     .frame(maxWidth: .infinity)
@@ -479,13 +482,21 @@ public struct V2TranscriptView: View {
                     .padding(.top, Tokens.Spacing.m)
                 }
                 // The animated indicator lives OUTSIDE the lazy stack: its
-                // 30 fps orbital ticks inside the LazyVStack re-measured every
+                // 30 fps orbital ticks inside the lazy stack re-measured every
                 // rich card each frame (QA-lane samples: 100% main thread
                 // while a stalled stream kept the indicator up).
                 .overlay(alignment: .bottomLeading) {
                     workingIndicator
                         .padding(.horizontal, Tokens.Layout.gutter)
                         .padding(.bottom, 6)
+                }
+                // §5 "at bottom" from the real scroll geometry (an eager
+                // stack's anchor onAppear fires once, not on visibility).
+                // Written to a non-published property: no re-render.
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.visibleRect.maxY >= geometry.contentSize.height - 48
+                } action: { _, atBottom in
+                    vm.isAtBottom = atBottom
                 }
                 .onChange(of: vm.displayRows) { _, _ in
                     // §5: auto-scroll ONLY when already at bottom — never
