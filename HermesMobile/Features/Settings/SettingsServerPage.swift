@@ -22,7 +22,6 @@ struct SettingsServerPage: View {
     /// The active Hermes server's saved connection, read on appear (#899): its username shows
     /// on the connection row, and Archived Sessions reads through it (#1048).
     @State private var hermesConnection: BotConnection?
-    @State private var moveRequest: MoveToHermesRequest?
 
     init(
         authManager: AuthManager,
@@ -66,10 +65,6 @@ struct SettingsServerPage: View {
                 inactiveServerSection
             }
 
-            if account.kind == .webui {
-                MoveToHermesSection(authManager: authManager, account: account, request: $moveRequest)
-            }
-
             accountSections
         }
         .settingsPage(displayName.isEmpty ? hostFallback : displayName)
@@ -92,7 +87,6 @@ struct SettingsServerPage: View {
         .onDisappear {
             if let server = activeHermesServer { HermesUpdateModel.for(server: server).leaveSettings() }
         }
-        .sheet(item: $moveRequest) { MoveToHermesSheet(auth: authManager, sourceID: account.id, entry: $0.entry) }
         .alert(removeAlertTitle, isPresented: $isConfirmingRemove) {
             Button("Cancel", role: .cancel) {}
             Button(removeButtonTitle, role: .destructive) {
@@ -197,14 +191,6 @@ struct SettingsServerPage: View {
 
     @ViewBuilder
     private var accountSections: some View {
-        if !isActive {
-            Section {
-                Button(String(localized: "Switch to This Server")) {
-                    authManager.switchActiveServer(to: account)
-                }
-            }
-        }
-
         // Signing out keeps a Hermes server and shows its sign-in form (#899); a webui
         // server's sign-out removes it, below.
         if activeHermesServer != nil {
@@ -275,13 +261,7 @@ struct SettingsServerPage: View {
 
     private var removeAlertTitle: String {
         if signsOut { return String(localized: "Sign out of this server?") }
-        if moveRemovalMessage != nil { return String(localized: "Remove \(displayName.isEmpty ? hostFallback : displayName)?") }
         return String(localized: "Remove this server?")
-    }
-
-    /// What removing a server a move involves leaves behind and keeps routing (S2, S3).
-    private var moveRemovalMessage: String? {
-        MoveToHermesRemoval.message(for: account, servers: authManager.servers)
     }
 
     private var removeFootnote: String {
@@ -290,11 +270,7 @@ struct SettingsServerPage: View {
             : String(localized: "Removes this server from this iPhone.")
     }
 
-    private var removeAlertMessage: String {
-        guard let moved = moveRemovalMessage else { return usualRemovalMessage }
-        // S2 replaces the usual copy for a webui server; a destination keeps it and adds S3.
-        return signsOut || isActive || account.kind == .hermes ? usualRemovalMessage + " " + moved : moved
-    }
+    private var removeAlertMessage: String { usualRemovalMessage }
 
     private var usualRemovalMessage: String {
         if signsOut {
@@ -313,83 +289,3 @@ struct SettingsServerPage: View {
     }
 }
 
-/// A webui server's Move to Hermes section (#1218): A1 before a move, then where it stands (1A):
-/// moving, paused, finished with its report waiting for Done, or moved. Each sets the request
-/// the page opens the guided sheet for.
-private struct MoveToHermesSection: View {
-    @Bindable var authManager: AuthManager
-    let account: ServerAccount
-    @Binding var request: MoveToHermesRequest?
-    private let notices = MoveToHermesNotices.shared
-
-    var body: some View {
-        Section {
-            if let notice = notices.card(forSource: account.id, in: authManager.servers) {
-                status(notice)
-            } else {
-                if let host = savedHost {
-                    LabeledContent(String(localized: "Hermes host"), value: String(localized: "\(host) (saved sign-in)"))
-                }
-                Button(String(localized: "Move to Hermes…")) { request = MoveToHermesRequest(entry: .start) }
-            }
-        } header: {
-            Text("Move to Hermes")
-        } footer: {
-            footer
-        }
-    }
-
-    @ViewBuilder
-    private var footer: some View {
-        if let notice = notices.card(forSource: account.id, in: authManager.servers) {
-            if case .moved = notice.stage {
-                Text(notice.report.map {
-                    String(localized: "Last counted \($0.recordedAt.formatted(date: .abbreviated, time: .omitted)). Sending here too can split a conversation.")
-                } ?? String(localized: "Sending here too can split a conversation."))
-            }
-        } else {
-            Text("Moving brings chats, pins and drafts to Hermes.")
-        }
-    }
-
-    /// The host this server's saved Hermes sign-in names, as the move would show it.
-    private var savedHost: String? {
-        guard let url = URL(string: account.id),
-              let saved = try? BotConnectionStore(keychain: authManager.keychain).load(server: url) else { return nil }
-        let id = MoveToHermesRunner.destinationID(for: saved)
-        if let configured = authManager.servers.first(where: { $0.id == id }) { return MoveToHermesModel.name(configured) }
-        return saved.name.isEmpty ? (saved.address.host ?? saved.address.absoluteString) : saved.name
-    }
-
-    @ViewBuilder
-    private func status(_ notice: MoveToHermesNotice) -> some View {
-        let destination = MoveToHermesModel.name(notice.destination)
-        let counts = notice.inHermes.flatMap { inHermes in notice.total.map { String(localized: "\(inHermes) of \($0) in \(destination)") } }
-        switch notice.stage {
-        case .running:
-            Text("Moving to \(destination)")
-        case .paused(let canResume):
-            LabeledContent(String(localized: "Paused"), value: counts ?? "")
-            if canResume { Button(String(localized: "Resume")) { request = MoveToHermesRequest(entry: .resume) } }
-            Button(String(localized: "Details")) { request = MoveToHermesRequest(entry: .details) }
-        case .finished:
-            LabeledContent(String(localized: "Finished"), value: counts ?? "")
-            Button(String(localized: "See Report")) { request = MoveToHermesRequest(entry: .details) }
-        case .moved:
-            LabeledContent(String(localized: "Moved to"), value: destination)
-            LabeledContent(String(localized: "May be only here"), value: onlyHere(notice.report))
-            Button(String(localized: "Copy Missing Chats Again…")) { request = MoveToHermesRequest(entry: .copyMissingAgain) }
-        }
-    }
-
-    /// Chats the last count left only here, or unknown: never zero when the move couldn't count.
-    private func onlyHere(_ report: MovedWebuiReport?) -> String {
-        guard let remaining = report?.remaining, let unchecked = report?.unchecked else { return String(localized: "Not counted") }
-        return String(localized: "\(remaining + unchecked) chats")
-    }
-}
-
-private struct MoveToHermesRequest: Identifiable {
-    let entry: MoveToHermesEntry
-    var id: String { "\(entry)" }
-}

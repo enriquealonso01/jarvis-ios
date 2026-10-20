@@ -121,7 +121,6 @@ struct HermesSessionListView: View {
                     openSearch: openSearch
                 )
                 .sessionsTopChromeListRow()
-                MoveToHermesBanner(serverID: entry.server.absoluteString)
             }
             if viewModel.showsOfflineCache {
                 OfflineCacheBanner()

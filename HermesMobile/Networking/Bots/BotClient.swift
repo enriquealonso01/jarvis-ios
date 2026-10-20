@@ -160,16 +160,6 @@ import Foundation
         return page
     }
 
-    func sessionScanPage(profile: String, offset: Int) async throws -> HermesScanPage {
-        guard gateway.isAttached(consumerID) else { throw BotFailure.stale }
-        let attempt = self.attempt
-        let data = try await http.data(.sessionScan(profile: profile, offset: offset),
-                                       validateDispatch: { try self.checkOwner(attempt) })
-        try checkOwner(attempt)
-        guard let page = try? JSONDecoder().decode(HermesScanPage.self, from: data) else { throw BotFailure.unsupported }
-        return page
-    }
-
     /// Writes `change` and returns the title the host kept. Behind the write fence (#1300) it reads
     /// the session's revision first, since any activity moves it. A 400's reason is a
     /// `HermesSessionRefusal`, a fence 409 a `HermesSessionFenceRefusal`; neither is resent.

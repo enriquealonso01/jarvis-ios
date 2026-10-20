@@ -19,14 +19,14 @@ struct SettingsView: View {
     }
 
     @AppStorage(AppTheme.storageKey) private var appThemeRawValue = AppTheme.system.rawValue
-    @State private var isPresentingAddServer = false
     /// Read from the Keychain on each appear, so it follows a change made on the page.
     @State private var isPushOn = false
 
     var body: some View {
         List {
-            Section(String(localized: "Servers")) {
-                ForEach(authManager.servers) { account in
+            // JARVIS has one server (`JarvisServer`): its page holds the sign-in and sessions.
+            if let account = authManager.activeServer {
+                Section(String(localized: "Server")) {
                     NavigationLink {
                         SettingsServerPage(
                             authManager: authManager,
@@ -34,21 +34,9 @@ struct SettingsView: View {
                             onDefaultProfileSelected: onDefaultProfileSelected
                         )
                     } label: {
-                        SettingsServerRow(
-                            account: account,
-                            isActive: account.id == authManager.activeServerID,
-                            movedTo: account.kind == .webui
-                                ? authManager.moveRecord(forSource: account.id).map { MoveToHermesModel.name($0.destination) } : nil
-                        )
+                        SettingsServerRow(account: account)
                     }
                 }
-
-                Button {
-                    isPresentingAddServer = true
-                } label: {
-                    SettingsLabel(title: String(localized: "Add Server"), systemImage: "plus.circle")
-                }
-                .accessibilityHint("Adds another Hermes server.")
             }
 
             Section {
@@ -120,18 +108,12 @@ struct SettingsView: View {
         .onAppear {
             isPushOn = PushRegistrar.shared?.pairing(for: server) != nil
         }
-        .sheet(isPresented: $isPresentingAddServer) {
-            AddServerView(authManager: authManager)
-        }
     }
 }
 
-/// A server on the index: avatar, name, then its kind and host, or where it moved (B3, #1218).
-/// The active server carries a checkmark.
+/// The JARVIS server on the index: avatar, name, then its host.
 private struct SettingsServerRow: View {
     let account: ServerAccount
-    let isActive: Bool
-    var movedTo: String?
 
     private var hostFallback: String {
         URL(string: account.urlString)?.host ?? account.urlString
@@ -149,11 +131,7 @@ private struct SettingsServerRow: View {
         )
     }
 
-    /// The kind is a product name, so it stays untranslated.
-    private var detail: String {
-        if let movedTo { return String(localized: "Moved to \(movedTo)") }
-        return (account.kind == .hermes ? "Hermes" : "webui") + " · " + hostFallback
-    }
+    private var detail: String { hostFallback }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -171,22 +149,9 @@ private struct SettingsServerRow: View {
             }
 
             Spacer(minLength: 8)
-
-            if isActive {
-                Image(systemName: "checkmark")
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.tint)
-            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Opens server details to switch, edit, or remove.")
-    }
-
-    private var accessibilityLabel: String {
-        let base = isActive ? String(localized: "\(name), \(account.urlString), active server") : String(localized: "\(name), \(account.urlString)")
-        if let movedTo { return base + ", " + String(localized: "Moved to \(movedTo)") }
-        return account.kind == .webui ? base + ", " + String(localized: "legacy webui server") : base
+        .accessibilityLabel(String(localized: "\(name), \(account.urlString)"))
     }
 }
 

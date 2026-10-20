@@ -163,11 +163,6 @@ enum HermesREST: Equatable, Sendable {
     /// reads the Archived screen's page instead (#1048): only archived rows, hidden Bot Chats
     /// included, plus the same pinned back-fill.
     case sessionList(profile: String, offset: Int, archived: Bool = false)
-    /// One page of every session `profile` lists for Move to Hermes's scan (#1213): archived,
-    /// empty and machine-run rows included, newest-created first. A session made or deleted
-    /// mid-scan shifts later pages, so a row can repeat or slip past; the scan reads any id it
-    /// didn't list by that id.
-    case sessionScan(profile: String, offset: Int)
     /// One change to a session, with `profile` in the body (#1046, #1048), and the write fence's
     /// identity (#1300) on a host that has the fence; nil sends the change alone.
     case updateSession(key: String, profile: String, change: HermesSessionChange, identity: HermesSessionWriteIdentity?)
@@ -416,17 +411,6 @@ enum HermesREST: Equatable, Sendable {
                 URLQueryItem(name: "limit", value: String(Self.sessionPageSize)), URLQueryItem(name: "offset", value: String(offset))
             ] + (archived ? [] : [URLQueryItem(name: "min_messages", value: "1")]) + [
                 URLQueryItem(name: "exclude_sources", value: "cron,kanban,oneshot,subagent,tool")
-            ]
-            guard let url = parts.url else { throw BotFailure.invalidAddress }
-            return Self.get(url)
-        case .sessionScan(let profile, let offset):
-            guard !profile.isEmpty, offset >= 0,
-                  var parts = URLComponents(url: base.appendingPathComponent("api/sessions"), resolvingAgainstBaseURL: false)
-            else { throw BotFailure.invalidAddress }
-            parts.queryItems = [
-                URLQueryItem(name: "profile", value: profile), URLQueryItem(name: "order", value: "created"),
-                URLQueryItem(name: "archived", value: "include"),
-                URLQueryItem(name: "limit", value: String(Self.sessionPageSize)), URLQueryItem(name: "offset", value: String(offset))
             ]
             guard let url = parts.url else { throw BotFailure.invalidAddress }
             return Self.get(url)

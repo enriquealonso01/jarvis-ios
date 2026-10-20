@@ -159,48 +159,6 @@ final class SessionIdentityTests: XCTestCase {
 /// action itself is #17's `AuthManager.switchActiveServer`, covered by
 /// `AuthManagerStateTests`; these cover the pure model that decides what the
 /// menu shows and which server is marked active.
-final class AvatarServerSwitcherModelTests: XCTestCase {
-    private func makeAccount(id: String, displayName: String = "") -> ServerAccount {
-        ServerAccount(
-            id: id,
-            urlString: id,
-            displayName: displayName,
-            initials: "",
-            headerLogoColorHex: HeaderLogoColor.defaultHex,
-            createdAt: Date(timeIntervalSince1970: 0),
-            updatedAt: Date(timeIntervalSince1970: 0)
-        )
-    }
-
-    func testMarksTheActiveServerAmongMultipleAndPreservesOrder() {
-        let model = AvatarServerSwitcherModel(
-            servers: [
-                makeAccount(id: "https://a.test", displayName: "Alpha"),
-                makeAccount(id: "https://b.test", displayName: "Bravo")
-            ],
-            activeServerID: "https://b.test"
-        )
-
-        XCTAssertEqual(model.entries.map(\.id), ["https://a.test", "https://b.test"])
-        XCTAssertEqual(model.entries.map(\.displayName), ["Alpha", "Bravo"])
-        XCTAssertEqual(model.entries.map(\.isActive), [false, true])
-        XCTAssertEqual(model.activeID, "https://b.test")
-    }
-
-    func testFallsBackToHostWhenDisplayNameIsEmpty() {
-        let model = AvatarServerSwitcherModel(
-            servers: [
-                makeAccount(id: "https://hermes.example.com:8080", displayName: ""),
-                makeAccount(id: "https://named.test", displayName: "Named")
-            ],
-            activeServerID: "https://hermes.example.com:8080"
-        )
-
-        XCTAssertEqual(model.entries[0].displayName, "hermes.example.com")
-        XCTAssertEqual(model.entries[1].displayName, "Named")
-    }
-}
-
 final class SectionVisibilitySettingsTests: XCTestCase {
     private let allKeys = [
         SectionVisibilitySettings.tasksKey,

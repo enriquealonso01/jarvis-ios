@@ -7,29 +7,6 @@ import UniformTypeIdentifiers
 @testable import HermesMobile
 
 final class APIClientAuthAndErrorTests: APIClientTestCase {
-    func testOnboardingPasswordValidationOnlyRequiresKnownAuthEnabledPassword() {
-        XCTAssertEqual(
-            OnboardingViewModel.passwordValidationMessage(
-                authStatus: AuthStatusResponse(authEnabled: true, loggedIn: false),
-                password: " \n "
-            ),
-            OnboardingViewModel.emptyPasswordMessage
-        )
-        XCTAssertNil(
-            OnboardingViewModel.passwordValidationMessage(
-                authStatus: AuthStatusResponse(authEnabled: true, loggedIn: false),
-                password: "secret"
-            )
-        )
-        XCTAssertNil(
-            OnboardingViewModel.passwordValidationMessage(
-                authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false),
-                password: ""
-            )
-        )
-        XCTAssertNil(OnboardingViewModel.passwordValidationMessage(authStatus: nil, password: ""))
-    }
-
     @MainActor
     func testAuthManagerConnectsToNoPasswordTailscaleServerWithoutLogin() async throws {
         let keychain = InMemoryKeychainStore()
@@ -84,7 +61,7 @@ final class APIClientAuthAndErrorTests: APIClientTestCase {
         XCTAssertEqual(client.loginPasswords, [])
         XCTAssertNil(keychain.savedValues[.serverURL])
         XCTAssertEqual(manager.state, .unconfigured)
-        XCTAssertEqual(manager.lastErrorMessage, OnboardingViewModel.emptyPasswordMessage)
+        XCTAssertEqual(manager.lastErrorMessage, "Enter the server password.")
     }
 
     @MainActor

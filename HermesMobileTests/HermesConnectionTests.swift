@@ -592,45 +592,6 @@ import XCTest
         XCTAssertEqual(try BotConnectionStore(keychain: keychain).load(server: server)?.oauth?.refreshToken, "refresh-2")
     }
 
-    /// Move to Hermes's destination connection (#1265) saves the token it rotates, as the server's
-    /// own connection does, and closing it leaves that connection alone. The server's own
-    /// connection, still signed in meanwhile, refreshes next from the saved token, not the one it
-    /// held, which the host has retired.
-    func testAMoveSavesTheTokenItRotatesForTheServersOwnConnection() async throws {
-        let server = URL(string: "https://hermes.example")!
-        let keychain = InMemoryKeychainStore()
-        let store = BotConnectionStore(keychain: keychain)
-        try store.save(oauthRecord(refreshToken: "refresh-0"), server: server)
-        var sent: [String] = []
-        let connections = HermesConnections(configuration: { HermesHostFixture.configuration { request in
-            switch request.url?.path {
-            case "/auth/native/refresh":
-                let body = try? JSONDecoder().decode(BotJSON.self, from: apiTestBodyData(from: request) ?? Data())
-                sent.append(body?["refresh_token"].text ?? "")
-                return .json(200, .object(["access_token": .string("access-\(sent.count)"),
-                                           "refresh_token": .string("refresh-\(sent.count)")]))
-            case "/api/auth/me": return .json(200, .object(["provider": .string("nous"), "user_id": .string("u1")]))
-            case "/api/plugins/hermex-push/pairing":
-                // The host has since expired the own connection's first access token.
-                let expired = request.value(forHTTPHeaderField: "Authorization") == "Bearer access-1"
-                return expired ? .json(401, .object(["error": .string("session_expired")])) : nil
-            default: return nil
-            }
-        } }, keychain: keychain)
-        let own = connections.connection(for: try XCTUnwrap(store.load(server: server)), server: server)
-        try await own.signIn()
-
-        let move = MoveToHermesDestination.live(try XCTUnwrap(store.load(server: server)), connections: connections)
-        _ = try? await move.readPairing()
-        move.close()
-        XCTAssertEqual(try store.load(server: server)?.oauth?.refreshToken, "refresh-2", "The move's rotated token is saved")
-        XCTAssertFalse(own.isRetired)
-
-        _ = try await own.data(.pushPairing)
-        XCTAssertEqual(sent, ["refresh-0", "refresh-1", "refresh-2"])
-        XCTAssertEqual(try store.load(server: server)?.oauth?.refreshToken, "refresh-3")
-    }
-
     /// A move's connection, made before the server's own is retired mid-refresh, still waits for
     /// that refresh and sends the token it rotated to, not the one it spent (#1265).
     func testAMovesConnectionWaitsForARefreshRetiredAfterItWasMade() async throws {
