@@ -1,0 +1,22 @@
+appId: com.enriquecodes.jarvis
+# Exploratory: maps the Projects screen so the next pass can create a workspace project and
+# assert the New Session workspace menu. Every step past the first screenshot is optional.
+name: 04 projects and the workspace menu
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn:
+    text: Projects
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: 04-projects
+- tapOn:
+    text: New Project.*
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: 04-new-project

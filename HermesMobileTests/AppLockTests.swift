@@ -103,7 +103,7 @@ final class AppLockTests: XCTestCase {
         authenticator.answers = [true]
         await lock.unlock()
         XCTAssertFalse(lock.isLocked)
-        XCTAssertEqual(authenticator.reasons, ["Unlock Hermex", "Unlock Hermex"])
+        XCTAssertEqual(authenticator.reasons, ["Unlock JARVIS", "Unlock JARVIS"])
     }
 
     func testTurningTheLockOnOrOffNeedsAuthentication() async {

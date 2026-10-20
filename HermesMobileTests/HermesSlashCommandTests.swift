@@ -300,7 +300,7 @@ import Observation
         chat.host.next("slash.exec", .init(result: .object(["type": .string("alias"), "target": .string("hello")])))
         let looped = await chat.model.runHermesSlashCommand("/hello")
         XCTAssertEqual(looped, .notDelivered)
-        XCTAssertEqual(chat.model.sendErrorMessage, "/hello points to another alias, so Hermex didn't run it.")
+        XCTAssertEqual(chat.model.sendErrorMessage, "/hello points to another alias, so JARVIS didn't run it.")
         XCTAssertEqual(chat.writes("slash.exec").count, 4)
     }
 

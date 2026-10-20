@@ -22,12 +22,12 @@ final class AuthManager {
     /// Shown when a server has auth on but explicitly reports password auth off,
     /// i.e. it signs in with passkeys (which we can't do yet). See issue #255.
     nonisolated static let passkeyOnlyMessage =
-        String(localized: "This server signs in with passkeys, which Hermex doesn't support yet.")
+        String(localized: "This server signs in with passkeys, which JARVIS doesn't support yet.")
 
     /// Single sign-on. Hermex cannot run the OIDC redirect flow yet, and an
     /// external browser's session is not shared with the app.
     nonisolated static let oidcOnlyMessage =
-        String(localized: "This server signs in with single sign-on, which Hermex doesn't support yet.")
+        String(localized: "This server signs in with single sign-on, which JARVIS doesn't support yet.")
 
     /// Trusted-header mode where the proxy did *not* authenticate this request,
     /// so the server reports the mode but not a session.
@@ -58,7 +58,6 @@ final class AuthManager {
         // The shared Bot connection signs in with the active server's saved credentials.
         didSet {
             if let old = oldValue.server, old != state.server { hermesConnections.retire(server: old) }
-            dropStaleMoveSheets()
         }
     }
     private(set) var lastErrorMessage: String?
@@ -68,23 +67,6 @@ final class AuthManager {
     /// the Settings server list updates reactively (#17). The active server is the
     /// one whose `id` matches `state.server?.absoluteString`.
     private(set) var servers: [ServerAccount] = []
-    /// Servers `removeServer` is part way through removing. A Move to Hermes runner treats its
-    /// destination as gone from the start, before the removal's first await (#1216).
-    @ObservationIgnored private(set) var removingServerIDs: Set<String> = []
-    /// "Bring your chats" after signing in to a Hermes server (#1266), which the root presents;
-    /// nil once it is answered, no webui server is left to move, or `dropStaleMoveSheets` ends it.
-    /// Showing one takes this launch's move sheet from the one-time question.
-    var moveOffer: MoveToHermesOffer? {
-        didSet { if moveOffer != nil { askedAboutMoveThisLaunch = true } }
-    }
-    /// The one-time "Move <server> to Hermes" question (#1267), which the root presents; set by
-    /// `askAboutMoveIfDue`, nil once closed or `dropStaleMoveSheets` ends it.
-    var moveQuestion: MoveToHermesQuestion?
-    /// One move sheet a launch: the question or the offer, whichever showed first.
-    @ObservationIgnored var askedAboutMoveThisLaunch = false
-
-    // `keychain`, `serverRegistry` and `refreshServers` are internal for
-    // `AuthManager+MoveToHermes`; nothing outside this type and that extension uses them.
     let keychain: any KeychainStoring
     private let clientFactory: (URL) -> any AuthAPIClient
     /// Builds a client bound to explicit headers (not the shared `CustomHeaderStore`)
@@ -146,24 +128,6 @@ final class AuthManager {
     /// every registry mutation routed through this manager.
     func refreshServers() {
         servers = serverRegistry.servers
-        dropStaleMoveSheets()
-    }
-
-    /// Ends `moveOffer` and `moveQuestion`, closing their sheets and any move they started (which
-    /// pauses, as closing does), once the server they show over isn't the signed-in active server
-    /// (the offer's destination, the question's webui server), or either server is gone, is being
-    /// removed, or changed kind. Called after every state, registry and removal change.
-    private func dropStaleMoveSheets() {
-        let active: String? = if case .loggedIn(let server) = state { server.absoluteString } else { nil }
-        func kindOf(_ id: String) -> ServerKind? { servers.first { $0.id == id }?.kind }
-        if let offer = moveOffer, active != offer.destinationID || kindOf(offer.sourceID) != .webui
-            || kindOf(offer.destinationID) != .hermes || !removingServerIDs.isDisjoint(with: [offer.sourceID, offer.destinationID]) {
-            moveOffer = nil
-        }
-        if let question = moveQuestion, active != question.sourceID || kindOf(question.sourceID) != .webui
-            || removingServerIDs.contains(question.sourceID) {
-            moveQuestion = nil
-        }
     }
 
     /// The headers currently in effect — used to prefill the editor on the connect
@@ -349,10 +313,6 @@ final class AuthManager {
     /// already in the registry, as `addServer` does, so a webui server and a Hermes server
     /// never share a URL (`replaceWebuiServer` swaps one for the other). Returns whether it
     /// was added.
-    ///
-    /// Switching to it offers to move a webui server there (`moveOffer`). A sign-in opened
-    /// from Move to Hermes passes `activating: false`: the server is only added, so the move's
-    /// sheet stays up and scans it next, and the move's Done switches (#1266).
     @discardableResult
     func addHermesServer(_ connection: BotConnection, activating: Bool = true) -> Bool {
         lastErrorMessage = nil
@@ -378,53 +338,7 @@ final class AuthManager {
         // The Shortcuts Profile list belonged to the server this replaces as active (#339).
         ProfileEntityCache.shared.save([])
         enterActiveServer(server)
-        moveOffer = MoveToHermesOffer(destinationID: server.absoluteString, servers: servers)
         return true
-    }
-
-    /// Replaces the webui server saved at `connection`'s address with a Hermes server, for a
-    /// host that moved from hermes-webui to the dashboard (#1027). `connection` is a sign-in
-    /// already verified, as for `addHermesServer`. The webui server goes as `removeServer`
-    /// takes it (its sign-in, cache and drafts on this iPhone), and the Hermes server keeps
-    /// its name, initials and color. Refuses unless a webui server is saved there. Returns
-    /// whether the Hermes server was added.
-    func replaceWebuiServer(with connection: BotConnection) async -> Bool {
-        lastErrorMessage = nil
-        let server = (try? BotConnection.address(connection.address.absoluteString)) ?? connection.address
-        guard let webui = servers.first(where: { $0.id == server.absoluteString }), webui.kind == .webui else {
-            lastErrorMessage = String(localized: "This server is already configured.")
-            return false
-        }
-        // No suspension between the removal's last step and the add, so no screen ever
-        // shows the server the removal falls back to.
-        await removeServer(webui)
-        guard addHermesServer(connection), let added = activeServer else { return false }
-        updateServerIdentity(added, displayName: webui.displayName, initials: webui.initials,
-                             headerLogoColorHex: webui.headerLogoColorHex)
-        return true
-    }
-
-    /// A Hermes sign-in a webui server keeps for its Bots, which the connect form offers
-    /// to copy into a new Hermes server at the same address (#900).
-    struct SavedHermesSignIn: Equatable {
-        /// The webui server that keeps it, named as Settings → Servers names it.
-        let serverName: String
-        let connection: BotConnection
-    }
-
-    /// The sign-ins configured webui servers keep for exactly `address`, each saved address
-    /// parsed by `BotConnection.address(_:)` as the typed one was. Never matched by
-    /// `install_id`: it comes from the public `/api/status`, so any host could report
-    /// another's and be offered its saved password.
-    func savedHermesSignIns(at address: URL) -> [SavedHermesSignIn] {
-        let store = BotConnectionStore(keychain: keychain)
-        return servers.compactMap { account in
-            guard account.kind == .webui, let server = URL(string: account.urlString),
-                  let saved = try? store.load(server: server),
-                  (try? BotConnection.address(saved.address.absoluteString)) == address else { return nil }
-            let name = account.displayName.isEmpty ? (server.host ?? account.urlString) : account.displayName
-            return SavedHermesSignIn(serverName: name, connection: saved)
-        }
     }
 
     /// The host refused the active Hermes server's saved username or password at the
@@ -441,11 +355,8 @@ final class AuthManager {
 
     /// The Hermes connection form saved `server`'s sign-in. Records the release the host
     /// reported, and signs the server back in when it is the active Hermes server waiting
-    /// on its sign-in form. A sign-in to the active Hermes server, from that form or from its
-    /// Settings while already signed in, offers to move a webui server there (`moveOffer`)
-    /// unless the sign-in continues a move (`offersMove: false`). Token refreshes never call
-    /// this. A no-op for a webui server.
-    func hermesSignInSaved(server: URL, offersMove: Bool = true) {
+    /// on its sign-in form. Token refreshes never call this. A no-op for a webui server.
+    func hermesSignInSaved(server: URL) {
         guard var account = servers.first(where: { $0.id == server.absoluteString }), account.kind == .hermes,
               let saved = try? BotConnectionStore(keychain: keychain).load(server: server) else { return }
         if account.serverVersion != saved.hermesVersion {
@@ -456,9 +367,6 @@ final class AuthManager {
         if state == .loggedOut(server: server) {
             lastErrorMessage = nil
             state = .loggedIn(server: server)
-        }
-        if offersMove, state == .loggedIn(server: server) {
-            moveOffer = MoveToHermesOffer(destinationID: server.absoluteString, servers: servers)
         }
     }
 
@@ -535,11 +443,6 @@ final class AuthManager {
     /// headers, and cookies — leaving the active server's auth untouched (#17).
     func removeServer(_ account: ServerAccount) async {
         guard let serverURL = URL(string: account.urlString) else { return }
-        removingServerIDs.insert(account.id)
-        defer { removingServerIDs.remove(account.id) }
-        dropStaleMoveSheets()
-        // A move committed during the awaits below leaves an orphan journal, which `MoveToHermesPending.all` deletes.
-        let movedSources = (servers.first { $0.id == account.id } ?? account).movedWebuiServers.map(\.sourceServerID)
         try? await BotHistoryCache.shared.removeServer(serverURL, activeConnectionID: (try? BotConnectionStore(keychain: keychain).load(server: serverURL))?.id)
         SessionUnreadStore().remove(for: serverURL)
         // Kept through a sign-out, which the Shortcuts picker still lists the server's Profiles across (#1180).
@@ -558,8 +461,6 @@ final class AuthManager {
             serverRegistry.remove(id: account.id)
             refreshServers()
         }
-        // After the entry is gone, so a running Move finds no record and writes nothing more (#1216).
-        MoveToHermesJournal.discard(sources: movedSources, destinationID: account.id)
     }
 
     /// Switches the active server to an already-registered one (the Settings

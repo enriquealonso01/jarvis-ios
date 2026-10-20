@@ -56,7 +56,7 @@ enum PushRegistrarError: Error, Equatable {
 /// one does, the token is re-registered on every launch: the relay revokes a
 /// device on its own when Apple reports the token invalid, so a past registration
 /// is not something the app may assume still holds.
-@MainActor final class PushRegistrar: PushPairingCopying {
+@MainActor final class PushRegistrar {
     /// Nil only when the build has no shared Keychain access group to write to,
     /// which means push cannot work at all on this build.
     static let shared: PushRegistrar? = {
@@ -64,7 +64,7 @@ enum PushRegistrarError: Error, Equatable {
         return PushRegistrar(store: store)
     }()
 
-    private static let logger = Logger(subsystem: "com.uzairansar.hermesmobile", category: "push")
+    private static let logger = Logger(subsystem: "com.enriquecodes.jarvis", category: "push")
 
     private let store: any PushPairingStoring
     private let relay: any PushRelayRegistering
@@ -239,23 +239,6 @@ enum PushRegistrarError: Error, Equatable {
     private func retire(token: String, of pairing: PushPairing, removedFrom server: URL) async {
         guard (try? isRegistered(token, of: pairing, besides: server)) == false else { return }
         try? await relay.deleteDevice(token: token, pairing: pairing)
-    }
-
-    /// Copies `source`'s stored pairing to `destination` for Move to Hermes (#1215), with its
-    /// device token and preferences, since the relay keys one registration by install and
-    /// token. Queued with the other device writes so a token refresh can't replace the token
-    /// being copied, and judged when it runs: nothing is written when `destination` is no longer
-    /// configured or already paired, or `source` no longer holds `install`. No relay call.
-    func copyPairing(from source: URL, to destination: URL, matching install: PushPairing,
-                     isConfigured: @escaping @MainActor (URL) -> Bool) async throws -> MovePushPairingOutcome {
-        try await enqueueRegistrationWork { [self] in
-            guard isConfigured(destination) else { return .unchecked }
-            guard try store.pairing(for: destination) == nil else { return .destinationAlreadyPaired }
-            guard let stored = try store.pairing(for: source) else { return .sourceUnpaired }
-            guard sameInstall(stored, install) else { return .differentInstall }
-            try store.save(stored, for: destination)
-            return .copied
-        }
     }
 
     /// Finishes an accepted preference transaction even if its screen closes. Only

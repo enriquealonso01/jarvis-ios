@@ -82,12 +82,12 @@ enum BotFailure: Error, Equatable, LocalizedError {
         case .rejected(4130): return String(localized: "This conversation is too large to open here. Use Desktop.")
         case .invalidAddress: return String(localized: "Enter a Hermes HTTP or HTTPS address without a path, credentials or query.")
         case .blocked: return String(localized: "Something in front of Hermes, such as Cloudflare Access, wants its own sign-in first. Add its service token under Connection Headers in the Hermes connection, or use an address that skips it, such as the dashboard's local network address.")
-        case .browserSignIn: return String(localized: "This Hermes host only offers sign-in with a browser, which Hermex doesn't support yet. To connect now, add a dashboard username and password on the host.")
+        case .browserSignIn: return String(localized: "This Hermes host only offers sign-in with a browser, which JARVIS doesn't support yet. To connect now, add a dashboard username and password on the host.")
         case .signInExpired: return String(localized: "Your Hermes sign-in expired. Sign in again.")
         case .browserSignInFailed: return String(localized: "The browser sign-in didn't finish. Try again.")
         case .upgradeRefused: return String(localized: "Hermes accepted the sign-in, but the live connection was refused. If a proxy or tunnel sits in front of Hermes, turn on WebSocket support and let the Sec-WebSocket-Protocol header through.")
         case .outdated(let version):
-            return String(localized: "This Hermes host runs \(version). Hermex needs Hermes \(HermesCompatibility.minimumVersion) or later. Update Hermes on the host, then try again.")
+            return String(localized: "This Hermes host runs \(version). JARVIS needs Hermes \(HermesCompatibility.minimumVersion) or later. Update Hermes on the host, then try again.")
         default: return String(localized: "Connection lost. The bot may still be working. Reconnect to check its current conversation.")
         }
     }
@@ -195,9 +195,6 @@ enum BotConnectionAdvice {
     /// One page of `profile`'s sessions for the Sessions list, or with `archived` for the
     /// Archived screen (`HermesREST.sessionList`, #1046, #1048).
     func sessionPage(profile: String, offset: Int, archived: Bool) async throws -> HermesSessionPage
-    /// One page of every session `profile` lists, for Move to Hermes's scan
-    /// (`HermesREST.sessionScan`, #1213).
-    func sessionScanPage(profile: String, offset: Int) async throws -> HermesScanPage
     /// Writes one change to a session (`HermesREST.updateSession`, #1046, #1048) and returns the
     /// title the host keeps. A change the host refuses with its reason, such as a title already
     /// in use, throws `HermesSessionRefusal`; one its write fence refuses (#1300), such as a
@@ -267,10 +264,6 @@ extension BotTransport {
     }
 
     func sessionPage(profile: String, offset: Int, archived: Bool) async throws -> HermesSessionPage {
-        throw BotFailure.unsupported
-    }
-
-    func sessionScanPage(profile: String, offset: Int) async throws -> HermesScanPage {
         throw BotFailure.unsupported
     }
 

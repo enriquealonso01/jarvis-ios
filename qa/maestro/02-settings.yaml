@@ -1,0 +1,20 @@
+appId: com.enriquecodes.jarvis
+name: 02 settings shows the JARVIS server and the Hermex credit
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- takeScreenshot: 02-home
+- tapOn: Settings
+- extendedWaitUntil:
+    visible: About JARVIS
+    timeout: 10000
+- takeScreenshot: 02-settings
+- tapOn: About JARVIS
+- extendedWaitUntil:
+    visible:
+      id: about.hermexAttribution
+    timeout: 10000
+- takeScreenshot: 02-about

@@ -12,7 +12,6 @@ struct ContentView: View {
 
     var body: some View {
         content
-            .moveToHermesNotices(authManager)
             .onOpenURL(perform: handleOpenURL)
             .task {
                 guard !didCheckInitialPendingShare else { return }
@@ -85,9 +84,9 @@ struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
+        // JARVIS v3 has one Hermes server and no webui (`JarvisServer`). Anything else, nothing
+        // configured or a webui entry an older build left behind, lands on the JARVIS sign-in.
         switch authManager.state {
-        case .unconfigured:
-            OnboardingView(authManager: authManager)
         case .loggedOut(let server) where authManager.kind(of: server) == .hermes:
             HermesServerSignIn(authManager: authManager, server: server)
                 .id(server)
@@ -99,27 +98,8 @@ struct ContentView: View {
                              didRouteShare: consumePendingSharedImport, didDeclineShare: releasePendingSharedImport,
                              didAbandonShare: { shares.abandon($0) })
                 .id(server)
-        case .loggedOut(let server):
-            OnboardingView(authManager: authManager, savedServer: server)
-        case .loggedIn(let server):
-            SessionListView(
-                authManager: authManager,
-                server: server,
-                pendingSharedImport: $shares.pending,
-                didRoutePendingSharedImport: consumePendingSharedImport,
-                hasWaitingSharedImport: shares.hasWaiting,
-                openNextSharedImport: openNextSharedImport,
-                pendingDeepLinkedSessionID: $pendingLinks.deepLinkedSessionID,
-                requestedNewChat: $pendingLinks.newChatRequest,
-                pendingBotDestination: $pendingLinks.bot,
-                pendingWebuiPush: $pendingLinks.webuiPush
-            )
-            // Switching the active server keeps us in `.loggedIn`, so without a
-            // per-server identity SwiftUI would reuse the same SessionListView (and
-            // its server-bound view model), leaving stale sessions/chat on screen.
-            // Keying on the server tears the whole stack down and rebuilds it
-            // against the newly active server (#17).
-            .id(server)
+        default:
+            JarvisSignInView(authManager: authManager)
         }
     }
 
@@ -544,7 +524,9 @@ struct HermesServerHome: View {
     /// so a sign-in changed in Settings or the inbox gets a fresh list.
     @State private var sessions: HermesSessionsSide?
     @State private var isShowingSettings = false
-    @State private var isPresentingAddServer = false
+    /// JARVIS asks once, after the first sign-in, whether to turn on the Face ID lock.
+    @State private var isOfferingAppLock = false
+    @AppStorage("jarvis.appLockOffered") private var appLockOffered = false
 
     init(authManager: AuthManager, server: URL, pendingBotDestination: Binding<BotDestination?>,
          pendingSessionDestination: Binding<HermesSessionDestination?>, pendingNewChat: Binding<HermesNewChatDestination?>,
@@ -591,6 +573,21 @@ struct HermesServerHome: View {
         // A Hermes chat's Update sign-in (#942) signs the server out to its sign-in form, which
         // keeps the saved values and focuses the password; saving signs it back in.
         .modifier(HermesUpdateSignInModifier { authManager.hermesSignInRejected(server: server) })
+        .task {
+            // The lock itself is Hermex's app lock (#885): Face ID with the passcode as fallback,
+            // a cover in the app switcher, relock after a minute away. It needs the owner's
+            // authentication to turn on, so JARVIS offers it once instead of defaulting it on.
+            if !appLockOffered, !AppLock.shared.isEnabled { isOfferingAppLock = true }
+        }
+        .alert("Lock JARVIS with Face ID?", isPresented: $isOfferingAppLock) {
+            Button("Turn On") {
+                appLockOffered = true
+                Task { await AppLock.shared.setEnabled(true) }
+            }
+            Button("Not Now", role: .cancel) { appLockOffered = true }
+        } message: {
+            Text("JARVIS hides its screen in the app switcher and asks for Face ID or your passcode when you come back. You can change this in Settings.")
+        }
         // A connection the inbox's sheet saved or changed closes no screen, so the switch reads too.
         .onChange(of: tab, readConnection)
         // A bot route lands on the inbox, so Settings (and an Archived screen pushed from it, #1146)
@@ -604,22 +601,19 @@ struct HermesServerHome: View {
         .onChange(of: pendingSessionDestination, initial: true) {
             guard pendingSessionDestination != nil else { return }
             if sessions == nil { pendingSessionDestination = nil; return }
-            tab = .sessions; isShowingSettings = false; isPresentingAddServer = false
+            tab = .sessions; isShowingSettings = false
         }
         // So does a Shortcut's new session (#1180), which the list opens.
         .onChange(of: pendingNewChat, initial: true) {
             guard pendingNewChat != nil else { return }
             if sessions == nil { pendingNewChat = nil; return }
-            tab = .sessions; isShowingSettings = false; isPresentingAddServer = false
+            tab = .sessions; isShowingSettings = false
         }
         // And a share (#1181), which stays queued while there is no list to open it.
         .onChange(of: pendingShare?.reservationID, initial: true) {
             guard let pendingShare else { return }
             if sessions == nil { didDeclineShare(pendingShare); return }
-            tab = .sessions; isShowingSettings = false; isPresentingAddServer = false
-        }
-        .sheet(isPresented: $isPresentingAddServer) {
-            AddServerView(authManager: authManager)
+            tab = .sessions; isShowingSettings = false
         }
     }
 
@@ -634,11 +628,7 @@ struct HermesServerHome: View {
             initials: identity.initials,
             color: HeaderLogoColor.color(for: identity.colorHex),
             foreground: HeaderLogoColor.prefersDarkForeground(for: identity.colorHex) ? .black : .white,
-            servers: AvatarServerSwitcherModel(servers: authManager.servers, activeServerID: authManager.activeServerID),
-            openSettings: { isShowingSettings = true },
-            switchToServer: { authManager.switchActiveServer(to: $0) },
-            addServer: { isPresentingAddServer = true },
-            manageServers: { isShowingSettings = true }
+            openSettings: { isShowingSettings = true }
         )
     }
 }
@@ -702,7 +692,6 @@ struct HermesServerSignIn: View {
     @Bindable var authManager: AuthManager
     let server: URL
     @State private var isShowingSettings = false
-    @State private var isPresentingAddServer = false
 
     var body: some View {
         NavigationStack {
@@ -712,10 +701,6 @@ struct HermesServerSignIn: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HermesServerAvatarButton(authManager: authManager, server: server) {
-                        isShowingSettings = true
-                    } addServer: {
-                        isPresentingAddServer = true
-                    } manageServers: {
                         isShowingSettings = true
                     }
                 }
@@ -728,9 +713,6 @@ struct HermesServerSignIn: View {
                         ToolbarItem(placement: .confirmationAction) { Button("Done") { isShowingSettings = false } }
                     }
             }
-        }
-        .sheet(isPresented: $isPresentingAddServer) {
-            AddServerView(authManager: authManager)
         }
     }
 }
@@ -755,37 +737,25 @@ private struct HermesServerIdentity {
 
 }
 
-/// The active Hermes server's avatar, as on the webui home (#283): a tap opens Settings,
-/// a hold opens the same server switcher.
+/// The active Hermes server's avatar: a tap opens Settings. JARVIS has one server, so there is
+/// no switcher behind it.
 private struct HermesServerAvatarButton: View {
     @Bindable var authManager: AuthManager
     let server: URL
     let openSettings: () -> Void
-    let addServer: () -> Void
-    let manageServers: () -> Void
 
     var body: some View {
         let identity = HermesServerIdentity(account: authManager.activeServer, server: server)
-        Menu {
-            AvatarServerSwitcherMenu(
-                model: AvatarServerSwitcherModel(servers: authManager.servers, activeServerID: authManager.activeServerID),
-                switchToServer: { authManager.switchActiveServer(to: $0) },
-                addServer: addServer,
-                manageServers: manageServers
-            )
-        } label: {
+        Button(action: openSettings) {
             Text(identity.initials)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(HeaderLogoColor.prefersDarkForeground(for: identity.colorHex) ? Color.black : Color.white)
                 .frame(width: 32, height: 32)
                 .background(HeaderLogoColor.color(for: identity.colorHex), in: Circle())
                 .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 1))
-                // On the label, so the initials are never read out as a control of their own.
-                .accessibilityLabel("Settings")
-                .accessibilityHint("Opens Settings. Long press to switch servers.")
-        } primaryAction: {
-            openSettings()
         }
+        .accessibilityLabel("Settings")
+        .accessibilityHint("Opens Settings.")
     }
 }
 

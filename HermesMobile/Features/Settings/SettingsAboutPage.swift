@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The app's version and its outside links: policy, support, and the ways to back it.
+/// The app's version and build, and the credit to Hermex, the open-source app JARVIS is built on.
 struct SettingsAboutPage: View {
     static var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? String(localized: "Unknown")
@@ -18,45 +18,16 @@ struct SettingsAboutPage: View {
             }
 
             Section {
-                SettingsExternalLink(title: String(localized: "Privacy Policy"), systemImage: "hand.raised", destination: AppConfig.privacyPolicyURL)
-                SettingsExternalLink(title: String(localized: "Support"), systemImage: "questionmark.circle", destination: AppConfig.supportURL)
-                SettingsExternalLink(
-                    title: String(localized: "Report a Problem"),
-                    systemImage: "ladybug",
-                    destination: AppConfig.reportProblemURL,
-                    accessibilityLabel: String(localized: "Report a Problem, opens in browser")
-                )
-            }
-
-            Section {
-                Group {
-                    SettingsExternalLink(
-                        title: String(localized: "Become a supporter"),
-                        systemImage: "heart",
-                        destination: AppConfig.membershipURL,
-                        accessibilityLabel: String(localized: "Become a supporter, opens in browser")
-                    )
-                    SettingsExternalLink(
-                        title: String(localized: "Buy Uzi a coffee"),
-                        systemImage: "cup.and.saucer",
-                        destination: AppConfig.tipURL,
-                        accessibilityLabel: String(localized: "Buy Uzi a coffee, opens in browser")
-                    )
+                Text("JARVIS is Enrique's personal assistant app.")
+                Link(destination: AppConfig.hermexURL) {
+                    Text("Built on Hermex by Uzair Ansar, used under the MIT License.")
                 }
-                .environment(\.openURL, OpenURLAction { url in
-                    TipJarPromptState(defaults: .standard).recordLinkOpened()
-                    return .systemAction(url)
-                })
-
-                SettingsExternalLink(
-                    title: String(localized: "Rate Hermex"),
-                    systemImage: "star",
-                    destination: AppConfig.writeReviewURL,
-                    accessibilityLabel: String(localized: "Rate Hermex, opens the App Store")
-                )
+                .accessibilityIdentifier("about.hermexAttribution")
+            } header: {
+                Text("Credits")
             }
         }
-        .settingsPage(String(localized: "About Hermex"))
+        .settingsPage(String(localized: "About JARVIS"))
     }
 }
 
@@ -96,7 +67,7 @@ struct SettingsDeveloperPage: View {
                 Section {
                     Toggle(isOn: $forcesBrowserSignIn) { Text(verbatim: "Browser sign-in on password hosts") }
                 } footer: {
-                    Text(verbatim: "Hermes hosts that offer a password sign in through the browser instead, the next time a sign-in form opens. Debug and Hermex Branch builds only.")
+                    Text(verbatim: "Hermes hosts that offer a password sign in through the browser instead, the next time a sign-in form opens. Debug and JARVIS Branch builds only.")
                 }
             }
         }

@@ -45,7 +45,7 @@ enum PushRelayTestOutcome: Equatable {
 /// The install key is a bearer capability and it sits in the *path*, so no URL
 /// built here is ever logged, attached to an error, or shown to the user.
 @MainActor struct PushRelayClient: PushRelayRegistering, PushActivityRelaying {
-    private static let logger = Logger(subsystem: "com.uzairansar.hermesmobile", category: "push")
+    private static let logger = Logger(subsystem: "com.enriquecodes.jarvis", category: "push")
 
     private let session: URLSession
 
@@ -96,7 +96,7 @@ enum PushRelayTestOutcome: Equatable {
     /// fixed thread and collapse ids make it replace the first banner instead of stacking.
     func sendTestNotification(pairing: PushPairing) async -> PushRelayTestOutcome {
         let keys = PushPreviewKeys(installKey: pairing.installKey, previewKey: pairing.previewKey)
-        let preview = PushPreview(title: String(localized: "Hermex test notification"),
+        let preview = PushPreview(title: String(localized: "JARVIS test notification"),
                                   body: String(localized: "Push through this server’s relay reached this iPhone."))
         guard let url = try? Self.installURL(pairing: pairing).appending(path: "notify"),
               let sealed = PushPreview.seal(preview, keys: keys),

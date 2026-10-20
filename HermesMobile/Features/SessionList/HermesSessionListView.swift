@@ -42,7 +42,6 @@ struct HermesSessionListView: View {
     @AppStorage(SessionSidebarDisclosureSettings.projectsAreExpandedKey)
     private var projectsAreExpanded = SessionSidebarDisclosureSettings.defaultProjectsAreExpanded
     @AppStorage(SectionVisibilitySettings.tasksKey) private var showsTasks = true
-    @AppStorage(SectionVisibilitySettings.kanbanKey) private var showsKanban = true
     @AppStorage(SectionVisibilitySettings.skillsKey) private var showsSkills = true
     @AppStorage(SectionVisibilitySettings.memoryKey) private var showsMemory = true
     @AppStorage(SectionVisibilitySettings.insightsKey) private var showsInsights = true
@@ -122,7 +121,6 @@ struct HermesSessionListView: View {
                     openSearch: openSearch
                 )
                 .sessionsTopChromeListRow()
-                MoveToHermesBanner(serverID: entry.server.absoluteString)
             }
             if viewModel.showsOfflineCache {
                 OfflineCacheBanner()
@@ -203,9 +201,6 @@ struct HermesSessionListView: View {
             InsightsView(client: entry.client, profile: entry.client.profile, onAPIError: { _ in })
                 .id(entry.id)
         }
-        .navigationDestination(isPresented: $covers.showingKanban) {
-            KanbanView(server: entry.server, hermes: HermesConnections.shared.connection(for: entry.connection, server: entry.server))
-        }
         .sheet(item: $covers.renaming, onDismiss: { viewModel.clearRenameError() }) { session in
             SessionRenameSheet(initialTitle: SessionRowView.displayTitle(for: session), isSaving: viewModel.isRenamingSession,
                                errorMessage: viewModel.renameErrorMessage) {
@@ -271,7 +266,7 @@ struct HermesSessionListView: View {
             }
         } message: { failure in
             Text(verbatim: failure.reason + "\n\n"
-                 + String(localized: "Nothing was added. Discard deletes this saved share from Hermex."))
+                 + String(localized: "Nothing was added. Discard deletes this saved share from JARVIS."))
         }
         .modifier(SessionActionConfirmations(
             viewModel: viewModel, sessionPendingDeletion: $covers.deleting, projectPendingDeletion: $covers.deletingProject,
@@ -331,17 +326,16 @@ struct HermesSessionListView: View {
     private var sectionVisibility: SidebarSectionVisibility {
         let isHome = home != nil && !isSearchExpanded
         return SidebarSectionVisibility(
-            bots: false, tasks: isHome && showsTasks, kanban: isHome && showsKanban, skills: isHome && showsSkills,
+            bots: false, tasks: isHome && showsTasks, skills: isHome && showsSkills,
             memory: isHome && showsMemory, insights: isHome && showsInsights, activeProfile: false,
             projects: !viewModel.hermesShowsAllProfiles
         )
     }
 
     /// Pushes a home row's screen: Tasks, Skills, Memory and Usage on the listed Profile (the one
-    /// New Session opens in, on a list of every Profile), Kanban for the whole host.
+    /// New Session opens in, on a list of every Profile).
     private func open(_ destination: SessionListUtilityDestination) {
         let server = entry.server, connection = entry.connection
-        if destination == .kanban { covers.showingKanban = true; return }
         guard let profile else { return }
         switch destination {
         case .tasks:
@@ -374,12 +368,53 @@ struct HermesSessionListView: View {
         withAnimation(SessionListMotion.searchChromeAnimation(reduceMotion: reduceMotion)) { isSearchExpanded = false }
     }
 
+    /// New Session (JARVIS workspaces). With no project that names a folder, a tap starts a
+    /// session at once, as in Hermex. Otherwise the tap asks where: the project lane on screen
+    /// first, then General (the Profile's default folder) and every other workspace. A session's
+    /// workspace is its working folder (`cwd`), so the host loads that folder's AGENTS.md /
+    /// CLAUDE.md / .hermes.md into the new conversation.
+    @ViewBuilder
     private var newSessionButton: some View {
-        Button("New Session", systemImage: "square.and.pencil") {
-            guard let profile else { return }
-            covers.chat = HermesSessionChat(server: entry.server, connection: entry.connection, target: .new(profile: profile))
+        if workspaces.isEmpty {
+            Button("New Session", systemImage: "square.and.pencil") { startNewSession(in: nil) }
+                .disabled(viewModel.isViewingCachedData || profile == nil)
+        } else {
+            workspaceMenu
+        }
+    }
+
+    private var workspaceMenu: some View {
+        Menu {
+            if let lane = workspaces.first(where: { $0.projectId == selectedProjectID }) {
+                Button("In \(lane.name ?? lane.hermes?.folder ?? "")", systemImage: "folder.fill") {
+                    startNewSession(in: lane.hermes?.folder)
+                }
+            }
+            Button("General", systemImage: "bubble.left.and.bubble.right") { startNewSession(in: nil) }
+            if !workspaces.isEmpty {
+                Section("Workspaces") {
+                    ForEach(workspaces) { project in
+                        Button(project.name ?? project.hermes?.folder ?? "", systemImage: "folder") {
+                            startNewSession(in: project.hermes?.folder)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("New Session", systemImage: "square.and.pencil")
         }
         .disabled(viewModel.isViewingCachedData || profile == nil)
+    }
+
+    /// The listed Profile's projects that name a host folder, the user's first.
+    private var workspaces: [ProjectSummary] {
+        viewModel.projects.filter { $0.hermes?.folder?.isEmpty == false }
+    }
+
+    private func startNewSession(in folder: String?) {
+        guard let profile else { return }
+        covers.chat = HermesSessionChat(server: entry.server, connection: entry.connection,
+                                        target: .new(profile: profile, cwd: folder))
     }
 
     private var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -786,7 +821,7 @@ struct HermesShareFailure {
         case BotAttachmentFailure.unreadable:
             reason = String(localized: "One of the files couldn’t be read.")
         default:
-            reason = String(localized: "Hermex couldn’t save the files on this iPhone.")
+            reason = String(localized: "JARVIS couldn’t save the files on this iPhone.")
         }
     }
 }
@@ -865,11 +900,10 @@ struct HermesSessionListCovers {
     var skills: HermesSkillsEntry?
     var memory: HermesMemoryEntry?
     var insights: HermesInsightsEntry?
-    var showingKanban = false
 
     /// A screen this list pushed covers it, so the socket stays closed until it returns.
     var isCoveredByScreen: Bool {
-        showingArchived || showingKanban || tasks != nil || skills != nil || memory != nil || insights != nil
+        showingArchived || tasks != nil || skills != nil || memory != nil || insights != nil
     }
 
     /// Counts the links that brought the rows forward, so work started before one (an export)

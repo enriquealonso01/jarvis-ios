@@ -405,14 +405,6 @@ import OSLog
         try await upgrade { try HermesREST.gatewayUpgrade(base: connection.address, ticket: $0) }
     }
 
-    /// Mints one single-use ticket, never the gateway's, and returns `board`'s Kanban event
-    /// socket upgrade that presents it, with this connection's headers (#1045).
-    func kanbanEventsUpgrade(board: String, since: Int) async throws -> URLRequest {
-        try await upgrade {
-            try HermesREST.kanbanEventsUpgrade(base: connection.address, board: board, since: since, ticket: $0)
-        }
-    }
-
     /// Mints one ticket and returns the upgrade `build` makes for it, with this connection's headers.
     private func upgrade(_ build: (String) throws -> URLRequest) async throws -> URLRequest {
         do {
@@ -700,11 +692,11 @@ struct HermesHeaders: Sendable {
             case .bearer:
                 return String(localized: "Hermes reads Authorization: Bearer as its own sign-in and refuses it. Remove this header to connect.")
             case .authorization:
-                return String(localized: "This server signs in through the browser, so Hermex sends its own Authorization header. Remove this header to connect. For Cloudflare Access, use the CF-Access-Client-Id and CF-Access-Client-Secret headers instead.")
+                return String(localized: "This server signs in through the browser, so JARVIS sends its own Authorization header. Remove this header to connect. For Cloudflare Access, use the CF-Access-Client-Id and CF-Access-Client-Secret headers instead.")
             case .reserved(let name):
                 // First-strong isolates keep the name in one left-to-right run in right-to-left text.
                 let shown = "\u{2068}\(name)\u{2069}"
-                return String(localized: "\(shown) is reserved for Hermex and Hermes, so it can't be a connection header. Remove this header to connect.")
+                return String(localized: "\(shown) is reserved for JARVIS and Hermes, so it can't be a connection header. Remove this header to connect.")
             case .malformed(let name):
                 let shown = "\u{2068}\(name)\u{2069}"
                 return String(localized: "\(shown) isn't a valid header: names can't contain spaces or colons, and values must fit on one line. Fix or remove it to connect.")

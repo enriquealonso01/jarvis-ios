@@ -43,7 +43,7 @@ enum HermesSessionFenceRefusal: LocalizedError, Equatable {
         switch self {
         case .changed: return String(localized: "This session changed on the server. Try again.")
         case .busy: return String(localized: "This session is busy. Try again when it finishes.")
-        case .updateRequired: return String(localized: "Update Hermex to change sessions on this server.")
+        case .updateRequired: return String(localized: "Update JARVIS to change sessions on this server.")
         }
     }
 }

@@ -23,10 +23,6 @@ struct SettingsAppearancePage: View {
                     SettingsLabel(title: String(localized: "Tint New Chat & Send"), systemImage: "paintbrush.pointed")
                 }
             }
-
-            Section {
-                AppIconSettingsSection()
-            }
         }
         .settingsPage(String(localized: "Appearance"))
     }

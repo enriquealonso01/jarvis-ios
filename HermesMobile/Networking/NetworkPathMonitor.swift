@@ -40,7 +40,7 @@ final class NetworkPathMonitor {
                 }
             }
         }
-        monitor.start(queue: DispatchQueue(label: "com.uzairansar.hermesmobile.network-path"))
+        monitor.start(queue: DispatchQueue(label: "com.enriquecodes.jarvis.network-path"))
         self.monitor = monitor
     }
 

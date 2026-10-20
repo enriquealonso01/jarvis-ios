@@ -141,7 +141,7 @@ enum BotAddressError: LocalizedError, Equatable {
             // A first-strong isolate lays the path out left to right on its own, so its
             // leading "/" stays in front of it inside right-to-left translations.
             let shown = "\u{2068}\(path)\u{2069}"
-            return String(localized: "Remove “\(shown)” from the address. Hermex needs the dashboard's main address, like https://example.com:9119, and can't use a dashboard served under a path yet.")
+            return String(localized: "Remove “\(shown)” from the address. JARVIS needs the dashboard's main address, like https://example.com:9119, and can't use a dashboard served under a path yet.")
         case .invalid:
             return String(localized: "Enter the dashboard's HTTP or HTTPS address, like https://example.com:9119, without a username or password.")
         }

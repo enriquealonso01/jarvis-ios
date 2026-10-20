@@ -10,10 +10,11 @@ enum HermexPushPlugin {
     static let relayURLEnvironmentKey = "HERMEX_PUSH_RELAY_URL"
     static let name = "hermex-push"
     static let installIdentifier = "https://github.com/uzairansaruzi/hermex-push.git/plugin"
-    /// The relay Hermex runs (hermex#556), used for a host that has never been set up.
-    /// It is not offered as a choice: a host that already names its own relay keeps it,
-    /// and self-hosting stays a server-side setting rather than a field on the phone.
-    static let defaultRelayURL = URL(string: "https://hermex-relay.hermex-relay.workers.dev")!
+    /// JARVIS's own relay (`server/push-relay` in this repo, behind the JARVIS host's Caddy),
+    /// used for a host that has never been set up. Never the upstream Hermex relay: that one
+    /// accepts only the upstream app's bundle ids. A host that already names a relay keeps it,
+    /// and the relay stays a server-side setting rather than a field on the phone.
+    static let defaultRelayURL = URL(string: "https://jarvis.enriquecodes.com/push-relay")!
     /// The newest plugin this build knows (#851). A host that has anything older loaded is
     /// offered an update in Settings → Notifications. Bump it in the app release that
     /// follows a plugin release (TESTFLIGHT.md's release gates).
@@ -105,7 +106,7 @@ enum HermexPushFailure: Error, Equatable, LocalizedError {
         case .pluginLeftOff:
             return String(localized: "Hermes still has the plugin turned off, so notifications stop when Hermes restarts. Try again to turn it back on.")
         case .unusablePairing:
-            return String(localized: "This Hermes host returned pairing keys Hermex cannot use. Update the hermex-push plugin.")
+            return String(localized: "This Hermes host returned pairing keys JARVIS cannot use. Update the hermex-push plugin.")
         case .pairingUnavailable:
             return String(localized: "The plugin did not answer after the restart. Check that Hermes came back up, then try again.")
         case .noConnection:

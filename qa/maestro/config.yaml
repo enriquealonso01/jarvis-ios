@@ -1,0 +1,9 @@
+# JARVIS v3 journeys against scripts/local-hermes (pinned SHA, stub model).
+# flowsOrder matches each flow's name: (no colons, quotes or parens in names).
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - 01 first launch shows the JARVIS sign-in and signs in
+    - 02 settings shows the JARVIS server and the Hermex credit
+    - 03 new session send approve and reply
+    - 04 projects and the workspace menu

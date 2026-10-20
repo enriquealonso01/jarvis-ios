@@ -69,9 +69,10 @@ struct HeaderLogoColorPreset: Identifiable, Equatable {
 
 enum HeaderLogoColor {
     static let storageKey = "headerLogoColorHex"
-    static let defaultHex = "#FFD700"
+    static let defaultHex = "#3FD6F5"
 
     static let presets: [HeaderLogoColorPreset] = [
+        HeaderLogoColorPreset(name: String(localized: "Jarvis Cyan"), hex: "#3FD6F5"),
         HeaderLogoColorPreset(name: String(localized: "Yellow"), hex: "#FFD700"),
         HeaderLogoColorPreset(name: String(localized: "Blue"), hex: "#5B7CFF"),
         HeaderLogoColorPreset(name: String(localized: "Purple"), hex: "#AF52DE"),
@@ -342,7 +343,6 @@ enum ChatTranscriptDisplaySettings {
 /// Purely a display preference — nothing stops loading or syncing.
 enum SectionVisibilitySettings {
     static let tasksKey = "sectionVisibility.tasks"
-    static let kanbanKey = "sectionVisibility.kanban"
     static let skillsKey = "sectionVisibility.skills"
     static let memoryKey = "sectionVisibility.memory"
     static let insightsKey = "sectionVisibility.insights"

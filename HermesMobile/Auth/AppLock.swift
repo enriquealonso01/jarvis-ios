@@ -136,7 +136,7 @@ struct AppLockCapability: Equatable {
     func unlock() async {
         guard isLocked, !isPasscodeMissing, !isAuthenticating else { return }
         didPromptForThisLock = true
-        if await authenticate(reason: String(localized: "Unlock Hermex")) {
+        if await authenticate(reason: String(localized: "Unlock JARVIS")) {
             isLocked = false
         } else {
             refreshCapability()

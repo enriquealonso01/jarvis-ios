@@ -216,11 +216,7 @@ struct SessionsHeader: View {
         let initials: String
         let color: Color
         let foreground: Color
-        let servers: AvatarServerSwitcherModel
         let openSettings: () -> Void
-        let switchToServer: (ServerAccount) -> Void
-        let addServer: () -> Void
-        let manageServers: () -> Void
     }
 
     private static let iconVisualSize: CGFloat = 36
@@ -370,22 +366,8 @@ struct SessionsHeader: View {
         .accessibilityHint(
             isExpanded
                 ? "Closes search and clears the current query."
-                : "Opens Settings. Long press to switch servers."
+                : "Opens Settings."
         )
-        // Long-press the avatar to switch the active server, reusing #17's
-        // switch/add actions. Suppressed while search is expanded so the
-        // "close search" tap state is untouched (#283). The plain tap above is
-        // preserved — `contextMenu` adds long-press without stealing the tap.
-        .contextMenu {
-            if !isExpanded {
-                AvatarServerSwitcherMenu(
-                    model: avatar.servers,
-                    switchToServer: avatar.switchToServer,
-                    addServer: avatar.addServer,
-                    manageServers: avatar.manageServers
-                )
-            }
-        }
     }
 }
 
@@ -395,7 +377,6 @@ struct SidebarSectionVisibility: Equatable {
     /// Follows the Bot Mode (beta) gate rather than a per-row Settings toggle.
     var bots: Bool
     var tasks: Bool
-    var kanban: Bool
     var skills: Bool
     var memory: Bool
     var insights: Bool
@@ -406,7 +387,6 @@ struct SidebarSectionVisibility: Equatable {
     static let showAll = SidebarSectionVisibility(
         bots: true,
         tasks: true,
-        kanban: true,
         skills: true,
         memory: true,
         insights: true,
@@ -417,7 +397,7 @@ struct SidebarSectionVisibility: Equatable {
     /// The plain links share one List row, so that row is dropped entirely
     /// once all of them are hidden rather than leaving an empty padded gap.
     var showsAnyUtilityLink: Bool {
-        bots || tasks || kanban || skills || memory || insights
+        bots || tasks || skills || memory || insights
     }
 }
 
@@ -510,12 +490,6 @@ struct SessionSidebarUtilityRows: View {
             if sectionVisibility.tasks {
                 SidebarNavButton(title: String(localized: "Tasks"), assetImage: "LucideCalendarClock") {
                     openDestination(.tasks)
-                }
-            }
-
-            if sectionVisibility.kanban {
-                SidebarNavButton(title: String(localized: "Kanban"), assetImage: "LucideColumns3") {
-                    openDestination(.kanban)
                 }
             }
 
@@ -1301,83 +1275,6 @@ struct SessionProjectMoveMenu: View {
                 Label("Refresh Projects", systemImage: "arrow.clockwise")
             }
             .disabled(isLoadingProjects)
-        }
-    }
-}
-
-/// Pure, testable backing model for the session-list avatar's long-press server
-/// switcher (#283). Maps `AuthManager.servers` + the active server id into the
-/// rows the context menu renders, deriving each row's display name the same way
-/// the Settings server list does, so the menu's contents — and which server is
-/// marked active — are unit-testable without standing up the view.
-struct AvatarServerSwitcherModel: Equatable {
-    struct Entry: Identifiable, Equatable {
-        let id: String
-        let account: ServerAccount
-        let displayName: String
-        let isActive: Bool
-    }
-
-    let entries: [Entry]
-
-    /// The id of the entry marked active, or nil when the active id matches no
-    /// configured server (a defensive transient, e.g. mid-removal).
-    var activeID: String? { entries.first(where: \.isActive)?.id }
-
-    init(servers: [ServerAccount], activeServerID: String?) {
-        entries = servers.map { account in
-            let hostFallback = URL(string: account.urlString)?.host ?? account.urlString
-            let displayName = account.displayName.isEmpty ? hostFallback : account.displayName
-            return Entry(
-                id: account.id,
-                account: account,
-                displayName: displayName,
-                isActive: account.id == activeServerID
-            )
-        }
-    }
-}
-
-/// Long-press menu on the session-list avatar: switch the active server (the
-/// active one marked + disabled, mirroring `SessionProjectMoveMenu`'s checkmark
-/// idiom), plus shortcuts into #17's add-server flow and the Settings server
-/// list (#283). Holds no switching logic — it calls back into the tested #17
-/// `AuthManager.switchActiveServer` action and the existing navigation.
-struct AvatarServerSwitcherMenu: View {
-    let model: AvatarServerSwitcherModel
-    let switchToServer: (ServerAccount) -> Void
-    let addServer: () -> Void
-    let manageServers: () -> Void
-
-    var body: some View {
-        Section("Servers") {
-            ForEach(model.entries) { entry in
-                Button {
-                    switchToServer(entry.account)
-                } label: {
-                    Label(entry.displayName, systemImage: entry.isActive ? "checkmark" : "server.rack")
-                }
-                .disabled(entry.isActive)
-                .accessibilityLabel(
-                    entry.isActive
-                        ? String(localized: "\(entry.displayName), active server")
-                        : String(localized: "Switch to \(entry.displayName)")
-                )
-            }
-        }
-
-        Section {
-            Button {
-                addServer()
-            } label: {
-                Label("Add Server…", systemImage: "plus")
-            }
-
-            Button {
-                manageServers()
-            } label: {
-                Label("Manage Servers", systemImage: "gearshape")
-            }
         }
     }
 }

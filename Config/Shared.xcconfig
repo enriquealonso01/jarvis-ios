@@ -5,10 +5,12 @@
 // Apple team. Create Config/Local.xcconfig (gitignored) instead — see
 // CONTRIBUTING.md ("Code signing for contributors").
 
-DEVELOPMENT_TEAM = 6GYD9C9N6R
+// JARVIS: the Apple team is supplied at archive time (xcargs DEVELOPMENT_TEAM=...) or by
+// Config/Local.xcconfig; it is not committed to this public repo.
+DEVELOPMENT_TEAM =
 APP_IDENTIFIER_SUFFIX =
-APP_BUNDLE_IDENTIFIER = com.uzairansar.hermesmobile$(APP_IDENTIFIER_SUFFIX)
-APP_GROUP_IDENTIFIER = group.com.uzairansar.hermesmobile$(APP_IDENTIFIER_SUFFIX)
+APP_BUNDLE_IDENTIFIER = com.enriquecodes.jarvis$(APP_IDENTIFIER_SUFFIX)
+APP_GROUP_IDENTIFIER = group.com.enriquecodes.jarvis$(APP_IDENTIFIER_SUFFIX)
 
 // Keychain access groups. The first entry of the entitlement's array is the
 // app's *default* group, so KEYCHAIN_DEFAULT_ACCESS_GROUP must stay first and
