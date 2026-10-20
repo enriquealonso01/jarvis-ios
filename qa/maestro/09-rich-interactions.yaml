@@ -26,6 +26,7 @@ name: "09 rich poll vote and chart data table toggle"
       id: "rich.poll.preview-poll.option.2"
     direction: UP
     timeout: 20000
+    centerElement: true
 - waitForAnimationToEnd
 - takeScreenshot: 09-poll-before
 - tapOn:
@@ -42,8 +43,9 @@ name: "09 rich poll vote and chart data table toggle"
 - takeScreenshot: 09-poll-results
 - scrollUntilVisible:
     element:
-      id: "rich.chart.preview-chart.tab.table"
+      id: "rich.chart.preview-chart.bar.4"
     direction: DOWN
+    centerElement: true
     timeout: 20000
 - waitForAnimationToEnd
 - tapOn:

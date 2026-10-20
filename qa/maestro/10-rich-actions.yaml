@@ -25,6 +25,7 @@ name: "10 rich buttons and form submit send real messages"
       id: "rich.button.preview-actions.plan"
     direction: DOWN
     timeout: 20000
+    centerElement: true
 - waitForAnimationToEnd
 - assertNotVisible: "Unsupported content"
 - takeScreenshot: 10-actions-before
@@ -40,6 +41,7 @@ name: "10 rich buttons and form submit send real messages"
       id: "rich.form.preview-form.field.cr-title"
     direction: DOWN
     timeout: 20000
+    centerElement: true
 - waitForAnimationToEnd
 - tapOn:
     id: "rich.form.preview-form.input.cr-title"
