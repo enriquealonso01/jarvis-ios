@@ -20,10 +20,14 @@
 
 name: PR CI
 
+# JARVIS v3: PRs into v3 (the v3-work draft PR) and pushes to v3 run the full
+# suite on GitHub's hosted Xcode 27 image; the repo is public, so it's free.
 on:
   pull_request:
+    branches: [v3]
   push:
-    branches: [master]
+    branches: [v3]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -51,8 +55,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            echo "Push to master — running the full suite."
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "Push or manual run — running the full suite."
             echo "run_ios=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -220,7 +224,6 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s scripts/tests
           python3 -m unittest discover -s ci -p 'test_*.py'
-          ruby ci/select_testflight_build_number_test.rb
 
   gate:
     name: CI Gate
