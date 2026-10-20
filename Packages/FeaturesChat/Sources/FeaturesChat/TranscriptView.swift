@@ -502,7 +502,14 @@ public struct V2TranscriptView: View {
                 } action: { _, atBottom in
                     vm.isAtBottom = atBottom
                 }
-                .onChange(of: vm.displayRows) { _, _ in
+                .onChange(of: vm.displayRows) { oldRows, newRows in
+                    // First load of a chat (rows arrive after the view
+                    // appeared): open at the newest message, no animation.
+                    if oldRows.isEmpty && !newRows.isEmpty {
+                        vm.isAtBottom = true
+                        proxy.scrollTo(TranscriptViewModel.bottomAnchorID, anchor: .bottom)
+                        return
+                    }
                     // §5: auto-scroll ONLY when already at bottom — never
                     // fight the user mid-stream.
                     if vm.shouldAutoScroll {
