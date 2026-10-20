@@ -561,7 +561,11 @@ public struct V2TranscriptView: View {
         if vm.isStreaming,
            vm.displayRows.last?.text.isEmpty ?? false {
             HStack(spacing: 8) {
-                OrbitalCoreView(state: .thinking)
+                // Static mark: a continuously animating orbital forced a full
+                // render + layout pass of the rich transcript every frame for
+                // as long as a stream stayed open (100% main thread in the QA
+                // lane). Brand kit: animate only on voice/status surfaces.
+                OrbitalCoreView(state: .thinking, isStatic: true)
                     .frame(width: 22, height: 22)
                 Text("JARVIS is working…")
                     .font(.footnote)
