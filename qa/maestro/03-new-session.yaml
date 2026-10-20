@@ -21,9 +21,18 @@ name: 03 new session send approve and reply
     visible: Automated QA ping
     timeout: 15000
 - takeScreenshot: 03-sent
+# Hermex's one-time offer after the first run started from the phone (#863).
+- extendedWaitUntil:
+    visible: Want a notification.*
+    timeout: 20000
+    optional: true
+- tapOn:
+    text: Not now
+    optional: true
 - extendedWaitUntil:
     visible: Let me run a quick check.*
     timeout: 60000
+    optional: true
 - takeScreenshot: 03-approval
 - tapOn:
     text: Approve.*
@@ -39,3 +48,4 @@ name: 03 new session send approve and reply
     timeout: 60000
     optional: true
 - takeScreenshot: 03-reply
+- assertVisible: The command returned.*

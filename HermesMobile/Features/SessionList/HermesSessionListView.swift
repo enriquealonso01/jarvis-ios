@@ -368,12 +368,45 @@ struct HermesSessionListView: View {
         withAnimation(SessionListMotion.searchChromeAnimation(reduceMotion: reduceMotion)) { isSearchExpanded = false }
     }
 
+    /// New Session (JARVIS workspaces): a tap starts in the selected project lane's folder, or in
+    /// General (the Profile's default folder) with no lane selected; a hold picks General or any
+    /// project with a folder. A session's workspace is its working folder (`cwd`), so the host
+    /// loads that folder's AGENTS.md / CLAUDE.md / .hermes.md into the new conversation.
     private var newSessionButton: some View {
-        Button("New Session", systemImage: "square.and.pencil") {
-            guard let profile else { return }
-            covers.chat = HermesSessionChat(server: entry.server, connection: entry.connection, target: .new(profile: profile))
+        Menu {
+            Button("General", systemImage: "bubble.left.and.bubble.right") { startNewSession(in: nil) }
+            if !workspaces.isEmpty {
+                Section("Workspaces") {
+                    ForEach(workspaces) { project in
+                        Button(project.name ?? project.hermes?.folder ?? "", systemImage: "folder") {
+                            startNewSession(in: project.hermes?.folder)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("New Session", systemImage: "square.and.pencil")
+        } primaryAction: {
+            startNewSession(in: selectedWorkspaceFolder)
         }
         .disabled(viewModel.isViewingCachedData || profile == nil)
+    }
+
+    /// The listed Profile's projects that name a host folder, the user's first.
+    private var workspaces: [ProjectSummary] {
+        viewModel.projects.filter { $0.hermes?.folder?.isEmpty == false }
+    }
+
+    /// The folder of the project lane on screen, if it has one.
+    private var selectedWorkspaceFolder: String? {
+        guard let selectedProjectID else { return nil }
+        return workspaces.first { $0.projectId == selectedProjectID }?.hermes?.folder
+    }
+
+    private func startNewSession(in folder: String?) {
+        guard let profile else { return }
+        covers.chat = HermesSessionChat(server: entry.server, connection: entry.connection,
+                                        target: .new(profile: profile, cwd: folder))
     }
 
     private var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

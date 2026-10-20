@@ -78328,6 +78328,7 @@
         }
       }
     },
+    "Workspaces" : { "shouldTranslate" : false },
     "You can do this later in Settings › %@." : {
       "localizations" : {
         "ar" : {

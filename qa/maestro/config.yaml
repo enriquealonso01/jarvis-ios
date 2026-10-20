@@ -6,3 +6,4 @@ executionOrder:
     - 01 first launch shows the JARVIS sign-in and signs in
     - 02 settings shows the JARVIS server and the Hermex credit
     - 03 new session send approve and reply
+    - 04 new session menu offers General and workspaces

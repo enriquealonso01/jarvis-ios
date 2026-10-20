@@ -1,0 +1,18 @@
+appId: com.enriquecodes.jarvis
+name: 04 new session menu offers General and workspaces
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- longPressOn: New Session
+- extendedWaitUntil:
+    visible: General
+    timeout: 10000
+- takeScreenshot: 04-workspace-menu
+- tapOn: General
+- extendedWaitUntil:
+    visible: Ask anything.*
+    timeout: 15000
+- takeScreenshot: 04-general-session
