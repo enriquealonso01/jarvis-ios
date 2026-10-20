@@ -318,15 +318,26 @@ public final class TranscriptViewModel: ObservableObject {
 
     /// Coalesced-refresh the render output (engine merge + window).
     public func refreshDisplay() {
-        displayRows = TranscriptLayoutEngine.renderRows(
+        let rows = TranscriptLayoutEngine.renderRows(
             stored: storedPage,
             live: liveSnapshots,
             liveMessageIDs: liveMessageIDs)
-        // Item 11: re-extract rich payloads alongside the rows (once per
-        // refresh, not per layout pass).
-        rowRichBlocks = TranscriptViewModel.extractRichBlocks(displayRows)
-        isStreaming = liveSnapshots.contains {
+        // Publish only real changes: the live tail polls every 100 ms, and
+        // re-assigning identical rows re-rendered the whole transcript (rich
+        // cards, markdown) ten times a second — enough to keep the main
+        // thread from ever going idle (XCTest "main thread busy" in the QA
+        // lane while a stalled stream sat in the Krendora chat).
+        if rows != displayRows {
+            displayRows = rows
+            // Item 11: re-extract rich payloads alongside the rows (once per
+            // change, not per layout pass).
+            rowRichBlocks = TranscriptViewModel.extractRichBlocks(rows)
+        }
+        let streaming = liveSnapshots.contains {
             $0.state == .pending || $0.state == .streaming
+        }
+        if streaming != isStreaming {
+            isStreaming = streaming
         }
     }
 
