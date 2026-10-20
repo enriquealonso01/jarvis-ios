@@ -204,7 +204,6 @@ final class AvatarServerSwitcherModelTests: XCTestCase {
 final class SectionVisibilitySettingsTests: XCTestCase {
     private let allKeys = [
         SectionVisibilitySettings.tasksKey,
-        SectionVisibilitySettings.kanbanKey,
         SectionVisibilitySettings.skillsKey,
         SectionVisibilitySettings.memoryKey,
         SectionVisibilitySettings.insightsKey,
@@ -223,7 +222,6 @@ final class SidebarSectionVisibilityTests: XCTestCase {
     func testUtilityLinkRowDropsOnlyWhenEveryLinkIsHidden() {
         var visibility = SidebarSectionVisibility.showAll
         visibility.tasks = false
-        visibility.kanban = false
         visibility.skills = false
         visibility.memory = false
         visibility.insights = false

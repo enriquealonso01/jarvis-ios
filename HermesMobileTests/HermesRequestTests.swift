@@ -354,42 +354,7 @@ final class HermesRequestTests: XCTestCase {
             (.setProfileSoul(name: "research", content: "Be direct."), "PUT", "https://hermes.example:9120/api/profiles/research/soul",
              .object(["content": .string("Be direct.")]), json),
             (.speak(text: "Hi there.", profile: "research"), "POST", "https://hermes.example:9120/api/audio/speak?profile=research",
-             .object(["text": .string("Hi there.")]), json),
-            (.kanbanConfig, "GET", "https://hermes.example:9120/api/plugins/kanban/config", nil, [:]),
-            (.kanbanBoards, "GET", "https://hermes.example:9120/api/plugins/kanban/boards", nil, [:]),
-            (.kanbanBoard(board: "default", tenant: nil, includeArchived: false), "GET",
-             "https://hermes.example:9120/api/plugins/kanban/board?board=default", nil, [:]),
-            (.kanbanBoard(board: "ops", tenant: "app", includeArchived: true), "GET",
-             "https://hermes.example:9120/api/plugins/kanban/board?board=ops&tenant=app&include_archived=true", nil, [:]),
-            (.kanbanStats(board: "ops"), "GET", "https://hermes.example:9120/api/plugins/kanban/stats?board=ops", nil, [:]),
-            (.kanbanAssignees(board: "ops"), "GET", "https://hermes.example:9120/api/plugins/kanban/assignees?board=ops", nil, [:]),
-            (.kanbanTask(id: "t_6307395e", board: "ops"), "GET",
-             "https://hermes.example:9120/api/plugins/kanban/tasks/t_6307395e?board=ops", nil, [:]),
-            (.kanbanTaskLog(id: "t_6307395e", board: "ops", tailBytes: 65_536), "GET",
-             "https://hermes.example:9120/api/plugins/kanban/tasks/t_6307395e/log?board=ops&tail=65536", nil, [:]),
-            (.kanbanCreateTask(board: "ops", body: ["title": .string("A")]), "POST",
-             "https://hermes.example:9120/api/plugins/kanban/tasks?board=ops", .object(["title": .string("A")]), json),
-            (.kanbanUpdateTask(id: "t_6307395e", board: "ops", body: ["status": .string("ready")]), "PATCH",
-             "https://hermes.example:9120/api/plugins/kanban/tasks/t_6307395e?board=ops", .object(["status": .string("ready")]), json),
-            (.kanbanComment(id: "t_6307395e", board: "ops", body: "Hi"), "POST",
-             "https://hermes.example:9120/api/plugins/kanban/tasks/t_6307395e/comments?board=ops", .object(["body": .string("Hi")]), json),
-            (.kanbanLink(board: "ops", parent: "t_1", child: "t_2"), "POST", "https://hermes.example:9120/api/plugins/kanban/links?board=ops",
-             .object(["parent_id": .string("t_1"), "child_id": .string("t_2")]), json),
-            (.kanbanUnlink(board: "ops", parent: "t_1", child: "t_2"), "DELETE",
-             "https://hermes.example:9120/api/plugins/kanban/links?board=ops&parent_id=t_1&child_id=t_2", nil, [:]),
-            (.kanbanBulk(board: "ops", body: ["ids": .array([.string("t_1")]), "archive": .bool(true)]), "POST",
-             "https://hermes.example:9120/api/plugins/kanban/tasks/bulk?board=ops",
-             .object(["ids": .array([.string("t_1")]), "archive": .bool(true)]), json),
-            (.kanbanDispatch(board: "ops", dryRun: true), "POST",
-             "https://hermes.example:9120/api/plugins/kanban/dispatch?board=ops&dry_run=true&max=8", .object([:]), json),
-            (.kanbanCreateBoard(body: ["slug": .string("ops")]), "POST", "https://hermes.example:9120/api/plugins/kanban/boards",
-             .object(["slug": .string("ops")]), json),
-            (.kanbanEditBoard(slug: "ops", body: ["name": .string("Ops")]), "PATCH",
-             "https://hermes.example:9120/api/plugins/kanban/boards/ops", .object(["name": .string("Ops")]), json),
-            (.kanbanArchiveBoard(slug: "ops"), "DELETE", "https://hermes.example:9120/api/plugins/kanban/boards/ops?delete=false",
-             nil, [:]),
-            (.kanbanSwitchBoard(slug: "ops"), "POST", "https://hermes.example:9120/api/plugins/kanban/boards/ops/switch",
-             .object([:]), json)
+             .object(["text": .string("Hi there.")]), json)
         ]
         for (rest, method, url, body, headers) in cases {
             let request = try rest.request(base: base)
@@ -409,10 +374,6 @@ final class HermesRequestTests: XCTestCase {
         XCTAssertThrowsError(try HermesREST.cronPause(id: "../profiles", profile: "research").request(base: base))
         XCTAssertThrowsError(try HermesREST.cronDelete(id: "", profile: "research").request(base: base))
         XCTAssertThrowsError(try HermesCall.profileModelOptions(profile: "").params())
-        XCTAssertThrowsError(try HermesREST.kanbanTask(id: "../config", board: "ops").request(base: base))
-        XCTAssertThrowsError(try HermesREST.kanbanTaskLog(id: "", board: "ops", tailBytes: 1).request(base: base))
-        XCTAssertThrowsError(try HermesREST.kanbanUpdateTask(id: "../bulk", board: "ops", body: [:]).request(base: base))
-        XCTAssertThrowsError(try HermesREST.kanbanArchiveBoard(slug: "../config").request(base: base))
         XCTAssertThrowsError(try HermesREST.profileSoul(name: "../config").request(base: base))
         XCTAssertThrowsError(try HermesREST.setProfileSoul(name: "", content: "x").request(base: base))
         XCTAssertThrowsError(try HermesREST.config(profile: "").request(base: base))

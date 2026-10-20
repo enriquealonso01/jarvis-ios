@@ -42,7 +42,6 @@ struct HermesSessionListView: View {
     @AppStorage(SessionSidebarDisclosureSettings.projectsAreExpandedKey)
     private var projectsAreExpanded = SessionSidebarDisclosureSettings.defaultProjectsAreExpanded
     @AppStorage(SectionVisibilitySettings.tasksKey) private var showsTasks = true
-    @AppStorage(SectionVisibilitySettings.kanbanKey) private var showsKanban = true
     @AppStorage(SectionVisibilitySettings.skillsKey) private var showsSkills = true
     @AppStorage(SectionVisibilitySettings.memoryKey) private var showsMemory = true
     @AppStorage(SectionVisibilitySettings.insightsKey) private var showsInsights = true
@@ -203,9 +202,6 @@ struct HermesSessionListView: View {
             InsightsView(client: entry.client, profile: entry.client.profile, onAPIError: { _ in })
                 .id(entry.id)
         }
-        .navigationDestination(isPresented: $covers.showingKanban) {
-            KanbanView(server: entry.server, hermes: HermesConnections.shared.connection(for: entry.connection, server: entry.server))
-        }
         .sheet(item: $covers.renaming, onDismiss: { viewModel.clearRenameError() }) { session in
             SessionRenameSheet(initialTitle: SessionRowView.displayTitle(for: session), isSaving: viewModel.isRenamingSession,
                                errorMessage: viewModel.renameErrorMessage) {
@@ -331,17 +327,16 @@ struct HermesSessionListView: View {
     private var sectionVisibility: SidebarSectionVisibility {
         let isHome = home != nil && !isSearchExpanded
         return SidebarSectionVisibility(
-            bots: false, tasks: isHome && showsTasks, kanban: isHome && showsKanban, skills: isHome && showsSkills,
+            bots: false, tasks: isHome && showsTasks, skills: isHome && showsSkills,
             memory: isHome && showsMemory, insights: isHome && showsInsights, activeProfile: false,
             projects: !viewModel.hermesShowsAllProfiles
         )
     }
 
     /// Pushes a home row's screen: Tasks, Skills, Memory and Usage on the listed Profile (the one
-    /// New Session opens in, on a list of every Profile), Kanban for the whole host.
+    /// New Session opens in, on a list of every Profile).
     private func open(_ destination: SessionListUtilityDestination) {
         let server = entry.server, connection = entry.connection
-        if destination == .kanban { covers.showingKanban = true; return }
         guard let profile else { return }
         switch destination {
         case .tasks:
@@ -865,11 +860,10 @@ struct HermesSessionListCovers {
     var skills: HermesSkillsEntry?
     var memory: HermesMemoryEntry?
     var insights: HermesInsightsEntry?
-    var showingKanban = false
 
     /// A screen this list pushed covers it, so the socket stays closed until it returns.
     var isCoveredByScreen: Bool {
-        showingArchived || showingKanban || tasks != nil || skills != nil || memory != nil || insights != nil
+        showingArchived || tasks != nil || skills != nil || memory != nil || insights != nil
     }
 
     /// Counts the links that brought the rows forward, so work started before one (an export)

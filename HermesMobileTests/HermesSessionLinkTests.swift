@@ -147,7 +147,6 @@ import XCTest
         covers.exported = SessionExportShareItem(fileURL: URL(fileURLWithPath: "/tmp/export/chat.json"))
         covers.moving = HermesProjectMove(session: session, projectName: "Docs", folder: "/docs", isBusy: false)
         covers.showingArchived = true
-        covers.showingKanban = true
         return covers
     }
 
@@ -161,7 +160,7 @@ import XCTest
         XCTAssertNil(covers.exported)
         XCTAssertNil(covers.moving)
         XCTAssertFalse(covers.showingArchived)
-        XCTAssertFalse(covers.isCoveredByScreen, "Kanban and Archived Sessions are popped")
+        XCTAssertFalse(covers.isCoveredByScreen, "Archived Sessions is popped")
     }
 
     /// An export started before a link brought the rows forward doesn't reopen its share sheet

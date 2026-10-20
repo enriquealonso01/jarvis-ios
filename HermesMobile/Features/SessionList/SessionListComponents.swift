@@ -395,7 +395,6 @@ struct SidebarSectionVisibility: Equatable {
     /// Follows the Bot Mode (beta) gate rather than a per-row Settings toggle.
     var bots: Bool
     var tasks: Bool
-    var kanban: Bool
     var skills: Bool
     var memory: Bool
     var insights: Bool
@@ -406,7 +405,6 @@ struct SidebarSectionVisibility: Equatable {
     static let showAll = SidebarSectionVisibility(
         bots: true,
         tasks: true,
-        kanban: true,
         skills: true,
         memory: true,
         insights: true,
@@ -417,7 +415,7 @@ struct SidebarSectionVisibility: Equatable {
     /// The plain links share one List row, so that row is dropped entirely
     /// once all of them are hidden rather than leaving an empty padded gap.
     var showsAnyUtilityLink: Bool {
-        bots || tasks || kanban || skills || memory || insights
+        bots || tasks || skills || memory || insights
     }
 }
 
@@ -510,12 +508,6 @@ struct SessionSidebarUtilityRows: View {
             if sectionVisibility.tasks {
                 SidebarNavButton(title: String(localized: "Tasks"), assetImage: "LucideCalendarClock") {
                     openDestination(.tasks)
-                }
-            }
-
-            if sectionVisibility.kanban {
-                SidebarNavButton(title: String(localized: "Kanban"), assetImage: "LucideColumns3") {
-                    openDestination(.kanban)
                 }
             }
 

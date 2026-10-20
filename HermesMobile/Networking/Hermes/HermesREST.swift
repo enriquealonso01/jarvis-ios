@@ -291,39 +291,6 @@ enum HermesREST: Equatable, Sendable {
     case analyticsUsage(days: Int, profile: String)
     /// The same window by model and billing provider: `{models, totals, period_days}`.
     case analyticsModels(days: Int, profile: String)
-    /// `{default_tenant, …}`, or 404 when the Kanban plugin is disabled or absent.
-    case kanbanConfig
-    /// Every Board with its counts, and `current`.
-    case kanbanBoards
-    /// One Board's Columns and Cards. `tenant` and archived Cards are the host's only filters.
-    case kanbanBoard(board: String, tenant: String?, includeArchived: Bool)
-    case kanbanStats(board: String)
-    case kanbanAssignees(board: String)
-    /// One Card with its comments, events, links and runs. `id` is the host's `t_…` id.
-    case kanbanTask(id: String, board: String)
-    /// The last `tailBytes` of a Card's worker log; `exists: false` when it never ran.
-    case kanbanTaskLog(id: String, board: String, tailBytes: Int)
-    /// Creates a Card from `body`; `{task, warning?}`.
-    case kanbanCreateTask(board: String, body: [String: BotJSON])
-    /// Edits a Card or changes its Status, which is how the host blocks and unblocks; `{task}`.
-    case kanbanUpdateTask(id: String, board: String, body: [String: BotJSON])
-    /// `{ok: true}`, without the comment.
-    case kanbanComment(id: String, board: String, body: String)
-    /// `parent` becomes a prerequisite of `child`; `{ok, gated}`, with neither id.
-    case kanbanLink(board: String, parent: String, child: String)
-    /// `{ok}`, 200 even when there was no such link.
-    case kanbanUnlink(board: String, parent: String, child: String)
-    /// One change for every id in `body`; `{results: [{id, ok, error?}]}`, 200 with failures.
-    case kanbanBulk(board: String, body: [String: BotJSON])
-    /// One dispatcher pass, at most eight workers; a dry run starts none.
-    case kanbanDispatch(board: String, dryRun: Bool)
-    /// `body` names the Board, never its directory or project; `{board, current}`.
-    case kanbanCreateBoard(body: [String: BotJSON])
-    case kanbanEditBoard(slug: String, body: [String: BotJSON])
-    /// Archives the Board, never deletes it; `{result, current}`.
-    case kanbanArchiveBoard(slug: String)
-    /// Makes the Board the host's active one, for every client; `{current}`.
-    case kanbanSwitchBoard(slug: String)
     /// Whether the host's install is behind. The host caches the answer for 24 hours; `force`
     /// asks it to look again.
     case updateCheck(force: Bool)
@@ -610,61 +577,6 @@ enum HermesREST: Equatable, Sendable {
             return try Self.send("POST", try Self.url(base, "api/audio/speak", profile: profile), ["text": .string(text)])
         case .analyticsUsage(let days, let profile): return try Self.analytics(base, "usage", days: days, profile: profile)
         case .analyticsModels(let days, let profile): return try Self.analytics(base, "models", days: days, profile: profile)
-        case .kanbanConfig: return try Self.kanban(base, ["config"])
-        case .kanbanBoards: return try Self.kanban(base, ["boards"])
-        case .kanbanBoard(let board, let tenant, let includeArchived):
-            var query = [URLQueryItem(name: "board", value: board)]
-            if let tenant, !tenant.isEmpty { query.append(URLQueryItem(name: "tenant", value: tenant)) }
-            if includeArchived { query.append(URLQueryItem(name: "include_archived", value: "true")) }
-            return try Self.kanban(base, ["board"], query)
-        case .kanbanStats(let board): return try Self.kanban(base, ["stats"], [URLQueryItem(name: "board", value: board)])
-        case .kanbanAssignees(let board):
-            return try Self.kanban(base, ["assignees"], [URLQueryItem(name: "board", value: board)])
-        case .kanbanTask(let id, let board):
-            guard Self.isSegment(id) else { throw BotFailure.invalidAddress }
-            return try Self.kanban(base, ["tasks", id], [URLQueryItem(name: "board", value: board)])
-        case .kanbanTaskLog(let id, let board, let tailBytes):
-            guard Self.isSegment(id) else { throw BotFailure.invalidAddress }
-            return try Self.kanban(base, ["tasks", id, "log"], [URLQueryItem(name: "board", value: board),
-                                                                 URLQueryItem(name: "tail", value: String(tailBytes))])
-        case .kanbanCreateTask(let board, let body):
-            return try Self.kanban(base, ["tasks"], [URLQueryItem(name: "board", value: board)], "POST", body)
-        case .kanbanUpdateTask(let id, let board, let body):
-            guard Self.isSegment(id) else { throw BotFailure.invalidAddress }
-            return try Self.kanban(base, ["tasks", id], [URLQueryItem(name: "board", value: board)], "PATCH", body)
-        case .kanbanComment(let id, let board, let body):
-            guard Self.isSegment(id) else { throw BotFailure.invalidAddress }
-            return try Self.kanban(base, ["tasks", id, "comments"], [URLQueryItem(name: "board", value: board)], "POST",
-                                   ["body": .string(body)])
-        case .kanbanLink(let board, let parent, let child):
-            return try Self.kanban(base, ["links"], [URLQueryItem(name: "board", value: board)], "POST",
-                                   ["parent_id": .string(parent), "child_id": .string(child)])
-        case .kanbanUnlink(let board, let parent, let child):
-            var request = try Self.kanban(base, ["links"], [URLQueryItem(name: "board", value: board),
-                                                            URLQueryItem(name: "parent_id", value: parent),
-                                                            URLQueryItem(name: "child_id", value: child)])
-            request.httpMethod = "DELETE"
-            return request
-        case .kanbanBulk(let board, let body):
-            return try Self.kanban(base, ["tasks", "bulk"], [URLQueryItem(name: "board", value: board)], "POST", body)
-        case .kanbanDispatch(let board, let dryRun):
-            return try Self.kanban(base, ["dispatch"], [URLQueryItem(name: "board", value: board),
-                                                        URLQueryItem(name: "dry_run", value: dryRun ? "true" : "false"),
-                                                        URLQueryItem(name: "max", value: String(KanbanDispatchRequest.maximum))],
-                                   "POST", [:])
-        case .kanbanCreateBoard(let body):
-            return try Self.kanban(base, ["boards"], [], "POST", body)
-        case .kanbanEditBoard(let slug, let body):
-            guard Self.isSegment(slug) else { throw BotFailure.invalidAddress }
-            return try Self.kanban(base, ["boards", slug], [], "PATCH", body)
-        case .kanbanArchiveBoard(let slug):
-            guard Self.isSegment(slug) else { throw BotFailure.invalidAddress }
-            var request = try Self.kanban(base, ["boards", slug], [URLQueryItem(name: "delete", value: "false")])
-            request.httpMethod = "DELETE"
-            return request
-        case .kanbanSwitchBoard(let slug):
-            guard Self.isSegment(slug) else { throw BotFailure.invalidAddress }
-            return try Self.kanban(base, ["boards", slug, "switch"], [], "POST", [:])
         }
     }
 
@@ -678,17 +590,6 @@ enum HermesREST: Equatable, Sendable {
         return get(url)
     }
 
-    /// A request under the Kanban plugin's mount: a GET, or `method` with the JSON `body`.
-    private static func kanban(_ base: URL, _ path: [String], _ query: [URLQueryItem] = [],
-                               _ method: String = "GET", _ body: [String: BotJSON]? = nil) throws -> URLRequest {
-        let url = path.reduce(base.appendingPathComponent("api/plugins/kanban")) { $0.appendingPathComponent($1) }
-        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw BotFailure.invalidAddress }
-        if !query.isEmpty { parts.queryItems = query }
-        guard let url = parts.url else { throw BotFailure.invalidAddress }
-        guard let body else { return get(url) }
-        return try send(method, url, body)
-    }
-
     /// The gateway socket's upgrade: the `ws`/`wss` URL matching the address's scheme,
     /// offering `hermes-gateway-v1` and the single-use ticket as subprotocols. A request's
     /// `Sec-WebSocket-Protocol` header is where `URLSessionWebSocketTask` takes them from.
@@ -700,21 +601,6 @@ enum HermesREST: Equatable, Sendable {
         var request = URLRequest(url: url)
         request.setValue("hermes-gateway-v1, hermes-gateway-ticket." + ticket, forHTTPHeaderField: "Sec-WebSocket-Protocol")
         return request
-    }
-
-    /// A Board's Kanban event socket (#1045): `/api/plugins/kanban/events` on the `ws`/`wss`
-    /// URL matching the address's scheme, presenting the single-use ticket as `?ticket=`. It
-    /// offers no subprotocol, because the host accepts without echoing one. The host pins the
-    /// socket to `board` and sends only events after `since`.
-    static func kanbanEventsUpgrade(base: URL, board: String, since: Int, ticket: String) throws -> URLRequest {
-        guard var parts = URLComponents(url: base.appendingPathComponent("api/plugins/kanban/events"),
-                                        resolvingAgainstBaseURL: false)
-        else { throw BotFailure.invalidAddress }
-        parts.scheme = base.scheme == "https" ? "wss" : "ws"
-        parts.queryItems = [URLQueryItem(name: "board", value: board), URLQueryItem(name: "since", value: String(max(0, since))),
-                            URLQueryItem(name: "ticket", value: ticket)]
-        guard let url = parts.url else { throw BotFailure.invalidAddress }
-        return URLRequest(url: url)
     }
 
     private static func get(_ url: URL) -> URLRequest { bare("GET", url) }

@@ -146,7 +146,6 @@ struct SessionListView: View {
     @AppStorage(SessionRowDisplaySettings.showSubagentSessionsKey)
     private var showsSubagentSessions = SessionRowDisplaySettings.defaultShowsSubagentSessions
     @AppStorage(SectionVisibilitySettings.tasksKey) private var showsTasksSection = true
-    @AppStorage(SectionVisibilitySettings.kanbanKey) private var showsKanbanSection = true
     @AppStorage(SectionVisibilitySettings.skillsKey) private var showsSkillsSection = true
     @AppStorage(SectionVisibilitySettings.memoryKey) private var showsMemorySection = true
     @AppStorage(SectionVisibilitySettings.insightsKey) private var showsInsightsSection = true
@@ -675,8 +674,6 @@ struct SessionListView: View {
                 BotsInboxView(server: server, pendingDestination: $pendingBotDestination)
             case .tasks:
                 TasksView(server: server, onAPIError: authManager.handleAPIError)
-            case .kanban:
-                KanbanView(server: server, onAPIError: authManager.handleAPIError)
             case .skills:
                 SkillsView(server: server, onAPIError: authManager.handleAPIError)
             case .memory:
@@ -904,7 +901,6 @@ struct SessionListView: View {
         SidebarSectionVisibility(
             bots: isBotModeEnabled,
             tasks: showsTasksSection,
-            kanban: showsKanbanSection,
             skills: showsSkillsSection,
             memory: showsMemorySection,
             insights: showsInsightsSection,
@@ -1806,7 +1802,6 @@ enum SessionListUtilityDestination: Hashable, Identifiable {
     /// The direct-Hermes Bots inbox, shown while Bot Mode (beta) is on.
     case bots
     case tasks
-    case kanban
     case skills
     case memory
     case insights

@@ -14,7 +14,6 @@ struct WebuiServerSections: View {
     @AppStorage(SessionRowDisplaySettings.showSubagentSessionsKey)
     private var showsSubagentSessions = SessionRowDisplaySettings.defaultShowsSubagentSessions
     @AppStorage(SectionVisibilitySettings.tasksKey) private var showsTasksSection = true
-    @AppStorage(SectionVisibilitySettings.kanbanKey) private var showsKanbanSection = true
     @AppStorage(SectionVisibilitySettings.skillsKey) private var showsSkillsSection = true
     @AppStorage(SectionVisibilitySettings.memoryKey) private var showsMemorySection = true
     @AppStorage(SectionVisibilitySettings.insightsKey) private var showsInsightsSection = true
@@ -109,10 +108,6 @@ struct WebuiServerSections: View {
         Section {
             Toggle(isOn: $showsTasksSection) {
                 SettingsLabel(title: String(localized: "Tasks"), systemImage: "calendar.badge.clock")
-            }
-
-            Toggle(isOn: $showsKanbanSection) {
-                SettingsLabel(title: String(localized: "Kanban"), systemImage: "rectangle.split.3x1")
             }
 
             Toggle(isOn: $showsSkillsSection) {

@@ -405,14 +405,6 @@ import OSLog
         try await upgrade { try HermesREST.gatewayUpgrade(base: connection.address, ticket: $0) }
     }
 
-    /// Mints one single-use ticket, never the gateway's, and returns `board`'s Kanban event
-    /// socket upgrade that presents it, with this connection's headers (#1045).
-    func kanbanEventsUpgrade(board: String, since: Int) async throws -> URLRequest {
-        try await upgrade {
-            try HermesREST.kanbanEventsUpgrade(base: connection.address, board: board, since: since, ticket: $0)
-        }
-    }
-
     /// Mints one ticket and returns the upgrade `build` makes for it, with this connection's headers.
     private func upgrade(_ build: (String) throws -> URLRequest) async throws -> URLRequest {
         do {
