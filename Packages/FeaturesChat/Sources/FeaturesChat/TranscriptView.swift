@@ -490,6 +490,10 @@ public struct V2TranscriptView: View {
                         .padding(.horizontal, Tokens.Layout.gutter)
                         .padding(.bottom, 6)
                 }
+                // Chats open at the newest message (ChatGPT); only the
+                // INITIAL offset is anchored, so growth never yanks a reader
+                // who scrolled up (§5).
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
                 // §5 "at bottom" from the real scroll geometry (an eager
                 // stack's anchor onAppear fires once, not on visibility).
                 // Written to a non-published property: no re-render.
