@@ -227,10 +227,34 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/qa-out"
           cd "$GITHUB_WORKSPACE/qa-out"
+          # Busy-main-thread sampler: every ~12s sample the app for 1s; keep
+          # (up to 12) samples whose main thread is NOT parked in the run
+          # loop, so a freeze leaves its stack behind in qa-out/busy-*.txt.
+          (
+            kept=0
+            for i in $(seq 1 300); do
+              PID=$(pgrep -f "JarvisApp.app/JarvisApp" | head -1)
+              if [ -n "$PID" ] && [ "$kept" -lt 12 ]; then
+                sample "$PID" 1 -file /tmp/busy.txt >/dev/null 2>&1 || true
+                main=$(awk '/com.apple.main-thread/{f=1;next} f&&/^    [0-9]+ Thread_/{exit} f' /tmp/busy.txt | head -400)
+                if [ -n "$main" ] && ! echo "$main" | head -40 | grep -q "__CFRunLoopServiceMachPort"; then
+                  kept=$((kept+1))
+                  cpu=$(ps -o %cpu= -p "$PID" | tr -d ' ')
+                  { echo "cpu=$cpu at $(date -u +%H:%M:%S)"; cat /tmp/busy.txt; } > "$GITHUB_WORKSPACE/qa-out/busy-$kept.txt"
+                fi
+              fi
+              sleep 11
+            done
+          ) >/dev/null 2>&1 &
+          SAMPLER=$!
+          rc=0
           maestro --device "${{ steps.env.outputs.udid }}" test \
             --format junit --output "$GITHUB_WORKSPACE/qa-out/report.xml" \
             --test-output-dir "$GITHUB_WORKSPACE/qa-out/maestro" \
-            "$GITHUB_WORKSPACE/qa/maestro"
+            "$GITHUB_WORKSPACE/qa/maestro" || rc=$?
+          kill "$SAMPLER" 2>/dev/null || true
+          ls "$GITHUB_WORKSPACE/qa-out"/busy-*.txt 2>/dev/null || echo "no busy main-thread samples"
+          exit $rc
 
       - name: Collect app log + network evidence
         if: always()
