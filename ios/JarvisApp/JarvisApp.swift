@@ -43,7 +43,10 @@ struct JarvisApp: App {
                 }
             }
             .modifier(AppLockGate())
-            .preferredColorScheme(AppTheme.preferredColorScheme)
+            // The v2 shell is designed dark-only (Orbital Core obsidian; UI
+            // expansion 02 "dark primary") — a light system appearance must
+            // not repaint sheets and keyboards around a dark chat.
+            .preferredColorScheme(V2Flags.sidebarShell ? .dark : AppTheme.preferredColorScheme)
             .tint(.jarvisAccent)
         }
     }
@@ -145,8 +148,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 // MARK: - JARVIS palette
 
 extension Color {
-    /// JARVIS arc-reactor gold — matches the CC orb accent.
-    static let jarvisAccent = Color(red: 1.0, green: 0.78, blue: 0.35)
+    /// Orbital Core JARVIS Cyan #3FD6F5 (brand kit v2). The v1 arc-reactor
+    /// gold overrode the cyan AccentColor asset through `.tint` — every
+    /// control rendered gold against the brand.
+    static let jarvisAccent = Color(red: 63.0 / 255.0, green: 214.0 / 255.0, blue: 245.0 / 255.0)
     static let jarvisCard = Color(red: 0.11, green: 0.12, blue: 0.15)
 }
 

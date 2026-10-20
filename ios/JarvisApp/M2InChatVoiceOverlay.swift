@@ -24,10 +24,10 @@ struct V2InChatVoiceOverlay: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(statusLine)
                     .font(.footnote.weight(.medium))
-                    .foregroundStyle(.primary)
-                Text("JARVIS")
+                    .foregroundStyle(Tokens.Palette.textPrimary)
+                Text("JARVIS · tap to open voice")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Tokens.Palette.textMuted)
             }
             Spacer(minLength: 0)
             HStack(spacing: Tokens.Spacing.s) {
@@ -36,6 +36,7 @@ struct V2InChatVoiceOverlay: View {
                 } label: {
                     Image(systemName: "mic.slash")
                         .font(.body)
+                        .foregroundStyle(Tokens.Palette.textSecondary)
                         .frame(width: Tokens.Voice.pillHeight, height: Tokens.Voice.pillHeight)
                 }
                 .accessibilityLabel("Mute")
@@ -43,9 +44,9 @@ struct V2InChatVoiceOverlay: View {
                     onEnd?()
                     Haptics.tap()
                 } label: {
-                    Image(systemName: "end-call")
+                    Image(systemName: "phone.down.fill")
                         .font(.body)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Tokens.Palette.danger)
                         .frame(width: Tokens.Voice.pillHeight, height: Tokens.Voice.pillHeight)
                 }
                 .accessibilityLabel("End call")
@@ -55,10 +56,18 @@ struct V2InChatVoiceOverlay: View {
         .frame(maxWidth: .infinity)
         .frame(height: Tokens.Voice.pillHeight + Tokens.Spacing.m)
         .background(
-            RoundedRectangle(cornerRadius: Tokens.Voice.pillCornerRadius)
-                .fill(.regularMaterial)
+            RoundedRectangle(cornerRadius: Tokens.Voice.pillCornerRadius, style: .continuous)
+                .fill(Tokens.Palette.elevated)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: Tokens.Voice.pillCornerRadius, style: .continuous)
+                .strokeBorder(Tokens.Palette.border, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { V2VoiceOverlay.shared.present() }
         .padding(.horizontal, Tokens.Voice.pillHorizontalInset)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("voice.inChatPill")
     }
 
     private var statusLine: String {

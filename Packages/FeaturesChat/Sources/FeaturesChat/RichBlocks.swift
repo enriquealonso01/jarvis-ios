@@ -87,7 +87,9 @@ public enum RichPrintDefaults: Sendable {
 // MARK: Actions (schema `$defs/action`, verbatim shape)
 
 /// One tappable action of a `buttonGroup` block (or a block-level `actions`
-/// array). Wire keys: id, label, kind, requiresApproval?, confirmText?.
+/// array). Wire keys: id, label, kind, requiresApproval?, confirmText?, url?.
+/// `url` is the optional target of an `openUrl` action (gated http(s)-only
+/// at tap time by `RichBlocks.safeURL`).
 public struct RichBlockAction: Sendable, Equatable, Identifiable, Codable {
     public enum Kind: String, Sendable, Codable, CaseIterable {
         case local, submit, navigate, copy, openUrl, serverAction
@@ -98,14 +100,86 @@ public struct RichBlockAction: Sendable, Equatable, Identifiable, Codable {
     public var kind: Kind
     public var requiresApproval: Bool?
     public var confirmText: String?
+    public var url: String?
 
     public init(id: String, label: String, kind: Kind,
-                requiresApproval: Bool? = nil, confirmText: String? = nil) {
+                requiresApproval: Bool? = nil, confirmText: String? = nil,
+                url: String? = nil) {
         self.id = id
         self.label = label
         self.kind = kind
         self.requiresApproval = requiresApproval
         self.confirmText = confirmText
+        self.url = url
+    }
+
+    /// True when the tap must be confirmed first (approval-gated or an
+    /// explicit confirm prompt).
+    public var needsConfirmation: Bool {
+        (requiresApproval ?? false) || RichBlocks.nonEmpty(confirmText) != nil
+    }
+}
+
+// MARK: Action routing (what a tap actually does)
+
+/// Pure routing for a tapped rich action. A button never fakes success:
+/// either it opens a vetted http(s) URL, copies text, or sends its label to
+/// JARVIS as the user's next message (the agent round-trip).
+public enum RichActionRoute: Sendable, Equatable {
+    case open(URL)
+    case copy(String)
+    case send(String)
+}
+
+public enum RichActionRouter: Sendable {
+    public static func route(_ action: RichBlockAction) -> RichActionRoute {
+        switch action.kind {
+        case .openUrl:
+            if let raw = action.url, let url = RichBlocks.safeURL(raw) {
+                return .open(url)
+            }
+            if let url = RichBlocks.safeURL(action.id) {
+                return .open(url)
+            }
+            // No vetted target: ask JARVIS instead of silently failing.
+            return .send(action.label)
+        case .copy:
+            return .copy(RichBlocks.nonEmpty(action.url) ?? action.label)
+        case .local, .submit, .navigate, .serverAction:
+            return .send(action.label)
+        }
+    }
+
+    /// Whether the route is a one-shot send (the button locks after firing so
+    /// a double tap can never send twice).
+    public static func isOneShot(_ route: RichActionRoute) -> Bool {
+        if case .send = route { return true }
+        return false
+    }
+
+    /// The user message a poll vote sends.
+    public static func pollVoteText(question: String, option: String) -> String {
+        "Vote: \(option)\n(\(question))"
+    }
+
+    /// The user message a submitted form sends (labels + values, in field
+    /// order; checkboxes read Yes/No). Never includes unanswered fields.
+    public static func formSubmissionText(submitLabel: String,
+                                          fields: [RichFormField],
+                                          draft: [String: String]) -> String {
+        var lines = [submitLabel]
+        for field in fields {
+            let raw = draft[field.id]
+            let value: String?
+            switch field.kind {
+            case .checkbox:
+                value = raw == "1" ? "Yes" : (raw == nil ? nil : "No")
+            default:
+                value = RichBlocks.nonEmpty(raw)
+            }
+            if let value { lines.append("• \(field.label): \(value)") }
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -752,6 +826,12 @@ public final class RichInteractionStore: ObservableObject {
     @Published public private(set) var pollSelections: [String: Int] = [:]
     @Published public private(set) var checklistStates: [String: [Bool]] = [:]
     @Published public private(set) var formDrafts: [String: [String: String]] = [:]
+    /// Polls whose vote was submitted (keyed like selections).
+    @Published public private(set) var submittedPolls: Set<String> = []
+    /// Forms that were submitted (confirmed state, fields lock).
+    @Published public private(set) var submittedForms: Set<String> = []
+    /// One-shot actions already fired (`messageID|blockID|actionID`).
+    @Published public private(set) var firedActions: Set<String> = []
 
     public init() {}
 
@@ -767,6 +847,41 @@ public final class RichInteractionStore: ObservableObject {
 
     public func pollSelection(messageID: String, blockID: String) -> Int? {
         pollSelections[key(messageID, blockID)]
+    }
+
+    /// Lock the vote (requires a selection). Returns false when nothing is
+    /// selected or the poll was already submitted (idempotent — R04).
+    @discardableResult
+    public func submitPoll(messageID: String, blockID: String) -> Bool {
+        let k = key(messageID, blockID)
+        guard pollSelections[k] != nil, !submittedPolls.contains(k) else { return false }
+        submittedPolls.insert(k)
+        return true
+    }
+
+    public func isPollSubmitted(messageID: String, blockID: String) -> Bool {
+        submittedPolls.contains(key(messageID, blockID))
+    }
+
+    // MARK: Forms (submitted state) + one-shot actions
+
+    @discardableResult
+    public func markFormSubmitted(messageID: String, blockID: String) -> Bool {
+        submittedForms.insert(key(messageID, blockID)).inserted
+    }
+
+    public func isFormSubmitted(messageID: String, blockID: String) -> Bool {
+        submittedForms.contains(key(messageID, blockID))
+    }
+
+    /// Records a one-shot action; false when it already fired (no double send).
+    @discardableResult
+    public func markActionFired(messageID: String, blockID: String, actionID: String) -> Bool {
+        firedActions.insert(key(messageID, blockID) + "|" + actionID).inserted
+    }
+
+    public func hasFired(messageID: String, blockID: String, actionID: String) -> Bool {
+        firedActions.contains(key(messageID, blockID) + "|" + actionID)
     }
 
     // MARK: Checklist
@@ -813,6 +928,9 @@ public final class RichInteractionStore: ObservableObject {
         pollSelections = [:]
         checklistStates = [:]
         formDrafts = [:]
+        submittedPolls = []
+        submittedForms = []
+        firedActions = []
     }
 
     public func reset(messageID: String) {
@@ -820,5 +938,8 @@ public final class RichInteractionStore: ObservableObject {
         pollSelections = pollSelections.filter { !$0.key.hasPrefix(prefix) }
         checklistStates = checklistStates.filter { !$0.key.hasPrefix(prefix) }
         formDrafts = formDrafts.filter { !$0.key.hasPrefix(prefix) }
+        submittedPolls = submittedPolls.filter { !$0.hasPrefix(prefix) }
+        submittedForms = submittedForms.filter { !$0.hasPrefix(prefix) }
+        firedActions = firedActions.filter { !$0.hasPrefix(prefix) }
     }
 }

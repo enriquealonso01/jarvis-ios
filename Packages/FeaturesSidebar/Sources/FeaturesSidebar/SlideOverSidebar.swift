@@ -1,18 +1,10 @@
 import SwiftUI
 import DesignSystem
 
-// Cross-platform system background (CI runs swift tests for macOS too).
-#if canImport(UIKit)
-import UIKit
-private func sysBackground() -> Color { Color(uiColor: .systemBackground) }
-#else
-import AppKit
-private func sysBackground() -> Color { Color(nsColor: .windowBackgroundColor) }
-#endif
-
-/// iPhone slide-over sidebar geometry (UI Law §1, binding):
-///   - ~85% width, sliding in ABOVE the conversation without fully
-///     covering it (the remaining ~15% shows the conversation edge),
+/// iPhone slide-over sidebar geometry (UI Law §1 + UI expansion
+/// 02_DESIGN_SYSTEM, binding):
+///   - ~85% width capped at 320pt, sliding in ABOVE the conversation without
+///     fully covering it (the conversation edge stays visible, dimmed),
 ///   - scrim tap or swipe-left closes,
 ///   - NEVER docks on phone (docking is iPad-only, future item).
 public struct SlideOverSidebar<Panel: View, Under: View>: View {
@@ -42,7 +34,7 @@ public struct SlideOverSidebar<Panel: View, Under: View>: View {
 
     public var body: some View {
         GeometryReader { geo in
-            let width = geo.size.width * widthFraction
+            let width = min(geo.size.width * widthFraction, Tokens.Layout.sidebarMaxWidth)
             let dragThreshold = width * dismissDragFraction
 
             ZStack(alignment: .leading) {
@@ -53,8 +45,7 @@ public struct SlideOverSidebar<Panel: View, Under: View>: View {
 
                 // Scrim: tap to dismiss.
                 if isPresented {
-                    Color.black
-                        .opacity(0.4)
+                    Tokens.Palette.scrim
                         .ignoresSafeArea()
                         .contentShape(Rectangle())
                         .onTapGesture { close() }
@@ -62,11 +53,20 @@ public struct SlideOverSidebar<Panel: View, Under: View>: View {
                 }
 
                 // The panel itself.
+                // Only the panel's BACKGROUND runs edge to edge. Ignoring the
+                // safe area on the content put "New chat" under the status
+                // bar (iOS eats taps there) and the profile row under the
+                // home indicator — found by the QA lane.
                 panel()
                     .frame(width: width)
                     .frame(maxHeight: .infinity)
-                    .background(sysBackground())
-                    .ignoresSafeArea(.container, edges: [.top, .bottom])
+                    .background(Tokens.Palette.elevated.ignoresSafeArea(.container, edges: [.top, .bottom]))
+                    .overlay(alignment: .trailing) {
+                        Rectangle()
+                            .fill(Tokens.Palette.border)
+                            .frame(width: 1)
+                            .ignoresSafeArea(.container, edges: [.top, .bottom])
+                    }
                     .gesture(
                         DragGesture(minimumDistance: 12)
                             .updating($dragOffset) { value, state, _ in
