@@ -112,7 +112,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>JARVIS connects to your Hermes backend on your local network to load bots and chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>JARVIS needs microphone access to dictate text into the message composer.</string>
+	<string>JARVIS needs the microphone for voice calls and conversations, and to dictate messages.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>JARVIS needs camera access to capture and attach photos directly in chat.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -133,6 +133,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>voip</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

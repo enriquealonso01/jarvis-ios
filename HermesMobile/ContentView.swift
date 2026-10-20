@@ -9,9 +9,12 @@ struct ContentView: View {
     @State private var didCheckInitialPendingShare = false
     @State private var intentRouter = AppIntentRouter.shared
     @AppStorage(BotModeGate.isEnabledKey) private var isBotModeEnabled = false
+    @ObservedObject private var voice = JarvisVoicePresenter.shared
 
     var body: some View {
         content
+            .overlay(alignment: .top) { JarvisInCallPill() }
+            .fullScreenCover(isPresented: $voice.isPresented) { JarvisVoiceScreen() }
             .onOpenURL(perform: handleOpenURL)
             .task {
                 guard !didCheckInitialPendingShare else { return }
@@ -578,6 +581,7 @@ struct HermesServerHome: View {
             // a cover in the app switcher, relock after a minute away. It needs the owner's
             // authentication to turn on, so JARVIS offers it once instead of defaulting it on.
             if !appLockOffered, !AppLock.shared.isEnabled { isOfferingAppLock = true }
+            await CallManager.shared.retryDeviceRegistration()
         }
         .alert("Lock JARVIS with Face ID?", isPresented: $isOfferingAppLock) {
             Button("Turn On") {
