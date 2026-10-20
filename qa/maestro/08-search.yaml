@@ -1,7 +1,7 @@
 appId: com.enriquecodes.jarvis
 # Sidebar search is a real destination: titles filter live, and message
-# CONTENT is searched too (FTS) - "avocado" only appears inside the call log
-# transcript, never in a title or preview.
+# CONTENT is searched too (FTS) - "gondola" only appears in older Breck
+# messages, never in a title or the latest-message preview.
 name: "08 sidebar search finds chats by title and by message content"
 ---
 - launchApp:
@@ -30,14 +30,19 @@ name: "08 sidebar search finds chats by title and by message content"
     id: "sidebar.searchClear"
 - tapOn:
     id: "sidebar.search"
-- inputText: "avocado"
+- inputText: "gondola"
 - extendedWaitUntil:
     visible: "IN MESSAGES"
     timeout: 10000
-- assertVisible: "Call log — Jessica"
+- assertVisible: "Breck day 3 — trip planning"
 - takeScreenshot: 08-search-content
-- tapOn: "Call log — Jessica"
+- tapOn: "Breck day 3 — trip planning"
 - extendedWaitUntil:
-    visible: "Rang Jessica.*"
+    notVisible:
+      id: "sidebar.newChat"
     timeout: 10000
+- scrollUntilVisible:
+    element: "Plan day 3 at Breck.*"
+    direction: UP
+    timeout: 20000
 - takeScreenshot: 08-search-opened

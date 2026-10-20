@@ -25,6 +25,7 @@ name: "10 rich buttons and form submit send real messages"
       id: "rich.button.preview-actions.plan"
     direction: DOWN
     timeout: 20000
+- waitForAnimationToEnd
 - assertNotVisible: "Unsupported content"
 - takeScreenshot: 10-actions-before
 - tapOn:
@@ -39,6 +40,7 @@ name: "10 rich buttons and form submit send real messages"
       id: "rich.form.preview-form.field.cr-title"
     direction: DOWN
     timeout: 20000
+- waitForAnimationToEnd
 - tapOn:
     id: "rich.form.preview-form.field.cr-title"
 - inputText: "Compact cards"
@@ -55,6 +57,7 @@ name: "10 rich buttons and form submit send real messages"
     element: ".*Change request title: Compact cards.*"
     direction: DOWN
     timeout: 20000
+- waitForAnimationToEnd
 - takeScreenshot: 10-messages-sent
 # The Breck chat: a button with no URL asks JARVIS instead of dead-ending.
 - tapOn:
@@ -64,4 +67,5 @@ name: "10 rich buttons and form submit send real messages"
     element: "Buy lift tickets"
     direction: DOWN
     timeout: 20000
+- waitForAnimationToEnd
 - takeScreenshot: 10-breck-buttons
