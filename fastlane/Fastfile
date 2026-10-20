@@ -1,0 +1,172 @@
+# JARVIS v3 release lanes (Hermex fork, HermesMobile.xcodeproj). Ported from the v1 pipeline on
+# `main` (ios/fastlane/Fastfile): same ASC API key, same fastlane match repo, same TestFlight app
+# (com.enriquecodes.jarvis, ASC app 6813590605). Run from .github/workflows/ios-release.yml.
+#
+#   portal  - make sure every App ID exists with the capabilities its entitlements need
+#   beta    - portal, match AppStore profiles, archive, export, upload to TestFlight
+
+default_platform(:ios)
+
+ROOT      = File.expand_path("..", __dir__)
+XCODEPROJ = File.join(ROOT, "HermesMobile.xcodeproj")
+SCHEME    = "HermesMobile"
+APP_ID    = "com.enriquecodes.jarvis"
+APP_GROUP = "group.com.enriquecodes.jarvis"
+MARKETING_VERSION = "3.0.0"
+
+# Target => [bundle id, entitlements file, portal capabilities].
+TARGETS = {
+  "HermesMobile" => [APP_ID, "HermesMobile/Resources/HermesMobile.entitlements",
+                     %w[PUSH_NOTIFICATIONS APP_GROUPS USERNOTIFICATIONS_TIMESENSITIVE]],
+  "HermesShareExtension" => ["#{APP_ID}.shareextension",
+                             "HermesShareExtension/Resources/HermesShareExtension.entitlements", %w[APP_GROUPS]],
+  "HermesLiveActivityWidget" => ["#{APP_ID}.liveactivitywidget",
+                                 "HermesLiveActivityWidget/Resources/HermesLiveActivityWidget.entitlements", %w[APP_GROUPS]],
+  "HermesNotificationService" => ["#{APP_ID}.notifications",
+                                  "HermesNotificationService/Resources/HermesNotificationService.entitlements", []]
+}.freeze
+
+PORTAL_NAMES = {
+  "HermesMobile" => "JARVIS",
+  "HermesShareExtension" => "JARVIS Share Extension",
+  "HermesLiveActivityWidget" => "JARVIS Live Activity",
+  "HermesNotificationService" => "JARVIS Notification Service"
+}.freeze
+
+def asc_api_key
+  app_store_connect_api_key(
+    key_id:                ENV.fetch("ASC_KEY_ID"),
+    issuer_id:             ENV.fetch("ASC_ISSUER_ID"),
+    key_content:           ENV.fetch("ASC_KEY_P8"),
+    is_key_content_base64: true
+  )
+end
+
+def write_summary(line)
+  path = ENV["GITHUB_STEP_SUMMARY"]
+  File.open(path, "a") { |f| f.puts(line) } if path
+  UI.message(line)
+end
+
+platform :ios do
+  before_all do
+    setup_ci if ENV["CI"]
+  end
+
+  desc "Register the extension App IDs and enable the capabilities their entitlements use (ASC API key)."
+  lane :portal do
+    key = asc_api_key
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: key)
+    TARGETS.each do |target, (identifier, _entitlements, capabilities)|
+      bundle = Spaceship::ConnectAPI::BundleId.find(identifier)
+      if bundle
+        UI.message("App ID #{identifier} exists")
+      else
+        bundle = Spaceship::ConnectAPI::BundleId.create(name: PORTAL_NAMES[target], platform: "IOS", identifier: identifier)
+        write_summary("- registered App ID `#{identifier}`")
+      end
+      enabled = (bundle.get_capabilities rescue []).map(&:capability_type)
+      capabilities.each do |capability|
+        next if enabled.include?(capability)
+        begin
+          bundle.create_capability(capability)
+          write_summary("- enabled #{capability} on `#{identifier}`")
+        rescue => e
+          write_summary("- COULD NOT enable #{capability} on `#{identifier}`: #{e.message.lines.first&.strip}")
+        end
+      end
+    end
+  end
+
+  desc "Build and upload to TestFlight (internal testing)."
+  lane :beta do
+    portal
+    key  = asc_api_key
+    team = ENV.fetch("APPLE_TEAM_ID")
+    build_number = ENV.fetch("BUILD_NUMBER")
+    identifiers = TARGETS.values.map(&:first)
+
+    # App Store profiles for every target, re-created so they carry the capabilities just enabled.
+    match(type: "appstore", app_identifier: identifiers, api_key: key, readonly: false, force: true,
+          keychain_password: "")
+
+    # An entitlement the profile does not grant fails codesign. App Groups can only be attached to an
+    # App ID in the developer web UI (the ASC API has no app-group resource), so a group that is not
+    # attached yet is dropped from this build and reported, instead of failing the upload.
+    TARGETS.each do |target, (identifier, entitlements, _caps)|
+      profile_path = ENV["sigh_#{identifier}_appstore_profile-path"]
+      UI.user_error!("match produced no profile for #{identifier}") unless profile_path && File.exist?(profile_path)
+      granted = Plist.parse_xml(sh("security cms -D -i #{profile_path.shellescape}", log: false))["Entitlements"] || {}
+      file = File.join(ROOT, entitlements)
+      wanted = Plist.parse_xml(file) || {}
+      wanted.each_key do |entitlement|
+        next if entitlement == "keychain-access-groups" # granted as TEAM.* by every profile
+        ok = case entitlement
+             when "com.apple.security.application-groups"
+               Array(granted[entitlement]).include?(APP_GROUP)
+             else
+               granted.key?(entitlement)
+             end
+        next if ok
+        sh("/usr/libexec/PlistBuddy -c #{"Delete :#{entitlement}".shellescape} #{file.shellescape}")
+        write_summary("- `#{target}`: dropped `#{entitlement}` (not in its provisioning profile)")
+      end
+    end
+
+    # Manual signing for this archive only, on the runner's checkout.
+    require "xcodeproj"
+    project = Xcodeproj::Project.open(XCODEPROJ)
+    project.targets.each do |t|
+      next unless TARGETS.key?(t.name)
+      identifier = TARGETS[t.name].first
+      t.build_configurations.each do |cfg|
+        cfg.build_settings["CODE_SIGN_STYLE"] = "Manual"
+        cfg.build_settings["CODE_SIGN_IDENTITY"] = "Apple Distribution"
+        cfg.build_settings["DEVELOPMENT_TEAM"] = team
+        cfg.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = "match AppStore #{identifier}"
+      end
+    end
+    project.save
+
+    build_dir    = File.join(ROOT, "build")
+    archive_path = File.join(build_dir, "JARVIS.xcarchive")
+    export_path  = File.join(build_dir, "export")
+    FileUtils.rm_rf(build_dir)
+    FileUtils.mkdir_p(build_dir)
+
+    # Xcode archives manage the build number by default and would reset it: keep it off for the
+    # archive (MANAGE_APP_VERSION_AND_BUILD_NUMBER=NO) and export with no build settings at all.
+    build_app(
+      project:          XCODEPROJ,
+      scheme:           SCHEME,
+      configuration:    "Release",
+      archive_path:     archive_path,
+      skip_package_ipa: true,
+      xcargs:           "CURRENT_PROJECT_VERSION=#{build_number} MARKETING_VERSION=#{MARKETING_VERSION} " \
+                        "MANAGE_APP_VERSION_AND_BUILD_NUMBER=NO DEVELOPMENT_TEAM=#{team}"
+    )
+    app_plist = File.join(archive_path, "Products", "Applications", "#{SCHEME}.app", "Info.plist")
+    archived = sh("plutil -extract CFBundleVersion raw -o - #{app_plist.shellescape}").strip
+    UI.user_error!("archive has CFBundleVersion=#{archived}, expected #{build_number}") unless archived == build_number
+
+    export_plist = File.join(build_dir, "ExportOptions.plist")
+    File.write(export_plist, {
+      "method" => "app-store-connect",
+      "signingStyle" => "manual",
+      "teamID" => team,
+      "provisioningProfiles" => identifiers.to_h { |id| [id, "match AppStore #{id}"] },
+      "manageAppVersionAndBuildNumber" => false,
+      "uploadSymbols" => true
+    }.to_plist)
+    sh("xcodebuild -exportArchive -archivePath #{archive_path.shellescape} -exportPath #{export_path.shellescape} " \
+       "-exportOptionsPlist #{export_plist.shellescape}")
+    ipa = Dir[File.join(export_path, "*.ipa")].first
+    UI.user_error!("export produced no .ipa") unless ipa
+    stamped = sh("set -e; rm -f /tmp/jarvis_info.plist; unzip -p #{ipa.shellescape} Payload/#{SCHEME}.app/Info.plist > /tmp/jarvis_info.plist; " \
+                 "plutil -extract CFBundleVersion raw -o - /tmp/jarvis_info.plist").strip
+    UI.user_error!("export renumbered the build: #{stamped} != #{build_number}") unless stamped == build_number
+
+    upload_to_testflight(api_key: key, ipa: ipa, skip_waiting_for_build_processing: true)
+    write_summary("- uploaded JARVIS #{MARKETING_VERSION} (#{build_number}) to TestFlight")
+  end
+end

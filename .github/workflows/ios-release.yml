@@ -1,0 +1,114 @@
+# JARVIS v3 release: archive HermesMobile.xcodeproj and upload to TestFlight (internal testing).
+# Manual only. Same path as the v1 workflow on `main`, so it can be dispatched on this branch:
+#   gh workflow run ios-release.yml --ref <v3 branch> -f lane=beta
+# Uses the v1 secrets (ASC API key, fastlane match repo jarvis-ios-certs, APPLE_TEAM_ID).
+
+name: iOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "Fastlane lane"
+        type: choice
+        default: beta
+        options:
+          - beta
+          - portal
+
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: xcode-27
+    timeout-minutes: 75
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      ASC_APP_ID: "6813590605"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Next build number (above every build and upload ASC has)
+        id: number
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          python3 -m pip install --quiet --break-system-packages pyjwt cryptography 2>/dev/null || python3 -m pip install --quiet pyjwt cryptography
+          python3 - <<'PY'
+          import base64, json, os, time, urllib.request
+          import jwt
+          key = base64.b64decode(os.environ["ASC_KEY_P8"]).decode()
+          now = int(time.time())
+          tok = jwt.encode({"iss": os.environ["ASC_ISSUER_ID"], "iat": now, "exp": now + 1200,
+                            "aud": "appstoreconnect-v1"}, key, algorithm="ES256",
+                           headers={"kid": os.environ["ASC_KEY_ID"]})
+          app = os.environ["ASC_APP_ID"]
+          def get(url):
+              req = urllib.request.Request(url, headers={"Authorization": "Bearer " + tok})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read().decode())
+          numbers = []
+          builds = get(f"https://api.appstoreconnect.apple.com/v1/builds?filter[app]={app}&sort=-uploadedDate&limit=50")
+          for b in builds.get("data", []):
+              v = str(b["attributes"].get("version", ""))
+              if v.isdigit(): numbers.append(int(v))
+          try:
+              uploads = get(f"https://api.appstoreconnect.apple.com/v1/apps/{app}/buildUploads?limit=50")
+              for u in uploads.get("data", []):
+                  v = str(u["attributes"].get("cfBundleVersion", ""))
+                  if v.isdigit(): numbers.append(int(v))
+          except Exception as e:
+              print("buildUploads unreadable:", e)
+          latest = max(numbers) if numbers else 0
+          nxt = latest + 1
+          print(f"latest build on ASC: {latest}; this build: {nxt}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"build={nxt}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(f"- latest ASC build {latest}, uploading {nxt}\n")
+          PY
+
+      - name: Ruby + fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: fastlane
+
+      - name: fastlane ${{ inputs.lane }}
+        working-directory: fastlane
+        env:
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          BUILD_NUMBER: ${{ steps.number.outputs.build }}
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          FASTLANE_HIDE_CHANGELOG: "1"
+        run: bundle exec fastlane ${{ inputs.lane }}
+
+      - name: Keep the build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-logs
+          path: |
+            ~/Library/Logs/gym
+            build/ExportOptions.plist
+          if-no-files-found: ignore
