@@ -245,15 +245,25 @@ struct RichShareBar: View {
     let highlighted: Bool
 
     var body: some View {
-        Capsule()
-            .fill(Tokens.Palette.resultTrack)
-            .overlay {
-                Capsule()
-                    .fill(highlighted ? Tokens.Palette.chartBarSelected : Tokens.Palette.chartBar)
-                    .scaleEffect(x: CGFloat(max(0, min(fraction, 1))), y: 1, anchor: .leading)
-            }
-            .frame(height: 7)
-            .frame(maxWidth: .infinity)
+        let value = max(0, min(fraction, 1))
+        if value <= 0 || value >= 1 {
+            // Empty or full: a plain capsule. (A scaleEffect(x: 0) fill is a
+            // non-invertible transform; after a poll vote it sent the lazy
+            // transcript into a 100% CPU relayout loop in the QA lane.)
+            Capsule()
+                .fill(value >= 1
+                      ? (highlighted ? Tokens.Palette.chartBarSelected : Tokens.Palette.chartBar)
+                      : Tokens.Palette.resultTrack)
+                .frame(height: 7)
+                .frame(maxWidth: .infinity)
+        } else {
+            // Partial share: the native linear progress bar (no transforms,
+            // no GeometryReader).
+            ProgressView(value: value)
+                .progressViewStyle(.linear)
+                .tint(highlighted ? Tokens.Palette.chartBarSelected : Tokens.Palette.chartBar)
+                .frame(maxWidth: .infinity)
+        }
     }
 }
 
