@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p qa-out
-          nohup python3 scripts/local-hermes --port "$HERMES_PORT" > qa-out/local-hermes.log 2>&1 &
+          nohup python3 scripts/local-hermes --port "$HERMES_PORT" --keep-home > qa-out/local-hermes.log 2>&1 &
           echo $! > /tmp/local-hermes.pid
           for i in $(seq 1 240); do
             if curl -fsS "http://127.0.0.1:$HERMES_PORT/api/status" > qa-out/status.json 2>/dev/null; then
@@ -113,7 +113,11 @@ jobs:
           for f in $(ls -t ~/Library/Logs/DiagnosticReports/HermesMobile* 2>/dev/null | head -3); do cp "$f" qa-out/; done
           find qa-out -name "*.png" | sort
           echo "---- JUnit ----"; cat qa-out/report.xml || true
+          # Stop the host, then keep its logs: local-hermes prints the kept home on exit.
           kill "$(cat /tmp/local-hermes.pid)" 2>/dev/null || true
+          for i in $(seq 1 15); do grep -q "Kept the Hermes home at" qa-out/local-hermes.log && break; sleep 1; done
+          HOME_DIR=$(grep "Kept the Hermes home at" qa-out/local-hermes.log | tail -1 | sed -e "s/^Kept the Hermes home at //" -e "s/[.]$//")
+          if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then mkdir -p qa-out/hermes-logs; find "$HOME_DIR" -name "*.log" -size -20M -exec cp {} qa-out/hermes-logs/ \; ; ls -R "$HOME_DIR" | head -80 > qa-out/hermes-home-listing.txt; fi
 
       - name: Upload QA output
         if: always()

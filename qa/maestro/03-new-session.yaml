@@ -17,18 +17,20 @@ name: 03 new session send approve and reply
 - tapOn:
     text: Send
     optional: true
-- extendedWaitUntil:
-    visible: Automated QA ping
-    timeout: 15000
-- takeScreenshot: 03-sent
-# Hermex's one-time offer after the first run started from the phone (#863).
+# Hermex's one-time offer after the first run started from the phone (#863) is an alert
+# that hides the transcript from Maestro until it is answered.
 - extendedWaitUntil:
     visible: Want a notification.*
     timeout: 20000
     optional: true
+- takeScreenshot: 03-notification-offer
 - tapOn:
     text: Not now
     optional: true
+- extendedWaitUntil:
+    visible: Automated QA ping
+    timeout: 15000
+- takeScreenshot: 03-sent
 - extendedWaitUntil:
     visible: Let me run a quick check.*
     timeout: 60000

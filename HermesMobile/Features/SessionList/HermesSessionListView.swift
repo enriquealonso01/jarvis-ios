@@ -368,12 +368,28 @@ struct HermesSessionListView: View {
         withAnimation(SessionListMotion.searchChromeAnimation(reduceMotion: reduceMotion)) { isSearchExpanded = false }
     }
 
-    /// New Session (JARVIS workspaces): a tap starts in the selected project lane's folder, or in
-    /// General (the Profile's default folder) with no lane selected; a hold picks General or any
-    /// project with a folder. A session's workspace is its working folder (`cwd`), so the host
-    /// loads that folder's AGENTS.md / CLAUDE.md / .hermes.md into the new conversation.
+    /// New Session (JARVIS workspaces). With no project that names a folder, a tap starts a
+    /// session at once, as in Hermex. Otherwise the tap asks where: the project lane on screen
+    /// first, then General (the Profile's default folder) and every other workspace. A session's
+    /// workspace is its working folder (`cwd`), so the host loads that folder's AGENTS.md /
+    /// CLAUDE.md / .hermes.md into the new conversation.
+    @ViewBuilder
     private var newSessionButton: some View {
+        if workspaces.isEmpty {
+            Button("New Session", systemImage: "square.and.pencil") { startNewSession(in: nil) }
+                .disabled(viewModel.isViewingCachedData || profile == nil)
+        } else {
+            workspaceMenu
+        }
+    }
+
+    private var workspaceMenu: some View {
         Menu {
+            if let lane = workspaces.first(where: { $0.projectId == selectedProjectID }) {
+                Button("In \(lane.name ?? lane.hermes?.folder ?? "")", systemImage: "folder.fill") {
+                    startNewSession(in: lane.hermes?.folder)
+                }
+            }
             Button("General", systemImage: "bubble.left.and.bubble.right") { startNewSession(in: nil) }
             if !workspaces.isEmpty {
                 Section("Workspaces") {
@@ -386,8 +402,6 @@ struct HermesSessionListView: View {
             }
         } label: {
             Label("New Session", systemImage: "square.and.pencil")
-        } primaryAction: {
-            startNewSession(in: selectedWorkspaceFolder)
         }
         .disabled(viewModel.isViewingCachedData || profile == nil)
     }
@@ -395,12 +409,6 @@ struct HermesSessionListView: View {
     /// The listed Profile's projects that name a host folder, the user's first.
     private var workspaces: [ProjectSummary] {
         viewModel.projects.filter { $0.hermes?.folder?.isEmpty == false }
-    }
-
-    /// The folder of the project lane on screen, if it has one.
-    private var selectedWorkspaceFolder: String? {
-        guard let selectedProjectID else { return nil }
-        return workspaces.first { $0.projectId == selectedProjectID }?.hermes?.folder
     }
 
     private func startNewSession(in folder: String?) {
