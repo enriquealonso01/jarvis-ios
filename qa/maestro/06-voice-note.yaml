@@ -10,14 +10,21 @@ name: 06 voice note pause continue and delete
 - extendedWaitUntil:
     visible: Settings
     timeout: 30000
-- tapOn: New Session
-# Once a project lane names a folder, New Session asks where; General is the default.
-- tapOn:
-    text: General
-    optional: true
-- extendedWaitUntil:
-    visible: Ask anything.*
-    timeout: 15000
+# New Session stays disabled while the list still shows cached rows after launch (run
+# 39642580261 tapped it then), so try again until the chat opens.
+- retry:
+    maxRetries: 3
+    commands:
+      - waitForAnimationToEnd:
+          timeout: 5000
+      - tapOn: New Session
+      # Once a project lane names a folder, New Session asks where; General is the default.
+      - tapOn:
+          text: General
+          optional: true
+      - extendedWaitUntil:
+          visible: Ask anything.*
+          timeout: 10000
 # A quick tap: the note starts and stays recording, locked (Pause, Delete, Send).
 - tapOn:
     id: composer.mic
