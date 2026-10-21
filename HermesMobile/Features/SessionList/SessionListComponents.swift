@@ -384,6 +384,8 @@ struct SidebarSectionVisibility: Equatable {
     var projects: Bool
     /// JARVIS calls, on the Hermes home only.
     var calls: Bool = false
+    /// Files from JARVIS, on the Hermes home only.
+    var files: Bool = false
 
     /// Show every row, primarily for previews and tests.
     static let showAll = SidebarSectionVisibility(
@@ -399,7 +401,7 @@ struct SidebarSectionVisibility: Equatable {
     /// The plain links share one List row, so that row is dropped entirely
     /// once all of them are hidden rather than leaving an empty padded gap.
     var showsAnyUtilityLink: Bool {
-        bots || tasks || skills || memory || insights || calls
+        bots || tasks || skills || memory || insights || calls || files
     }
 }
 
@@ -486,6 +488,12 @@ struct SessionSidebarUtilityRows: View {
             if sectionVisibility.calls {
                 SidebarNavButton(title: String(localized: "Calls"), assetImage: "sf:phone") {
                     openDestination(.calls)
+                }
+            }
+
+            if sectionVisibility.files {
+                SidebarNavButton(title: String(localized: "Files from JARVIS"), assetImage: "sf:doc.richtext") {
+                    openDestination(.files)
                 }
             }
 

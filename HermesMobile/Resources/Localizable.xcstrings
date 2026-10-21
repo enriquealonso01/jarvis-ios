@@ -33654,6 +33654,7 @@
         }
       }
     },
+    "Check Again" : { "shouldTranslate" : false },
     "Check that %@ is running and reachable, then Resume." : {
       "localizations" : {
         "ar" : {
@@ -63517,6 +63518,8 @@
       }
     },
     "Files Button" : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Dateien-Schaltfläche" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "Botón Archivos" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "Bouton Fichiers" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "Pulsante File" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Przycisk Pliki" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "Botão Arquivos" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "Knop Bestanden" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Dosyalar Düğmesi" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Кнопка «Файлы»" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "ファイルボタン" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "文件按钮" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "파일 버튼" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "زر الملفات" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "כפתור קבצים" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "فائلز بٹن" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "檔案按鈕" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "檔案按鈕" } } } },
+    "Files Unavailable" : { "shouldTranslate" : false },
+    "Files from JARVIS" : { "shouldTranslate" : false },
     "Filled after you move" : {
       "localizations" : {
         "ar" : {
@@ -75815,6 +75818,7 @@
         }
       }
     },
+    "No Files Yet" : { "shouldTranslate" : false },
     "No calls scheduled." : { "shouldTranslate" : false },
     "No calls yet." : { "shouldTranslate" : false },
     "Not Now" : {
@@ -77417,6 +77421,7 @@
         }
       }
     },
+    "Reports, PDFs and images JARVIS makes for you show up here. Ask JARVIS for one in a chat." : { "shouldTranslate" : false },
     "Repositories" : { "shouldTranslate" : false },
     "Restart JARVIS" : { "shouldTranslate" : false },
     "Restart JARVIS?" : { "shouldTranslate" : false },

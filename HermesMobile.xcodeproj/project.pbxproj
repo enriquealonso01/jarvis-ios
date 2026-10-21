@@ -610,6 +610,8 @@
 		E1752DF69B4412E2719B55FB /* RichMessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078B9C5EBE6C50ED3944B81F /* RichMessageContent.swift */; };
 		A12F1EC764CDF3FDAE543ECF /* ChatPDFExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A67880F5BC765614975CA16A /* ChatPDFExport.swift */; };
 		36413DDE3EABAE7C1BD149DC /* ChatPDFExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1685E4A514A299D624BED4 /* ChatPDFExportTests.swift */; };
+		63DEF4D3BA4ADA13CD94EFA8 /* JarvisFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5DE79A0242B55B4BD6DB384 /* JarvisFilesView.swift */; };
+		C80F1E6C44BFF736CDC8FFCD /* JarvisFilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1259,6 +1261,8 @@
 		078B9C5EBE6C50ED3944B81F /* RichMessageContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichMessageContent.swift; sourceTree = "<group>"; };
 		A67880F5BC765614975CA16A /* ChatPDFExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPDFExport.swift; sourceTree = "<group>"; };
 		AA1685E4A514A299D624BED4 /* ChatPDFExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPDFExportTests.swift; sourceTree = "<group>"; };
+		C5DE79A0242B55B4BD6DB384 /* JarvisFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisFilesView.swift; sourceTree = "<group>"; };
+		5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisFilesTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1370,6 +1374,7 @@
 		1A2B3C4D5E6F700000000034 /* HermesMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */,
 				AA1685E4A514A299D624BED4 /* ChatPDFExportTests.swift */,
 				B48200000000000000000007 /* BotProfileEditorTests.swift */,
 				B48200000000000000000035 /* BotLifecycleTests.swift */,
@@ -1939,6 +1944,7 @@
 		1A2B3C4D5E6F7000000000C7 /* Workspace */ = {
 			isa = PBXGroup;
 			children = (
+				C5DE79A0242B55B4BD6DB384 /* JarvisFilesView.swift */,
 				1A2B3C4D5E6F7000000000E5 /* FileBrowserView.swift */,
 				1A2B3C4D5E6F7000000000E7 /* FileBrowserViewModel.swift */,
 				1F16000000000000000000F1 /* FileTree.swift */,
@@ -2418,6 +2424,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				63DEF4D3BA4ADA13CD94EFA8 /* JarvisFilesView.swift in Sources */,
 				A12F1EC764CDF3FDAE543ECF /* ChatPDFExport.swift in Sources */,
 				E1752DF69B4412E2719B55FB /* RichMessageContent.swift in Sources */,
 				53410C5AFB6F19D8F0CA2595 /* RichTokens.swift in Sources */,
@@ -2800,6 +2807,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C80F1E6C44BFF736CDC8FFCD /* JarvisFilesTests.swift in Sources */,
 				36413DDE3EABAE7C1BD149DC /* ChatPDFExportTests.swift in Sources */,
 				A4790000000000000000E006 /* PushRegistrationTests.swift in Sources */,
 				B48200000000000000000008 /* BotProfileEditorTests.swift in Sources */,

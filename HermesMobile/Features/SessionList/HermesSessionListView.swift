@@ -181,6 +181,9 @@ struct HermesSessionListView: View {
             .id(chat.id)
         }
         .navigationDestination(isPresented: $covers.showingCalls) { CallsView() }
+        .navigationDestination(isPresented: $covers.showingFiles) {
+            if let profile { JarvisFilesView(server: entry.server, connection: entry.connection, profile: profile) }
+        }
         .navigationDestination(isPresented: $covers.showingArchived) {
             if let profile {
                 ArchivedSessionsView(server: entry.server, hermes: .saved(entry.connection, server: entry.server, profile: profile))
@@ -329,7 +332,7 @@ struct HermesSessionListView: View {
         return SidebarSectionVisibility(
             bots: false, tasks: isHome && showsTasks, skills: isHome && showsSkills,
             memory: isHome && showsMemory, insights: isHome && showsInsights, activeProfile: false,
-            projects: !viewModel.hermesShowsAllProfiles, calls: isHome
+            projects: !viewModel.hermesShowsAllProfiles, calls: isHome, files: isHome
         )
     }
 
@@ -338,6 +341,7 @@ struct HermesSessionListView: View {
     private func open(_ destination: SessionListUtilityDestination) {
         let server = entry.server, connection = entry.connection
         if destination == .calls { covers.showingCalls = true; return }
+        if destination == .files { covers.showingFiles = true; return }
         guard let profile else { return }
         switch destination {
         case .tasks:
@@ -904,6 +908,7 @@ struct HermesSessionListCovers {
     var exported: SessionExportShareItem?
     var showingArchived = false
     var showingCalls = false
+    var showingFiles = false
     var creatingProject: HermesProjectCreation?
     var renamingProject: ProjectSummary?
     var deletingProject: ProjectSummary?
@@ -919,7 +924,7 @@ struct HermesSessionListCovers {
 
     /// A screen this list pushed covers it, so the socket stays closed until it returns.
     var isCoveredByScreen: Bool {
-        showingArchived || showingCalls || tasks != nil || skills != nil || memory != nil || insights != nil
+        showingArchived || showingCalls || showingFiles || tasks != nil || skills != nil || memory != nil || insights != nil
     }
 
     /// Counts the links that brought the rows forward, so work started before one (an export)
