@@ -1038,11 +1038,14 @@ struct MessageComposerView: View {
                     gitBranchPicker
                 }
 
-                voiceControlButton
-
                 ContextWindowIndicatorView(snapshot: contextWindowSnapshot)
                     .padding(.horizontal, 4)
             }
+
+            // JARVIS: the mic (voice notes, requirement 12) stays pinned beside Send; at the end
+            // of the scroller it sat past the screen's edge behind the model, folder and
+            // Profile controls (Maestro run 39631269325).
+            voiceControlButton
 
             actionButton
         }
