@@ -56,6 +56,27 @@ import Observation
         XCTAssertEqual(writes(host, ["projects.tree"]), [["profile": .string("default")]])
     }
 
+    /// JARVIS's host (2026-10): 15 registered projects, each a /root/projects folder, plus the
+    /// "No project" bucket and an automatic repository lane, 17 nodes in all. Every registered
+    /// project becomes a workspace with its folder, ahead of the automatic lane.
+    func testSeventeenNodeTreeGivesFifteenWorkspaces() {
+        let names = ["Krendora", "Ticketflipping", "WayCivil", "JARVIS", "HomeBudget", "Flare", "Copilot",
+                     "Toolbox", "Lysted", "AIDP", "Voice", "Dispatcher", "ControlCenter", "iOS", "Notes"]
+        let nodes = [node(HermesProjectTree.noProjectID, "No project", path: nil, sessions: [], isNoProject: true)]
+            + names.enumerated().map { index, name in
+                node("p_\(index)", name, path: "/root/projects/\(name)", sessions: [])
+            }
+            + [node("/root/src/hermes", "hermes", path: "/root/src/hermes", sessions: [], isAuto: true)]
+        XCTAssertEqual(nodes.count, 17)
+
+        let projects = HermesProjectTree(reply: tree(nodes)).projects
+        let workspaces = projects.filter { $0.hermes?.folder?.isEmpty == false && $0.hermes?.isAutomatic == false }
+        XCTAssertEqual(workspaces.compactMap(\.name), names)
+        XCTAssertEqual(workspaces.compactMap(\.hermes?.folder), names.map { "/root/projects/\($0)" })
+        XCTAssertEqual(projects.last?.hermes?.isAutomatic, true)
+        XCTAssertEqual(projects.count, 16)
+    }
+
     /// A lane reads pages until it holds every session the host named for it, then stops, though
     /// the list itself goes on.
     func testALanePagesUntilItHoldsEverySessionTheHostNamed() async {

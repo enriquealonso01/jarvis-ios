@@ -393,10 +393,23 @@ struct HermesSessionListView: View {
                 }
             }
             Button("General", systemImage: "bubble.left.and.bubble.right") { startNewSession(in: nil) }
-            if !workspaces.isEmpty {
+            // The user's projects (the Hermes projects JARVIS registered), then the host's
+            // automatic per-repository lanes, each in the host's order.
+            let userWorkspaces = workspaces.filter { $0.hermes?.isAutomatic != true }
+            let repositories = workspaces.filter { $0.hermes?.isAutomatic == true }
+            if !userWorkspaces.isEmpty {
                 Section("Workspaces") {
-                    ForEach(workspaces) { project in
+                    ForEach(userWorkspaces) { project in
                         Button(project.name ?? project.hermes?.folder ?? "", systemImage: "folder") {
+                            startNewSession(in: project.hermes?.folder)
+                        }
+                    }
+                }
+            }
+            if !repositories.isEmpty {
+                Section("Repositories") {
+                    ForEach(repositories) { project in
+                        Button(project.name ?? project.hermes?.folder ?? "", systemImage: "folder.badge.gearshape") {
                             startNewSession(in: project.hermes?.folder)
                         }
                     }
