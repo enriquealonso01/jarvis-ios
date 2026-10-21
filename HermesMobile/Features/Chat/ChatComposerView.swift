@@ -1601,6 +1601,15 @@ struct MessageComposerView: View {
     private func sendVoiceNote() {
         voiceNoteDrag = .zero
         guard let note = voiceNoteRecorder.finish() else { return }
+        // Measured on the phone first: a silent, too-short or undecodable clip is never
+        // uploaded (speech-to-text would come back empty), and the app log says why.
+        guard note.isUsable else {
+            JarvisClientLog.record("voice", "not sent (silent or empty): " + note.diagnostics)
+            voiceNoteRecorder.reject(String(localized: "Didn't catch any audio. Check the microphone and try again."))
+            VoiceNoteHaptics.refused()
+            return
+        }
+        JarvisClientLog.record("voice", "sent: " + note.diagnostics)
         VoiceNoteHaptics.sent()
         onSendVoiceNote(note.data, note.filename)
     }

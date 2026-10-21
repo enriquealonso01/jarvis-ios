@@ -39,6 +39,61 @@ private final class FakeVoiceRecorder: VoiceNoteAudioRecording {
     func averagePower(forChannel channelNumber: Int) -> Float { power }
 }
 
+/// Records real AAC audio like `AVAudioRecorder`: one `.m4a` kept open across pause and
+/// resume, each `record()` stretch appending `segmentSeconds` of a tone (or silence), closed
+/// (finalized) on `stop()`.
+private final class ToneVoiceRecorder: VoiceNoteAudioRecording {
+    static let segmentSeconds = 0.5
+    let url: URL
+    let amplitude: Float
+    var isRecording = false
+    var isMeteringEnabled = false
+    private(set) var segments = 0
+    private var file: AVAudioFile?
+
+    init(url: URL, amplitude: Float) {
+        self.url = url
+        self.amplitude = amplitude
+    }
+
+    var currentTime: TimeInterval { Double(segments) * Self.segmentSeconds }
+
+    func prepareToRecord() -> Bool { true }
+
+    func record() -> Bool {
+        do {
+            if file == nil {
+                file = try AVAudioFile(forWriting: url, settings: ComposerVoiceNoteRecorder.recordingSettings)
+            }
+            guard let file else { return false }
+            let format = file.processingFormat
+            let frames = AVAudioFrameCount(format.sampleRate * Self.segmentSeconds)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+                  let channel = buffer.floatChannelData?[0] else { return false }
+            buffer.frameLength = frames
+            for index in 0..<Int(frames) {
+                channel[index] = amplitude * sin(2 * .pi * 440 * Float(index) / Float(format.sampleRate))
+            }
+            try file.write(from: buffer)
+            segments += 1
+            isRecording = true
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func pause() { isRecording = false }
+
+    func stop() {
+        isRecording = false
+        file = nil  // closes and finalizes the .m4a
+    }
+
+    func updateMeters() {}
+    func averagePower(forChannel channelNumber: Int) -> Float { amplitude > 0 ? -6 : -160 }
+}
+
 @MainActor
 final class ComposerVoiceNoteRecorderTests: XCTestCase {
     private var fakes: [FakeVoiceRecorder] = []
@@ -200,6 +255,65 @@ final class ComposerVoiceNoteRecorderTests: XCTestCase {
         fakes.last?.power = -60
         advance(recorder, to: 100)
         XCTAssertEqual(recorder.levels.last ?? 1, 0, accuracy: 0.001)
+    }
+
+    // MARK: - Real audio: pause and resume merge, silence guard
+
+    private func toneRecorder(amplitude: Float) -> ComposerVoiceNoteRecorder {
+        ComposerVoiceNoteRecorder(
+            recorderFactory: { ToneVoiceRecorder(url: $0, amplitude: amplitude) },
+            permissionStatus: { .granted },
+            permissionRequester: { true },
+            audioSession: VoiceNoteAudioSession(activate: {}, deactivate: {}),
+            runsTicker: false
+        )
+    }
+
+    func testPausedAndResumedSegmentsMakeOneAudibleNote() async throws {
+        let recorder = toneRecorder(amplitude: 0.5)
+        await recorder.begin()
+        recorder.tick()
+        recorder.pause()
+        recorder.resume()
+        recorder.tick()
+
+        let note = try XCTUnwrap(recorder.finish())
+        let analysis = try XCTUnwrap(note.analysis, "the merged file decodes")
+        XCTAssertEqual(analysis.duration, 2 * ToneVoiceRecorder.segmentSeconds, accuracy: 0.15,
+                       "both stretches are in the one file")
+        XCTAssertGreaterThan(analysis.peak, 0.3, "the tone survives the pause and resume")
+        XCTAssertFalse(analysis.isSilent)
+        XCTAssertTrue(note.isUsable)
+        XCTAssertTrue(note.diagnostics.contains("segments=2"), note.diagnostics)
+    }
+
+    func testSilentNoteIsNotUsable() async throws {
+        let recorder = toneRecorder(amplitude: 0)
+        await recorder.begin()
+        recorder.tick()
+        recorder.pause()
+        recorder.resume()
+        let note = try XCTUnwrap(recorder.finish())
+        XCTAssertEqual(note.analysis?.isSilent, true)
+        XCTAssertFalse(note.isUsable, "silence is never uploaded")
+        XCTAssertFalse(note.diagnostics.contains("decoded=none"), note.diagnostics)
+    }
+
+    func testUndecodableFileIsNotUsable() async throws {
+        // The scripted recorder writes text, like a header-only or broken container.
+        let recorder = makeRecorder()
+        await recorder.begin()
+        advance(recorder, to: 2)
+        let note = try XCTUnwrap(recorder.finish())
+        XCTAssertNil(note.analysis)
+        XCTAssertFalse(note.isUsable)
+        XCTAssertTrue(note.diagnostics.contains("decoded=none"), note.diagnostics)
+    }
+
+    func testAnalysisRejectsTooShortClips() {
+        XCTAssertFalse(VoiceNoteAudioAnalysis(duration: 0.2, peak: 0.5, rms: 0.2).isUsable)
+        XCTAssertTrue(VoiceNoteAudioAnalysis(duration: 1, peak: 0.5, rms: 0.2).isUsable)
+        XCTAssertFalse(VoiceNoteAudioAnalysis(duration: 5, peak: 0.0005, rms: 0.0001).isUsable)
     }
 
     // MARK: - Gesture

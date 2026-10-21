@@ -3377,14 +3377,20 @@ final class ChatViewModel {
         do {
             let response = try await transcriber(audioData, filename)
             if let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+                JarvisClientLog.record("voice", "transcribe refused (\(audioData.count) bytes): \(error.prefix(120))",
+                                       path: "/api/audio/transcribe")
                 setUploadAttachmentError(error)
                 return false
             }
             transcript = (response.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
+            JarvisClientLog.record("voice", "transcribe failed (\(audioData.count) bytes): \(HermesConnectionLog.reason(error))",
+                                   path: "/api/audio/transcribe")
             setUploadAttachmentError(error.localizedDescription)
             return false
         }
+        JarvisClientLog.record("voice", "transcribed \(audioData.count) bytes to \(transcript.count) chars",
+                               path: "/api/audio/transcribe")
         guard !transcript.isEmpty else {
             setUploadAttachmentError(String(localized: "Couldn't transcribe that voice note. Try recording again."))
             return false

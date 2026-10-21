@@ -75,6 +75,8 @@ enum QAFakeMicrophone {
 struct VoiceNoteAudioSession {
     var activate: () throws -> Void
     var deactivate: () -> Void
+    /// The session's category, mode, input route and permission, for the app's log.
+    var describe: () -> String = { "session=test" }
 
     static let live = VoiceNoteAudioSession(
         activate: {
@@ -84,11 +86,69 @@ struct VoiceNoteAudioSession {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP, .defaultToSpeaker])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
+            // A route left without an input (after a call, a disconnected headset) records
+            // silence; fall back to the iPhone's own microphone.
+            if session.currentRoute.inputs.isEmpty,
+               let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try? session.setPreferredInput(builtIn)
+            }
         },
         deactivate: {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        },
+        describe: {
+            let session = AVAudioSession.sharedInstance()
+            let inputs = session.currentRoute.inputs.map { $0.portType.rawValue }.joined(separator: "+")
+            return "category=\(session.category.rawValue) mode=\(session.mode.rawValue) "
+                + "input=\(inputs.isEmpty ? "none" : inputs) available=\(session.availableInputs?.count ?? 0) "
+                + "inputAvailable=\(session.isInputAvailable) rate=\(Int(session.sampleRate)) "
+                + "otherAudio=\(session.isOtherAudioPlaying) permission=\(VoiceNoteMicrophonePermission.current)"
         }
     )
+}
+
+/// What a finished clip actually holds, measured on the phone before anything is uploaded:
+/// a silent or near-empty file is never sent (the box's speech-to-text would return nothing).
+struct VoiceNoteAudioAnalysis: Equatable {
+    let duration: TimeInterval
+    /// Linear peak sample, 0...1.
+    let peak: Float
+    /// Linear RMS over the whole clip, 0...1.
+    let rms: Float
+
+    /// About -54 dBFS: quieter than any speech the microphone picks up.
+    static let silencePeak: Float = 0.002
+    static let minimumDuration: TimeInterval = 0.3
+
+    var peakDecibels: Float { peak > 0 ? 20 * log10(peak) : -160 }
+    var isSilent: Bool { peak < Self.silencePeak }
+    var isUsable: Bool { duration >= Self.minimumDuration && !isSilent }
+
+    /// Decodes the file (AAC .m4a, or any format AVAudioFile reads) and measures it; nil when it
+    /// can't be read at all (a header-only or unfinished file).
+    static func analyze(url: URL) -> VoiceNoteAudioAnalysis? {
+        guard let file = try? AVAudioFile(forReading: url), file.length > 0 else { return nil }
+        let format = file.processingFormat
+        let chunk: AVAudioFrameCount = 8192
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { return nil }
+        var peak: Float = 0
+        var sumSquares: Double = 0
+        var frames: Int64 = 0
+        while file.framePosition < file.length {
+            do { try file.read(into: buffer, frameCount: chunk) } catch { break }
+            let count = Int(buffer.frameLength)
+            guard count > 0, let channel = buffer.floatChannelData?[0] else { break }
+            for index in 0..<count {
+                let sample = abs(channel[index])
+                if sample > peak { peak = sample }
+                sumSquares += Double(sample * sample)
+            }
+            frames += Int64(count)
+        }
+        guard frames > 0 else { return nil }
+        return VoiceNoteAudioAnalysis(duration: Double(frames) / format.sampleRate, peak: peak,
+                                      rms: Float((sumSquares / Double(frames)).squareRoot()))
+    }
 }
 
 /// Records one WhatsApp-style voice note to a temporary `.m4a`/AAC file, distinct from
@@ -116,6 +176,13 @@ final class ComposerVoiceNoteRecorder {
         let data: Data
         let filename: String
         let duration: TimeInterval
+        /// The decoded file's real length and level; nil when it couldn't be decoded.
+        var analysis: VoiceNoteAudioAnalysis?
+        /// One line for the app's log (requirement 9): session, route, file and levels.
+        var diagnostics = ""
+
+        /// Worth uploading: decodable, long enough, and not silent.
+        var isUsable: Bool { analysis?.isUsable ?? false }
     }
 
     /// Hard cap on a single clip. AAC mono at ~32 kbps stays far under the 20 MB
@@ -140,6 +207,11 @@ final class ComposerVoiceNoteRecorder {
     @ObservationIgnored private var didActivateSession = false
     @ObservationIgnored private var interruptionObserver: NSObjectProtocol?
     @ObservationIgnored private var lockWhenStarted = false
+    /// Diagnostics: recording stretches (1 + resumes), the loudest meter reading, and the
+    /// session as it was when recording started.
+    @ObservationIgnored private var segments = 0
+    @ObservationIgnored private var meterPeak: Float = -160
+    @ObservationIgnored private var startDescription = ""
     @ObservationIgnored private let recorderFactory: (URL) throws -> VoiceNoteAudioRecording
     @ObservationIgnored private let permissionStatus: () -> VoiceNoteMicrophonePermission
     @ObservationIgnored private let permissionRequester: () async -> Bool
@@ -253,15 +325,32 @@ final class ComposerVoiceNoteRecorder {
 
         let data = try? Data(contentsOf: fileURL)
         let filename = fileURL.lastPathComponent
+        let analysis = VoiceNoteAudioAnalysis.analyze(url: fileURL)
+        let diagnostics = finishDiagnostics(fileBytes: data?.count ?? 0, duration: duration, analysis: analysis)
         discardFile()
         teardownSession()
         resetState()
 
         guard let data, !data.isEmpty else {
             errorMessage = String(localized: "Couldn't read the recorded voice note. Try again.")
+            JarvisClientLog.record("voice", "unreadable note: " + diagnostics)
             return nil
         }
-        return RecordedVoiceNote(data: data, filename: filename, duration: duration)
+        return RecordedVoiceNote(data: data, filename: filename, duration: duration,
+                                 analysis: analysis, diagnostics: diagnostics)
+    }
+
+    /// Says why a finished note was not sent (silent, too short, undecodable).
+    func reject(_ message: String) {
+        errorMessage = message
+    }
+
+    private func finishDiagnostics(fileBytes: Int, duration: TimeInterval, analysis: VoiceNoteAudioAnalysis?) -> String {
+        let measured = analysis.map {
+            String(format: "decoded=%.2fs peak=%.1fdB rms=%.4f", $0.duration, $0.peakDecibels, $0.rms)
+        } ?? "decoded=none"
+        return String(format: "bytes=%ld elapsed=%.2fs segments=%ld meterPeak=%.1fdB ", fileBytes, duration,
+                      segments, meterPeak) + measured + " | start: " + startDescription
     }
 
     /// Pauses the note, keeping what was recorded. The bar's Pause, an audio interruption and
@@ -286,6 +375,7 @@ final class ComposerVoiceNoteRecorder {
             try audioSession.activate()
             didActivateSession = true
             guard recorder.record() else { throw ComposerVoiceNoteRecorderError.couldNotStart }
+            segments += 1
             ComposerAudioCaptureState.shared.setCapturing(true)
             state = .recording
             startTicker()
@@ -309,6 +399,7 @@ final class ComposerVoiceNoteRecorder {
         elapsed = max(elapsed, recorder.currentTime)
         recorder.updateMeters()
         let power = recorder.averagePower(forChannel: 0)
+        meterPeak = max(meterPeak, power)
         // -50 dB and quieter reads as silence; 0 dB is full scale.
         let level = CGFloat(max(0, min(1, (power + 50) / 50)))
         levels.append(level)
@@ -330,6 +421,10 @@ final class ComposerVoiceNoteRecorder {
         }
         self.recorder = recorder
         self.fileURL = url
+        segments = 1
+        meterPeak = -160
+        startDescription = audioSession.describe()
+        JarvisClientLog.record("voice", "recording started: " + startDescription)
         ComposerAudioCaptureState.shared.setCapturing(true)
         observeInterruptions()
     }
@@ -381,6 +476,7 @@ final class ComposerVoiceNoteRecorder {
     private func fail(_ message: String) {
         cancel()
         errorMessage = message
+        JarvisClientLog.record("voice", "recording failed: \(message) | \(audioSession.describe())")
         logger.error("Voice note recording failed")
     }
 
