@@ -9,7 +9,7 @@ enum JarvisFiles {
     /// Under the host user's home; the host expands `~` (`_fs_path`, `expanduser`).
     static let folder = "~/JARVIS-Files"
 
-    static func client(server: URL, connection: BotConnection, profile: String) -> HermesWorkspaceFileClient {
+    @MainActor static func client(server: URL, connection: BotConnection, profile: String) -> HermesWorkspaceFileClient {
         let context = HermesWorkspaceContext(server: server, profile: profile, storedKey: "jarvis-files",
                                              cwd: folder, terminalBackend: "local")
         return HermesWorkspaceFileClient(context: context,
