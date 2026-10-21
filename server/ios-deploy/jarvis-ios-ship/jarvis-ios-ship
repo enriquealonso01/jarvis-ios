@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# jarvis-ios-ship: change the JARVIS iPhone app and ship it to TestFlight, one guarded step at
+# a time. JARVIS runs it from a chat; Enrique approves the merge and the release in that chat.
+#
+#   jarvis-ios-ship status                 repo, branch, open JARVIS PRs, last release runs
+#   jarvis-ios-ship start <slug>           fresh branch jarvis/<slug> from origin/v3
+#   jarvis-ios-ship pr "<title>" [body]    push the branch and open a draft PR into v3
+#   jarvis-ios-ship wait                   wait for the PR's checks, print the result
+#   jarvis-ios-ship ship --approved        merge the PR into v3, dispatch the TestFlight release
+#   jarvis-ios-ship release-status         the latest release run and the build it uploaded
+#
+# Guardrails: works only in $REPO_DIR on branches named jarvis/*, PRs only into v3, never
+# pushes main/v2/v3 directly, never force-pushes, never tags. `ship` refuses without
+# --approved, which JARVIS passes only after Enrique said yes in the chat.
+set -euo pipefail
+
+REPO="enriquealonso01/jarvis-ios"
+REPO_DIR="${JARVIS_IOS_REPO_DIR:-/root/projects/jarvis-ios}"
+BASE="v3"
+
+die() { echo "jarvis-ios-ship: $*" >&2; exit 1; }
+need() { command -v "$1" > /dev/null || die "$1 is not installed"; }
+need git; need gh
+
+in_repo() {
+  [ -d "$REPO_DIR/.git" ] || die "no clone at $REPO_DIR (see server/ios-deploy/README.md)"
+  cd "$REPO_DIR"
+}
+
+current_branch() { git rev-parse --abbrev-ref HEAD; }
+
+require_jarvis_branch() {
+  local b; b=$(current_branch)
+  case "$b" in jarvis/*) ;; *) die "on '$b'; work only happens on jarvis/* branches (run: start <slug>)" ;; esac
+}
+
+pr_number() {
+  gh pr list --repo "$REPO" --head "$(current_branch)" --base "$BASE" --state open --json number --jq '.[0].number // empty'
+}
+
+cmd="${1:-status}"; shift || true
+case "$cmd" in
+  status)
+    in_repo
+    echo "repo: $REPO_DIR ($(current_branch) @ $(git rev-parse --short HEAD))"
+    git status --short | head -20
+    echo "-- open JARVIS PRs into $BASE"
+    gh pr list --repo "$REPO" --base "$BASE" --state open --json number,title,headRefName,isDraft \
+      --jq '.[] | select(.headRefName | startswith("jarvis/")) | "#\(.number) \(.title) [\(.headRefName)] draft=\(.isDraft)"'
+    echo "-- recent releases"
+    gh run list --repo "$REPO" --workflow ios-release.yml --limit 3 \
+      --json databaseId,status,conclusion,headBranch,createdAt \
+      --jq '.[] | "\(.databaseId) \(.status) \(.conclusion // "-") \(.headBranch) \(.createdAt)"'
+    ;;
+
+  start)
+    slug="${1:-}"; [ -n "$slug" ] || die "usage: start <slug>"
+    [[ "$slug" =~ ^[a-z0-9][a-z0-9-]{1,40}$ ]] || die "slug must be lowercase letters, digits and dashes"
+    in_repo
+    [ -z "$(git status --porcelain)" ] || die "the clone has uncommitted changes; commit or stash them first"
+    git fetch --quiet origin "$BASE"
+    git checkout --quiet -B "jarvis/$slug" "origin/$BASE"
+    echo "on jarvis/$slug from origin/$BASE ($(git rev-parse --short HEAD)). Edit, then: git add -A && git commit -m ..."
+    ;;
+
+  pr)
+    title="${1:-}"; body="${2:-Changed from a JARVIS chat.}"
+    [ -n "$title" ] || die "usage: pr \"<title>\" [body]"
+    in_repo; require_jarvis_branch
+    [ -z "$(git status --porcelain)" ] || die "commit your changes first"
+    [ "$(git rev-list --count "origin/$BASE..HEAD")" -gt 0 ] || die "no commits on top of origin/$BASE"
+    git push --quiet -u origin "$(current_branch)"
+    existing=$(pr_number)
+    if [ -n "$existing" ]; then
+      echo "pushed; PR #$existing updated"
+    else
+      gh pr create --repo "$REPO" --draft --base "$BASE" --head "$(current_branch)" --title "$title" \
+        --body "$body"$'\n\n'"Opened by JARVIS from a chat; Enrique approves the merge and the TestFlight release."
+    fi
+    ;;
+
+  wait)
+    in_repo; require_jarvis_branch
+    n=$(pr_number); [ -n "$n" ] || die "no open PR for $(current_branch)"
+    # PR CI takes about 15 minutes (build + tests).
+    if gh pr checks "$n" --repo "$REPO" --watch --interval 30 > /tmp/jarvis-ios-ship-checks.txt 2>&1; then
+      echo "PR #$n: all checks passed"
+    else
+      echo "PR #$n: checks failed or are still pending:"
+    fi
+    cat /tmp/jarvis-ios-ship-checks.txt | tail -20
+    ;;
+
+  ship)
+    [ "${1:-}" = "--approved" ] || die "ship needs --approved, given only after Enrique approved this release in the chat"
+    in_repo; require_jarvis_branch
+    n=$(pr_number); [ -n "$n" ] || die "no open PR for $(current_branch)"
+    gh pr checks "$n" --repo "$REPO" > /dev/null 2>&1 || die "PR #$n is not green; run: wait"
+    gh pr ready "$n" --repo "$REPO" > /dev/null 2>&1 || true
+    gh pr merge "$n" --repo "$REPO" --merge
+    gh workflow run ios-release.yml --repo "$REPO" --ref "$BASE" -f lane=beta
+    sleep 10
+    gh run list --repo "$REPO" --workflow ios-release.yml --limit 1 --json databaseId,url --jq '.[0] | "release run \(.databaseId): \(.url)"'
+    echo "The archive and upload take about 30-40 minutes; then: release-status"
+    ;;
+
+  release-status)
+    id=$(gh run list --repo "$REPO" --workflow ios-release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+    gh run view "$id" --repo "$REPO" --json status,conclusion,url --jq '"run \(.url): \(.status) \(.conclusion // "")"'
+    gh run view "$id" --repo "$REPO" --log 2>/dev/null | grep -Eo 'uploaded JARVIS [0-9.]+ \([0-9]+\) to TestFlight' | tail -1 || true
+    ;;
+
+  *) sed -n '2,15p' "$0"; exit 2 ;;
+esac
