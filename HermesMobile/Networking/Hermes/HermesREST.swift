@@ -142,6 +142,9 @@ enum HermesREST: Equatable, Sendable {
     case installPlugin(identifier: String)
     case setPlugin(name: String, enabled: Bool)
     case restartGateway
+    /// JARVIS's own Control Center reads on its dashboard (`hermes_cli/web_routers/control_center.py` on
+    /// the JARVIS host, not upstream Hermes): `zai_usage`, `vitals`, `knowledge_graph`, `automations`.
+    case jarvisControl(endpoint: String)
     case pushPairing
     /// hermex-push's mounted routes (#1235, plugin 0.5.0): no side effects, never 409.
     case pluginCapabilities
@@ -371,6 +374,9 @@ enum HermesREST: Equatable, Sendable {
                 .appendingPathComponent(enabled ? "enable" : "disable")
             return try Self.send("POST", url, [:])
         case .restartGateway: return try Self.send("POST", base.appendingPathComponent("api/gateway/restart"), [:])
+        case .jarvisControl(let endpoint):
+            guard Self.isSegment(endpoint) else { throw BotFailure.invalidAddress }
+            return Self.get(base.appendingPathComponent("api/control").appendingPathComponent(endpoint))
         case .pushPairing: return Self.get(base.appendingPathComponent("api/plugins/hermex-push/pairing"))
         case .pluginCapabilities: return Self.get(base.appendingPathComponent("api/plugins/hermex-push/capabilities"))
         case .companionProviderQuota(let provider, let profile, let refresh):
