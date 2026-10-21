@@ -18,6 +18,8 @@ struct MessageBubbleView: View {
     @Environment(\.chatWorkspaceRoot) private var chatWorkspaceRoot
     @AppStorage(ChatTranscriptDisplaySettings.hidesAttachmentPathsKey) private var hidesAttachmentPaths = true
     @AppStorage(ChatTranscriptDisplaySettings.showsResponseSpeedKey) private var showsResponseSpeed = false
+    /// JARVIS voice notes: the transcript opens in an overlay instead of showing as text.
+    @State private var showsVoiceTranscript = false
 
     /// Bot snapshots are text-only and must render synchronously while growing.
     let textOnly: Bool
@@ -88,9 +90,16 @@ struct MessageBubbleView: View {
         }
     }
 
+    /// A voice note the user sent (requirement 12): only its audio bubble shows.
+    private var isVoiceNote: Bool {
+        !textOnly && (message.attachments ?? []).contains {
+            VoiceNoteFilename.isVoiceNoteAttachment($0.name ?? $0.path)
+        }
+    }
+
     private var userMessageRow: some View {
-        let previewURL = linkPreviewURL
-        let text = userBubbleText
+        let previewURL = isVoiceNote ? nil : linkPreviewURL
+        let text = isVoiceNote ? "" : userBubbleText
         let hasVisibleText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let bodyFont = userBubbleBodyFont
         let mayFold = hasVisibleText && UserBubbleFoldPolicy.mayFold(text: text, font: bodyFont)
@@ -99,6 +108,10 @@ struct MessageBubbleView: View {
         return VStack(alignment: .trailing, spacing: 8) {
             if !textOnly, let attachments = message.attachments, !attachments.isEmpty {
                 attachmentPreviews
+            }
+
+            if isVoiceNote {
+                voiceTranscriptButton
             }
 
             // When the attachment-path line is hidden, an attachment-only
@@ -616,6 +629,39 @@ struct MessageBubbleView: View {
     /// The user bubble's text, with the appended attachment-path marker stripped
     /// when the user has opted to hide it. Display-only: `message.content` and the
     /// sent payload are untouched.
+    /// The voice note's transcript button and overlay. The transcript is the message's own text
+    /// (what the agent read); until the host has it, the button says so.
+    private var voiceTranscriptButton: some View {
+        let transcript = userBubbleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Button {
+            showsVoiceTranscript = true
+        } label: {
+            Label(transcript.isEmpty ? "Transcribing…" : "Transcript", systemImage: "text.bubble")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .disabled(transcript.isEmpty)
+        .accessibilityIdentifier("voiceNote.transcriptButton")
+        .sheet(isPresented: $showsVoiceTranscript) {
+            NavigationStack {
+                ScrollView {
+                    Text(transcript)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                .navigationTitle("Voice note")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { showsVoiceTranscript = false } }
+                }
+            }
+            .presentationDetents([.medium, .large])
+            .accessibilityIdentifier("voiceNote.transcriptSheet")
+        }
+    }
+
     private var userBubbleText: String {
         let content = message.content ?? ""
         guard !textOnly, hidesAttachmentPaths else { return content }

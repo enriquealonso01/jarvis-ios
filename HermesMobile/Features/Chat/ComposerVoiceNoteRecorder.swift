@@ -16,6 +16,10 @@ final class ComposerVoiceNoteRecorder {
         case idle
         case requestingPermission
         case recording
+        /// Interrupted (a call, Siri, leaving the app, locking the phone) or paused by the user.
+        /// The clip so far is kept; `resume()` continues the same note and `finish()` sends it.
+        /// JARVIS never auto-finishes an interrupted note.
+        case paused
     }
 
     struct RecordedVoiceNote {
@@ -38,6 +42,7 @@ final class ComposerVoiceNoteRecorder {
     @ObservationIgnored private var fileURL: URL?
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var didActivateSession = false
+    @ObservationIgnored private var interruptionObserver: NSObjectProtocol?
     @ObservationIgnored private let recorderFactory: (URL) throws -> AVAudioRecorder
     @ObservationIgnored private let permissionRequester: () async -> Bool
     private let logger = Logger(
@@ -54,6 +59,9 @@ final class ComposerVoiceNoteRecorder {
     }
 
     var isRecording: Bool { state == .recording }
+    var isPaused: Bool { state == .paused }
+    /// Recording or paused: a note is in progress and the recording bar shows.
+    var hasNoteInProgress: Bool { state == .recording || state == .paused }
     var isRequestingPermission: Bool { state == .requestingPermission }
     var hasReachedMaximumDuration: Bool { elapsed >= Self.maximumDuration }
 
@@ -96,12 +104,12 @@ final class ComposerVoiceNoteRecorder {
     /// Stops recording and returns the finished clip, or nil if it was too short,
     /// failed to read, or wasn't recording. Always restores the audio session.
     func finish() -> RecordedVoiceNote? {
-        guard state == .recording, let recorder, let fileURL else {
+        guard state == .recording || state == .paused, let recorder, let fileURL else {
             cancel()
             return nil
         }
 
-        let duration = recorder.currentTime
+        let duration = max(recorder.isRecording ? recorder.currentTime : 0, elapsed)
         stopRecorder()
 
         guard duration >= Self.minimumDuration else {
@@ -124,6 +132,37 @@ final class ComposerVoiceNoteRecorder {
         return RecordedVoiceNote(data: data, filename: filename, duration: duration)
     }
 
+    /// Pauses the note, keeping what was recorded. Called on an audio interruption and when
+    /// the app leaves the foreground; the bar then offers Continue, Send and Delete.
+    func pause() {
+        guard state == .recording, let recorder else { return }
+        elapsed = max(elapsed, recorder.currentTime)
+        if recorder.isRecording { recorder.pause() }
+        stopTicker()
+        ComposerAudioCaptureState.shared.setCapturing(false)
+        teardownSession()
+        state = .paused
+        logger.info("Voice note paused")
+    }
+
+    /// Continues the same note after a pause: AVAudioRecorder appends to the same file.
+    func resume() {
+        guard state == .paused, let recorder else { return }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            didActivateSession = true
+            guard recorder.record() else { throw ComposerVoiceNoteRecorderError.couldNotStart }
+            ComposerAudioCaptureState.shared.setCapturing(true)
+            state = .recording
+            startTicker()
+            logger.info("Voice note resumed")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     /// Stops and discards the recording without producing a clip.
     func cancel() {
         stopRecorder()
@@ -136,7 +175,7 @@ final class ComposerVoiceNoteRecorder {
 
     private func startRecording() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
         didActivateSession = true
 
@@ -149,6 +188,19 @@ final class ComposerVoiceNoteRecorder {
         self.recorder = recorder
         self.fileURL = url
         ComposerAudioCaptureState.shared.setCapturing(true)
+        observeInterruptions()
+    }
+
+    /// A phone call, FaceTime, Siri or an alarm takes the microphone: pause, never finish.
+    private func observeInterruptions() {
+        guard interruptionObserver == nil else { return }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            guard raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:)) == .began else { return }
+            MainActor.assumeIsolated { self?.pause() }
+        }
     }
 
     private func stopRecorder() {
@@ -176,6 +228,8 @@ final class ComposerVoiceNoteRecorder {
     private func resetState() {
         state = .idle
         elapsed = 0
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+        interruptionObserver = nil
     }
 
     private func fail(_ message: String) {
@@ -198,7 +252,7 @@ final class ComposerVoiceNoteRecorder {
 
     private func tick() {
         guard let recorder, recorder.isRecording else { return }
-        elapsed = recorder.currentTime
+        elapsed = max(elapsed, recorder.currentTime)
     }
 
     private func stopTicker() {
@@ -240,6 +294,20 @@ enum VoiceNoteFilename {
         let lower = filename.lowercased()
         return lower.hasPrefix("voice-note-") && lower.hasSuffix(".m4a")
     }
+
+    /// A sent message's voice note, by its chip's name or path: on a Hermes host `file.attach`
+    /// stores it as `<uuid>-voice-note-<suffix>.m4a`.
+    static func isVoiceNoteAttachment(_ nameOrPath: String?) -> Bool {
+        guard let nameOrPath else { return false }
+        let last = URL(fileURLWithPath: nameOrPath).lastPathComponent.lowercased()
+        return last.hasSuffix(".m4a") && last.contains("voice-note-")
+    }
+}
+
+/// JARVIS voice-note preferences.
+enum JarvisVoiceNoteSettings {
+    /// A tap on the composer mic records a hands-free voice note (default); off, it dictates.
+    static let tapRecordsKey = "jarvis.voiceNote.tapRecords"
 }
 
 /// Pure decision helpers for the hold-to-talk mic gesture, kept out of the view

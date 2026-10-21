@@ -3256,9 +3256,12 @@ final class ChatViewModel {
     /// audio player. Aborts (toast, no partial send) if transcription fails or
     /// returns nothing. Returns true only if the chat send started.
     @discardableResult
-    func sendVoiceNote(audioData: Data, filename: String, modelContext: ModelContext? = nil) async -> Bool {
-        // Voice notes ride on webui transcription, which a Hermes host does not offer.
-        guard hermesTurn == nil else { return false }
+    func sendVoiceNote(audioData: Data, filename: String, modelContext: ModelContext? = nil,
+                       transcriber: ComposerTranscriber? = nil) async -> Bool {
+        if let hermes = hermesTurn {
+            guard let transcriber else { return false }
+            return await sendHermesVoiceNote(audioData: audioData, filename: filename, transcriber: transcriber, to: hermes)
+        }
         // Reentrancy guard: bail if a voice note OR a regular chat send is already
         // in flight. `performChatSend` has no internal guard, so two overlapping
         // sends would both flip `isStartingChat`/`isSendingVoiceNote` and race their
@@ -3344,6 +3347,49 @@ final class ChatViewModel {
             attachmentsToRestoreOnFailure: [],
             modelContext: modelContext
         )
+    }
+
+    /// JARVIS voice notes on a Hermes host (requirement 12): the host transcribes the clip
+    /// (`/api/audio/transcribe`, as dictation does), then one prompt goes out whose text is the
+    /// transcript, for the agent, and whose only file is the clip (`file.attach`). The chat shows
+    /// the note as an audio bubble with a transcript button, never the transcript as text
+    /// (`MessageBubbleView`, `VoiceNoteFilename.isVoiceNoteAttachment`). Files already staged in
+    /// the composer stay there for the next send.
+    private func sendHermesVoiceNote(audioData: Data, filename: String, transcriber: ComposerTranscriber,
+                                     to hermes: HermesChatTurnCoordinator) async -> Bool {
+        guard !isSendingVoiceNote, !isStartingChat, !audioData.isEmpty else { return false }
+        isSendingVoiceNote = true
+        setUploadAttachmentError(nil)
+        sendErrorMessage = nil
+        defer { isSendingVoiceNote = false }
+
+        let transcript: String
+        do {
+            let response = try await transcriber(audioData, filename)
+            if let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+                setUploadAttachmentError(error)
+                return false
+            }
+            transcript = (response.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            setUploadAttachmentError(error.localizedDescription)
+            return false
+        }
+        guard !transcript.isEmpty else {
+            setUploadAttachmentError(String(localized: "Couldn't transcribe that voice note. Try recording again."))
+            return false
+        }
+
+        let staged = attachmentCoordinator.consumePendingAttachments()
+        guard await attachmentCoordinator.uploadAttachment(data: audioData, filename: filename) != nil else {
+            attachmentCoordinator.replacePendingAttachments(staged)
+            return false
+        }
+        let mode: BotPromptMode = activeStreamID == nil ? .send : .queue
+        let sent = await submitHermesPrompt(transcript, mode: mode, to: hermes)
+        // Sent: the clip's copy was consumed. Not sent: drop the clip, keep the user's own files.
+        attachmentCoordinator.replacePendingAttachments(sent ? staged + attachmentCoordinator.pendingAttachments : staged)
+        return sent
     }
 
     /// Shared optimistic-append + `startChat` + rollback core used by both the

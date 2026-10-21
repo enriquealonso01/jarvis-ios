@@ -156,8 +156,67 @@ struct ComposerVoiceRecordingBar: View {
     let isCancelArmed: Bool
     let onStop: () -> Void
     let onCancel: () -> Void
+    /// JARVIS: a paused note (interrupted, or paused by the user) offers Continue, Send, Delete.
+    var isPaused = false
+    /// JARVIS: a note started with a tap records hands-free, with Delete, Pause and Send.
+    var isHandsFree = false
+    var onPause: () -> Void = {}
+    var onResume: () -> Void = {}
 
     var body: some View {
+        if isPaused || isHandsFree {
+            jarvisControls
+        } else {
+            holdToTalkBar
+        }
+    }
+
+    /// The paused and hands-free bar: never finishes a note by itself.
+    private var jarvisControls: some View {
+        HStack(spacing: 12) {
+            Button(action: onCancel) {
+                Image(systemName: "trash").frame(width: 36, height: 36)
+            }
+            .accessibilityLabel(Text("Delete voice note"))
+            .accessibilityIdentifier("voiceNote.delete")
+
+            Circle()
+                .fill(isPaused ? Color.secondary : Color.red)
+                .frame(width: 10, height: 10)
+            Text(AudioDurationFormatter.string(from: elapsed))
+                .font(.callout.monospacedDigit())
+            if isPaused {
+                Text("Paused").font(.caption).foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: isPaused ? onResume : onPause) {
+                Label(isPaused ? "Continue" : "Pause", systemImage: isPaused ? "mic.fill" : "pause.fill")
+                    .font(.callout.weight(.semibold))
+            }
+            .accessibilityIdentifier(isPaused ? "voiceNote.continue" : "voiceNote.pause")
+
+            Button(action: onStop) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .frame(width: 36, height: 36)
+            }
+            .accessibilityLabel(Text("Send voice note"))
+            .accessibilityIdentifier("voiceNote.send")
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("voiceNote.bar")
+    }
+
+    private var holdToTalkBar: some View {
         HStack(spacing: 10) {
             Circle()
                 .fill(Color.red)

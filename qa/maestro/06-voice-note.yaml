@@ -1,0 +1,43 @@
+appId: com.enriquecodes.jarvis
+# Voice note UI: tap records hands-free, Pause keeps the note, Continue resumes, Delete discards.
+# CI has no microphone input, so sending and transcription are checked on the phone.
+name: 06 voice note pause continue and delete
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn: New Session
+- extendedWaitUntil:
+    visible: Ask anything.*
+    timeout: 15000
+- tapOn: Voice input
+- tapOn:
+    text: Allow
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: voiceNote.bar
+    timeout: 15000
+- takeScreenshot: 06-recording
+- tapOn:
+    id: voiceNote.pause
+- extendedWaitUntil:
+    visible:
+      id: voiceNote.continue
+    timeout: 5000
+- takeScreenshot: 06-paused
+- tapOn:
+    id: voiceNote.continue
+- extendedWaitUntil:
+    visible:
+      id: voiceNote.pause
+    timeout: 5000
+- tapOn:
+    id: voiceNote.delete
+- extendedWaitUntil:
+    notVisible:
+      id: voiceNote.bar
+    timeout: 5000
+- takeScreenshot: 06-deleted
