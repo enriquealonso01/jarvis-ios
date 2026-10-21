@@ -27,7 +27,10 @@ name: 06 voice note pause continue and delete
           timeout: 10000
 # The new chat focuses the text field; with the keyboard up Maestro reads the mic's old
 # frame and taps the keyboard instead (run 39656104871), so put the keyboard away first.
-- hideKeyboard
+# (hideKeyboard can't dismiss this text view, run 39660097889; a tap on the empty transcript does.)
+- tapOn:
+    text: Send a message to start the conversation.*
+    optional: true
 - waitForAnimationToEnd:
     timeout: 3000
 # A quick tap: the note starts and stays recording, locked (Pause, Delete, Send).
