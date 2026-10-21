@@ -107,6 +107,19 @@ import Observation
         ])
     }
 
+    /// JARVIS: the host names a chat twice, its first-message title at once and then the
+    /// model's short one (`title_source` derived, then llm), during or after the turn. The
+    /// header follows the latest without a refresh.
+    func testTheHeaderTakesTheUpgradedTitle() async {
+        let chat = await openChat()
+        chat.receive(event(1, "message.start"))
+        chat.receive(event(2, "session.title", ["session_id": .string("tip"), "title": .string("Can you check the deploy")]))
+        XCTAssertEqual(chat.model.displayTitle, "Can you check the deploy")
+        chat.receive(event(3, "message.delta", ["text": .string("Checking.")]))
+        chat.receive(event(4, "session.title", ["session_id": .string("tip"), "title": .string("Deploy check")]))
+        XCTAssertEqual(chat.model.displayTitle, "Deploy check")
+    }
+
     /// With excerpts off (the default), the reply that follows an answered question moves the
     /// activity off waiting, as in Bot Chat, instead of leaving the wait shown to the end.
     func testTheReplyAfterAnAnsweredQuestionMovesTheActivityOffWaiting() async {

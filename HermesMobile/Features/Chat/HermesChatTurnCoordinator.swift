@@ -1048,7 +1048,9 @@ struct HermesChatTranscript: Equatable {
             delegate?.streamCoordinatorCompleteToolCall(Self.toolEvent(payload, completed: true))
         case "session.title":
             // A suggestion for this session's title; the chat shows it and renames nothing.
-            if let key = payload["session_id"].text, key != engine.storedKey { return }
+            // JARVIS: the events are this runtime's own; a new chat whose stored key the host
+            // hasn't reported yet still takes its title (the model's title can land mid-turn).
+            if let key = payload["session_id"].text, let stored = engine.storedKey, key != stored { return }
             guard let title = payload["title"].text, !title.isEmpty else { return }
             applyTitle(title)
         case "session.usage":

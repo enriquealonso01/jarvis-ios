@@ -2224,6 +2224,7 @@ final class SessionListViewModel {
             guard current() else { return }
             let listed = Set(sessions.compactMap(\.sessionId))
             setHermesStates(SessionRowAttentionState.hermesStates(reply["sessions"].list ?? []).filter { listed.contains($0.key) })
+            applyHermesLiveTitles(reply["sessions"].list ?? [])
             hermesRetriesStatus = false
         } catch {
             guard current() else { return }
@@ -2233,6 +2234,25 @@ final class SessionListViewModel {
         }
         if attentionStatesBySessionID.isEmpty && !hermesRetriesStatus { hermesStatusTask = nil }
         else { startHermesStatusRead(wire, after: hermes.statusPollInterval) }
+    }
+
+    /// JARVIS: the live list carries each running session's title, so the model's short title
+    /// (`title_source` llm) that lands after the first prompt's provisional one shows on its row
+    /// without a refresh.
+    private func applyHermesLiveTitles(_ items: [BotJSON]) {
+        var titles: [String: String] = [:]
+        for item in items {
+            guard let key = item["session_key"].text, let title = item["title"].text?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { continue }
+            titles[key] = titles[key] ?? title
+        }
+        var pages = hermesPages
+        var changed = false
+        for session in sessions {
+            guard let key = session.sessionId, let title = titles[key], title != session.title else { continue }
+            if pages.apply(.title(title), to: key) != nil { changed = true }
+        }
+        if changed { showHermesPages(pages, animation: nil) }
     }
 
     /// Writes only a real change, so an unchanged re-read never invalidates the rows.
