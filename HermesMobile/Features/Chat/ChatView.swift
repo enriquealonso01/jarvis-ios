@@ -342,6 +342,7 @@ struct ChatView: View {
     @State private var cacheFirstSnapUntil: Date?
     /// A chat pushed on top of this one: a new fork, or this fork's parent.
     @State private var pushedSession: SessionSummary?
+    @State private var isShowingPDFExport = false
     /// A new Hermes chat in another Profile, pushed on top so Back returns here (#1015).
     @State private var pushedHermesSession: HermesSessionChat?
     /// The Sessions list `/sessions` or `/resume` pushed when no list is under this chat (#1053).
@@ -1093,6 +1094,18 @@ struct ChatView: View {
                         if viewModel.showsGoalControls {
                             ChatToolbarActionSlot {
                                 goalControlMenu
+                            }
+                        }
+
+                        if !viewModel.messages.isEmpty {
+                            ChatToolbarActionSlot {
+                                Button {
+                                    isShowingPDFExport = true
+                                } label: {
+                                    Label("Export PDF", systemImage: "doc.richtext")
+                                }
+                                .accessibilityLabel("Export PDF")
+                                .accessibilityIdentifier("chat.exportPDF")
                             }
                         }
 
@@ -2104,6 +2117,9 @@ struct ChatView: View {
         .environment(\.composerChipCatalog, viewModel.composerChipCatalog)
         .transcriptLinks(perform: handleTranscriptLink)
         .environment(\.chatWorkspaceRoot, session.workspace)
+        .sheet(isPresented: $isShowingPDFExport) {
+            ChatPDFExportSheet(title: viewModel.displayTitle, entries: ChatPDFExport.entries(from: viewModel.messages))
+        }
         .environment(\.richReply, RichReplyAction { text in
             Task {
                 if await viewModel.sendRichReply(text) { onConversationStarted() }
