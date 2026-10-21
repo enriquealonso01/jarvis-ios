@@ -1556,7 +1556,6 @@ struct MessageComposerView: View {
         toggleVoiceInput()
     }
 
-    @MainActor
     /// JARVIS: a tap records a hands-free voice note (Settings → Composer can make it dictate
     /// instead, as in Hermex); a hold records while held, as before.
     @MainActor
@@ -1570,6 +1569,7 @@ struct MessageComposerView: View {
         }
     }
 
+    @MainActor
     private func toggleVoiceInput() {
         voiceInput.transcribe = hermesTranscriber ?? apiClient?.dictationTranscriber
         voiceInput.providerPreference = ComposerSTTProviderPreference.storedValue(sttProviderPreferenceRawValue)
