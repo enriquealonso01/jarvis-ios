@@ -33322,6 +33322,7 @@
         }
       }
     },
+    "CPU" : { "shouldTranslate" : false },
     "Call me about" : { "shouldTranslate" : false },
     "Call me back" : { "shouldTranslate" : false },
     "Calls" : { "shouldTranslate" : false },
@@ -41001,6 +41002,7 @@
         }
       }
     },
+    "Command" : { "shouldTranslate" : false },
     "Comment" : {
       "localizations" : {
         "ar" : { "stringUnit" : { "state" : "translated", "value" : "تعليق" } },
@@ -45553,6 +45555,7 @@
         }
       }
     },
+    "Core vitals" : { "shouldTranslate" : false },
     "Cost" : {
       "localizations" : {
         "ar" : {
@@ -55888,6 +55891,7 @@
         }
       }
     },
+    "Disk" : { "shouldTranslate" : false },
     "Dismiss" : {
       "localizations" : {
         "de" : {
@@ -60582,6 +60586,7 @@
         }
       }
     },
+    "Every scheduled task is healthy." : { "shouldTranslate" : false },
     "Everyone" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Everyone"}},"de":{"stringUnit":{"state":"needs_review","value":"Alle"}},"es":{"stringUnit":{"state":"needs_review","value":"Todos"}},"fr":{"stringUnit":{"state":"needs_review","value":"Tout le monde"}},"it":{"stringUnit":{"state":"needs_review","value":"Tutti"}},"pl":{"stringUnit":{"state":"needs_review","value":"Wszyscy"}},"pt-BR":{"stringUnit":{"state":"needs_review","value":"Todos"}},"nl":{"stringUnit":{"state":"needs_review","value":"Iedereen"}},"tr":{"stringUnit":{"state":"needs_review","value":"Herkes"}},"ru":{"stringUnit":{"state":"needs_review","value":"Все"}},"ja":{"stringUnit":{"state":"needs_review","value":"全員"}},"zh-Hans":{"stringUnit":{"state":"needs_review","value":"所有人"}},"ko":{"stringUnit":{"state":"needs_review","value":"모두"}},"ar":{"stringUnit":{"state":"needs_review","value":"الجميع"}},"he":{"stringUnit":{"state":"needs_review","value":"כולם"}},"ur":{"stringUnit":{"state":"needs_review","value":"سب"}},"zh-Hant":{"stringUnit":{"state":"needs_review","value":"所有人"}},"zh-HK":{"stringUnit":{"state":"needs_review","value":"所有人"}}}},
     "Exact model ID" : {
       "localizations" : {
@@ -64358,6 +64363,7 @@
     },
     "Finishing stop…" : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Stopp wird abgeschlossen…" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "Terminando la detención…" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "Arrêt en cours…" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "Completamento dell’interruzione…" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Kończenie zatrzymywania…" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "Finalizando a parada…" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "Stoppen wordt afgerond…" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Durdurma tamamlanıyor…" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Завершение остановки…" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "停止を完了中…" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "正在完成停止…" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "중지 마무리 중…" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "جارٍ إنهاء الإيقاف…" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "משלים את העצירה…" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "روکنا مکمل ہو رہا ہے…" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "正在完成停止…" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "正在完成停止…" } } } },
     "Fix prompt copied" : {"localizations": {"de": {"stringUnit": {"state": "needs_review", "value": "Lösungs-Prompt kopiert"}}, "es": {"stringUnit": {"state": "needs_review", "value": "Prompt de solución copiado"}}, "fr": {"stringUnit": {"state": "needs_review", "value": "Invite de correction copiée"}}, "it": {"stringUnit": {"state": "needs_review", "value": "Prompt di correzione copiato"}}, "pl": {"stringUnit": {"state": "needs_review", "value": "Skopiowano prompt naprawczy"}}, "pt-BR": {"stringUnit": {"state": "needs_review", "value": "Prompt de correção copiado"}}, "nl": {"stringUnit": {"state": "needs_review", "value": "Herstelprompt gekopieerd"}}, "tr": {"stringUnit": {"state": "needs_review", "value": "Düzeltme istemi kopyalandı"}}, "ru": {"stringUnit": {"state": "needs_review", "value": "Запрос для исправления скопирован"}}, "ja": {"stringUnit": {"state": "needs_review", "value": "修正用プロンプトをコピーしました"}}, "zh-Hans": {"stringUnit": {"state": "needs_review", "value": "已拷贝修复提示词"}}, "ko": {"stringUnit": {"state": "needs_review", "value": "수정 프롬프트 복사됨"}}, "ar": {"stringUnit": {"state": "needs_review", "value": "تم نسخ مطالبة الإصلاح"}}, "he": {"stringUnit": {"state": "needs_review", "value": "הנחיית התיקון הועתקה"}}, "ur": {"stringUnit": {"state": "needs_review", "value": "درستی کا پرامپٹ کاپی ہو گیا"}}, "zh-Hant": {"stringUnit": {"state": "needs_review", "value": "已複製修復提示詞"}}, "zh-HK": {"stringUnit": {"state": "needs_review", "value": "已複製修復提示詞"}}}},
+    "Fix with JARVIS" : { "shouldTranslate" : false },
     "Focus session search" : {
       "localizations" : {
         "ar" : {
@@ -75265,6 +75271,7 @@
     "Legacy" : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Legacy" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "Heredado" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "Ancien" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "Legacy" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Starszy" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "Legado" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "Legacy" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Eski" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Старый" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "レガシー" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "旧版" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "레거시" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "قديم" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "ישן" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "پرانا" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "舊版" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "舊版" } } } },
     "Listening" : { "shouldTranslate" : false },
     "Live call" : { "shouldTranslate" : false },
+    "Load" : { "shouldTranslate" : false },
     "Lock JARVIS with Face ID?" : { "shouldTranslate" : false },
     "Messages and the composer only; code stays left-to-right." : {
       "localizations" : {
@@ -76437,6 +76444,7 @@
         }
       }
     },
+    "Open full screen" : { "shouldTranslate" : false },
     "Open the live call" : { "shouldTranslate" : false },
     "Opening a secure voice line." : { "shouldTranslate" : false },
     "Opens Settings." : { "shouldTranslate" : false },
@@ -76759,6 +76767,8 @@
         }
       }
     },
+    "Project Map" : { "shouldTranslate" : false },
+    "Project map" : { "shouldTranslate" : false },
     "Push off" : {
       "localizations" : {
         "ar" : {
@@ -77396,6 +77406,8 @@
         }
       }
     },
+    "Restart JARVIS" : { "shouldTranslate" : false },
+    "Restart JARVIS?" : { "shouldTranslate" : false },
     "Restart `hermes dashboard` on your host, then check again." : {
       "localizations" : {
         "ar" : {
@@ -77502,8 +77514,10 @@
         }
       }
     },
+    "Restarts the JARVIS gateway. Running turns stop, and WhatsApp, Signal and the other channels reconnect within a minute." : { "shouldTranslate" : false },
     "Ringing now." : { "shouldTranslate" : false },
     "Scheduled for %@." : { "shouldTranslate" : false },
+    "Scheduled tasks with issues" : { "shouldTranslate" : false },
     "Send voice note" : { "shouldTranslate" : false },
     "Sent. It should arrive in a few seconds." : {
       "localizations" : {
@@ -77721,6 +77735,7 @@
     "Speaker off" : { "shouldTranslate" : false },
     "Speaker on" : { "shouldTranslate" : false },
     "Speaking" : { "shouldTranslate" : false },
+    "Subscription usage" : { "shouldTranslate" : false },
     "Synced with this server's WebUI." : {
       "localizations" : {
         "ar" : {
@@ -77832,6 +77847,7 @@
     "Tap Mic for Voice Note" : { "shouldTranslate" : false },
     "The browser sign-in didn't finish. Try again." : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Die Anmeldung im Browser wurde nicht abgeschlossen. Versuche es erneut." } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "El inicio de sesión en el navegador no terminó. Inténtalo de nuevo." } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "La connexion dans le navigateur n’a pas abouti. Réessayez." } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "L’accesso nel browser non è stato completato. Riprova." } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Logowanie w przeglądarce nie zostało dokończone. Spróbuj ponownie." } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "O login no navegador não foi concluído. Tente novamente." } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "De aanmelding in de browser is niet voltooid. Probeer het opnieuw." } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Tarayıcıda oturum açma tamamlanmadı. Yeniden deneyin." } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Вход через браузер не завершён. Попробуйте ещё раз." } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "ブラウザでのサインインが完了しませんでした。もう一度お試しください。" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "浏览器登录未完成。请重试。" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "브라우저 로그인이 완료되지 않았습니다. 다시 시도하세요." } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "لم يكتمل تسجيل الدخول عبر المتصفح. حاول مرة أخرى." } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "ההתחברות בדפדפן לא הושלמה. נסה שוב." } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "براؤزر میں سائن اِن مکمل نہیں ہوا۔ دوبارہ کوشش کریں۔" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "瀏覽器登入未完成。請再試一次。" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "瀏覽器登入未完成。請再試一次。" } } } },
     "The call was placed, but the ring push did not go out. Check the bridge health." : { "shouldTranslate" : false },
+    "The project map has not been built yet." : { "shouldTranslate" : false },
     "The relay only ever sees encrypted text." : {
       "localizations" : {
         "ar" : {
@@ -78160,6 +78176,7 @@
     "Transcript" : { "shouldTranslate" : false },
     "Turn On" : { "shouldTranslate" : false },
     "Unmute" : { "shouldTranslate" : false },
+    "Uptime" : { "shouldTranslate" : false },
     "Use %@’s Headers" : {
       "localizations" : {
         "ar" : {

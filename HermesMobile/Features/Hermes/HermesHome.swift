@@ -3,6 +3,8 @@ import SwiftUI
 /// The two sides of a Hermes server's home (#709): the Bots inbox and the session list.
 enum HermesHomeTab: String {
     case bots, sessions
+    /// JARVIS's Command Center (requirement 7).
+    case center
 }
 
 /// What both sides of a Hermes server's home share: the server's name, which titles a pushed
@@ -66,6 +68,7 @@ private struct HermesHomeSwitch: View {
         Picker(selection: $tab) {
             Text("Bots").tag(HermesHomeTab.bots)
             Text("Sessions").tag(HermesHomeTab.sessions)
+            Text("Command").tag(HermesHomeTab.center)
         } label: {
             EmptyView()
         }

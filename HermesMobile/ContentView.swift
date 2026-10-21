@@ -557,7 +557,9 @@ struct HermesServerHome: View {
         NavigationStack {
             Group {
                 // Without a saved connection the inbox's welcome sets one up.
-                if tab == .sessions, let sessions {
+                if tab == .center, let sessions {
+                    CommandCenterView(home: home, server: server, connection: sessions.entry.connection)
+                } else if tab == .sessions, let sessions {
                     HermesSessionListView(entry: sessions.entry, model: sessions.model, home: home,
                                           pendingLink: $pendingSessionDestination, pendingNewChat: $pendingNewChat,
                                           pendingShare: pendingShare, claimShare: claimShare,

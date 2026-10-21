@@ -602,6 +602,8 @@
 		2C2099675761BCDE29536BA2 /* CallLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5099445758FC386999C4A641 /* CallLogStore.swift */; };
 		762A0408D4EF7D307456FBCC /* CallsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121CCC40E57CCDB82BE91102 /* CallsView.swift */; };
 		CE8DF23DE7AC528467C6F1CB /* JarvisVoiceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */; };
+		807BE0556A96F96E5B501113 /* CommandCenterModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D70CEE7647331DB00DD54C5B /* CommandCenterModel.swift */; };
+		FF54B93938CF425E621DFA13 /* CommandCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67852DFC290332239D9B3F60 /* CommandCenterView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1243,6 +1245,8 @@
 		5099445758FC386999C4A641 /* CallLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallLogStore.swift; sourceTree = "<group>"; };
 		121CCC40E57CCDB82BE91102 /* CallsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallsView.swift; sourceTree = "<group>"; };
 		81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisVoiceScreen.swift; sourceTree = "<group>"; };
+		D70CEE7647331DB00DD54C5B /* CommandCenterModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterModel.swift; sourceTree = "<group>"; };
+		67852DFC290332239D9B3F60 /* CommandCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1669,6 +1673,7 @@
 		1A2B3C4D5E6F7000000000C3 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				30610250CB879B8661165BFB /* CommandCenter */,
 				760C4365BFA3BC653889E180 /* Calls */,
 				B48200000000000000000001 /* BotProfileAppearance.swift */,
 				B48200000000000000000011 /* BotExpressionPickerView.swift */,
@@ -2153,6 +2158,15 @@
 			path = Calls;
 			sourceTree = "<group>";
 		};
+		30610250CB879B8661165BFB /* CommandCenter */ = {
+			isa = PBXGroup;
+			children = (
+				67852DFC290332239D9B3F60 /* CommandCenterView.swift */,
+				D70CEE7647331DB00DD54C5B /* CommandCenterModel.swift */,
+			);
+			path = CommandCenter;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -2378,6 +2392,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FF54B93938CF425E621DFA13 /* CommandCenterView.swift in Sources */,
+				807BE0556A96F96E5B501113 /* CommandCenterModel.swift in Sources */,
 				CE8DF23DE7AC528467C6F1CB /* JarvisVoiceScreen.swift in Sources */,
 				762A0408D4EF7D307456FBCC /* CallsView.swift in Sources */,
 				2C2099675761BCDE29536BA2 /* CallLogStore.swift in Sources */,
