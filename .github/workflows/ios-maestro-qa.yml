@@ -84,9 +84,13 @@ jobs:
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" "$APP"
+          # Voice notes (flow 06) record from the microphone; grant it up front (run 39636503109).
+          xcrun simctl privacy "$UDID" grant microphone "$APP_ID" || true
           # The keyboard's one-time "slide to type" tip covers the app's cards; mark it seen.
           xcrun simctl spawn "$UDID" defaults write com.apple.Preferences DidShowContinuousPathIntroduction -bool true || true
           xcrun simctl spawn "$UDID" defaults write "$APP_ID" JarvisServerAddress "http://127.0.0.1:$HERMES_PORT"
+          # No microphone on the runner: the Debug build records a silent stand-in (flow 06).
+          xcrun simctl spawn "$UDID" defaults write "$APP_ID" JarvisFakeMicrophone -bool YES
           xcrun simctl launch "$UDID" "$APP_ID"
           sleep 8
           xcrun simctl io "$UDID" screenshot qa-out/00-first-launch.png || true

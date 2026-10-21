@@ -4,11 +4,101 @@ import Foundation
 import Observation
 import OSLog
 
-/// Records a short voice note to a temporary `.m4a`/AAC file with `AVAudioRecorder`,
-/// distinct from `ComposerVoiceInputController` (on-device dictation). The composer
-/// holds one of these as `@State`: hold the mic to `begin()`, release to `finish()`,
-/// slide up to `cancel()`. Drives an elapsed-time ticker and flips the shared
-/// `ComposerAudioCaptureState` so the inline audio player won't fight for the session.
+/// What the voice-note recorder needs from `AVAudioRecorder`, so its state machine runs in
+/// unit tests with a scripted recorder (CI simulators have no microphone).
+protocol VoiceNoteAudioRecording: AnyObject {
+    var isRecording: Bool { get }
+    var currentTime: TimeInterval { get }
+    var isMeteringEnabled: Bool { get set }
+    @discardableResult func prepareToRecord() -> Bool
+    func record() -> Bool
+    func pause()
+    func stop()
+    func updateMeters()
+    func averagePower(forChannel channelNumber: Int) -> Float
+}
+
+extension AVAudioRecorder: VoiceNoteAudioRecording {}
+
+/// The microphone permission as the recorder needs it.
+enum VoiceNoteMicrophonePermission: Equatable {
+    case undetermined, denied, granted
+
+    static var current: VoiceNoteMicrophonePermission {
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return .granted
+        case .denied: return .denied
+        default: return .undetermined
+        }
+    }
+}
+
+#if DEBUG
+/// Maestro's simulator has no microphone. With the `JarvisFakeMicrophone` default set (the QA
+/// lane writes it), Debug builds record a silent stand-in so the voice-note bar's states can be
+/// checked end to end. Never in Release builds.
+enum QAFakeMicrophone {
+    static var isOn: Bool { UserDefaults.standard.bool(forKey: "JarvisFakeMicrophone") }
+
+    final class Recorder: VoiceNoteAudioRecording {
+        let url: URL
+        private var started: Date?
+        private var recorded: TimeInterval = 0
+        var isMeteringEnabled = false
+
+        init(url: URL) { self.url = url }
+
+        var isRecording: Bool { started != nil }
+        var currentTime: TimeInterval { recorded + (started.map { Date().timeIntervalSince($0) } ?? 0) }
+
+        func prepareToRecord() -> Bool { true }
+
+        func record() -> Bool {
+            if started == nil { started = Date() }
+            if !FileManager.default.fileExists(atPath: url.path) { try? Data(repeating: 0, count: 2048).write(to: url) }
+            return true
+        }
+
+        func pause() {
+            recorded = currentTime
+            started = nil
+        }
+
+        func stop() { pause() }
+        func updateMeters() {}
+        func averagePower(forChannel channelNumber: Int) -> Float { Float.random(in: -40 ... -5) }
+    }
+}
+#endif
+
+/// Turns the shared audio session on for recording and off again; injectable for tests.
+struct VoiceNoteAudioSession {
+    var activate: () throws -> Void
+    var deactivate: () -> Void
+
+    static let live = VoiceNoteAudioSession(
+        activate: {
+            #if DEBUG
+            if QAFakeMicrophone.isOn { return }
+            #endif
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP, .defaultToSpeaker])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        },
+        deactivate: {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    )
+}
+
+/// Records one WhatsApp-style voice note to a temporary `.m4a`/AAC file, distinct from
+/// `ComposerVoiceInputController` (on-device dictation). The composer holds one as `@State`.
+///
+/// States: idle → (requestingPermission) → recording ⇄ paused → idle. `isLocked` says whether a
+/// release of the mic still sends (a held, unlocked note) or the note waits for the bar's Send
+/// (locked: swiped up, tapped, paused, or started behind the permission prompt). Pause keeps
+/// the clip and Resume records into the same file (AVAudioRecorder appends after `pause()`).
+/// Nothing is sent or transcribed until `finish()` (Send); an interruption only pauses.
 @MainActor
 @Observable
 final class ComposerVoiceNoteRecorder {
@@ -33,29 +123,55 @@ final class ComposerVoiceNoteRecorder {
     static let maximumDuration: TimeInterval = 5 * 60
     /// Clips shorter than this are treated as accidental taps and discarded.
     static let minimumDuration: TimeInterval = 0.5
+    /// Waveform samples kept for the live bar (newest last).
+    static let levelCount = 40
 
     private(set) var state: State = .idle
     private(set) var elapsed: TimeInterval = 0
     private(set) var errorMessage: String?
+    /// Release no longer sends: the note waits for Send in the bar.
+    private(set) var isLocked = false
+    /// Recent input levels, 0...1, for the live waveform.
+    private(set) var levels: [CGFloat] = []
 
-    @ObservationIgnored private var recorder: AVAudioRecorder?
+    @ObservationIgnored private var recorder: VoiceNoteAudioRecording?
     @ObservationIgnored private var fileURL: URL?
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var didActivateSession = false
     @ObservationIgnored private var interruptionObserver: NSObjectProtocol?
-    @ObservationIgnored private let recorderFactory: (URL) throws -> AVAudioRecorder
+    @ObservationIgnored private var lockWhenStarted = false
+    @ObservationIgnored private let recorderFactory: (URL) throws -> VoiceNoteAudioRecording
+    @ObservationIgnored private let permissionStatus: () -> VoiceNoteMicrophonePermission
     @ObservationIgnored private let permissionRequester: () async -> Bool
+    @ObservationIgnored private let audioSession: VoiceNoteAudioSession
+    @ObservationIgnored private let runsTicker: Bool
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "HermesMobile",
         category: "VoiceNote"
     )
 
     init(
-        recorderFactory: @escaping (URL) throws -> AVAudioRecorder = { try AVAudioRecorder(url: $0, settings: ComposerVoiceNoteRecorder.recordingSettings) },
-        permissionRequester: @escaping () async -> Bool = { await ComposerVoiceMicrophonePermissionRequester.request() }
+        recorderFactory: @escaping (URL) throws -> VoiceNoteAudioRecording = {
+            #if DEBUG
+            if QAFakeMicrophone.isOn { return QAFakeMicrophone.Recorder(url: $0) }
+            #endif
+            return try AVAudioRecorder(url: $0, settings: ComposerVoiceNoteRecorder.recordingSettings)
+        },
+        permissionStatus: @escaping () -> VoiceNoteMicrophonePermission = {
+            #if DEBUG
+            if QAFakeMicrophone.isOn { return .granted }
+            #endif
+            return VoiceNoteMicrophonePermission.current
+        },
+        permissionRequester: @escaping () async -> Bool = { await ComposerVoiceMicrophonePermissionRequester.request() },
+        audioSession: VoiceNoteAudioSession = .live,
+        runsTicker: Bool = true
     ) {
         self.recorderFactory = recorderFactory
+        self.permissionStatus = permissionStatus
         self.permissionRequester = permissionRequester
+        self.audioSession = audioSession
+        self.runsTicker = runsTicker
     }
 
     var isRecording: Bool { state == .recording }
@@ -74,26 +190,33 @@ final class ComposerVoiceNoteRecorder {
 
     // MARK: - Lifecycle
 
-    /// Requests mic permission (if needed), configures the audio session, and
-    /// starts recording to a temporary `.m4a` file. No-op if already active.
-    func begin() async {
+    /// Starts a note: asks for the microphone if needed, then records to a temporary `.m4a`.
+    /// `locked` starts it hands-free. A note that had to wait for the permission prompt starts
+    /// locked too: the finger that held the mic has left the screen by then.
+    func begin(locked: Bool = false) async {
         guard state == .idle else { return }
         errorMessage = nil
         elapsed = 0
+        levels = []
+        isLocked = locked
+        lockWhenStarted = false
         state = .requestingPermission
 
-        let granted = await permissionRequester()
+        let wasUndetermined = permissionStatus() == .undetermined
+        let granted = permissionStatus() == .granted ? true : await permissionRequester()
         // The state can change while we await the system prompt (e.g. the view
         // disappeared and called `cancel()`); bail rather than starting late.
         guard state == .requestingPermission else { return }
         guard granted else {
-            fail(String(localized: "Microphone access is disabled. Enable it in Settings to record a voice note."))
+            fail(String(localized: "Microphone access is off. Turn it on in Settings > JARVIS to record voice notes."))
             return
         }
 
         do {
             try startRecording()
             state = .recording
+            if wasUndetermined || lockWhenStarted { isLocked = true }
+            lockWhenStarted = false
             startTicker()
             logger.info("Voice note recording started")
         } catch {
@@ -101,8 +224,17 @@ final class ComposerVoiceNoteRecorder {
         }
     }
 
-    /// Stops recording and returns the finished clip, or nil if it was too short,
-    /// failed to read, or wasn't recording. Always restores the audio session.
+    /// Swipe up while holding (or a tap): hands-free from here on.
+    func lock() {
+        switch state {
+        case .recording, .paused: isLocked = true
+        case .requestingPermission: lockWhenStarted = true
+        case .idle: break
+        }
+    }
+
+    /// Stops recording and returns the finished clip (Send), or nil if it was too short,
+    /// failed to read, or nothing was recording. Always restores the audio session.
     func finish() -> RecordedVoiceNote? {
         guard state == .recording || state == .paused, let recorder, let fileURL else {
             cancel()
@@ -132,8 +264,9 @@ final class ComposerVoiceNoteRecorder {
         return RecordedVoiceNote(data: data, filename: filename, duration: duration)
     }
 
-    /// Pauses the note, keeping what was recorded. Called on an audio interruption and when
-    /// the app leaves the foreground; the bar then offers Continue, Send and Delete.
+    /// Pauses the note, keeping what was recorded. The bar's Pause, an audio interruption and
+    /// leaving the foreground all land here; a paused note is locked and waits for Resume,
+    /// Send or Delete. Never sends or transcribes.
     func pause() {
         guard state == .recording, let recorder else { return }
         elapsed = max(elapsed, recorder.currentTime)
@@ -141,6 +274,7 @@ final class ComposerVoiceNoteRecorder {
         stopTicker()
         ComposerAudioCaptureState.shared.setCapturing(false)
         teardownSession()
+        isLocked = true
         state = .paused
         logger.info("Voice note paused")
     }
@@ -149,9 +283,7 @@ final class ComposerVoiceNoteRecorder {
     func resume() {
         guard state == .paused, let recorder else { return }
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            try audioSession.activate()
             didActivateSession = true
             guard recorder.record() else { throw ComposerVoiceNoteRecorderError.couldNotStart }
             ComposerAudioCaptureState.shared.setCapturing(true)
@@ -163,7 +295,7 @@ final class ComposerVoiceNoteRecorder {
         }
     }
 
-    /// Stops and discards the recording without producing a clip.
+    /// Stops and discards the recording without producing a clip (slide to cancel, Delete).
     func cancel() {
         stopRecorder()
         discardFile()
@@ -171,16 +303,27 @@ final class ComposerVoiceNoteRecorder {
         resetState()
     }
 
+    /// One ticker step: elapsed time and a waveform sample. Public for tests.
+    func tick() {
+        guard let recorder, recorder.isRecording else { return }
+        elapsed = max(elapsed, recorder.currentTime)
+        recorder.updateMeters()
+        let power = recorder.averagePower(forChannel: 0)
+        // -50 dB and quieter reads as silence; 0 dB is full scale.
+        let level = CGFloat(max(0, min(1, (power + 50) / 50)))
+        levels.append(level)
+        if levels.count > Self.levelCount { levels.removeFirst(levels.count - Self.levelCount) }
+    }
+
     // MARK: - Recording internals
 
     private func startRecording() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
-        try session.setActive(true, options: .notifyOthersOnDeactivation)
+        try audioSession.activate()
         didActivateSession = true
 
         let url = Self.makeTemporaryFileURL()
         let recorder = try recorderFactory(url)
+        recorder.isMeteringEnabled = true
         recorder.prepareToRecord()
         guard recorder.record() else {
             throw ComposerVoiceNoteRecorderError.couldNotStart
@@ -204,7 +347,7 @@ final class ComposerVoiceNoteRecorder {
     }
 
     private func stopRecorder() {
-        if recorder?.isRecording == true {
+        if recorder?.isRecording == true || state == .paused {
             recorder?.stop()
         }
         recorder = nil
@@ -221,13 +364,16 @@ final class ComposerVoiceNoteRecorder {
 
     private func teardownSession() {
         guard didActivateSession else { return }
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        audioSession.deactivate()
         didActivateSession = false
     }
 
     private func resetState() {
         state = .idle
         elapsed = 0
+        isLocked = false
+        lockWhenStarted = false
+        levels = []
         if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
         interruptionObserver = nil
     }
@@ -242,17 +388,13 @@ final class ComposerVoiceNoteRecorder {
 
     private func startTicker() {
         stopTicker()
+        guard runsTicker else { return }
         // `.common` so the timer keeps firing while the transcript scrolls.
         let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)
         ticker = timer
-    }
-
-    private func tick() {
-        guard let recorder, recorder.isRecording else { return }
-        elapsed = max(elapsed, recorder.currentTime)
     }
 
     private func stopTicker() {
@@ -310,20 +452,47 @@ enum JarvisVoiceNoteSettings {
     static let tapRecordsKey = "jarvis.voiceNote.tapRecords"
 }
 
-/// Pure decision helpers for the hold-to-talk mic gesture, kept out of the view
-/// so the thresholds and the cancel logic are unit-testable.
+/// Pure decisions for the WhatsApp-style mic gesture, kept out of the view so the thresholds
+/// are unit-testable. Press and hold records at once; swipe up locks (hands-free); slide left
+/// cancels; a release while unlocked sends; a quick tap leaves the note recording, locked.
 enum ComposerVoiceNoteGesture {
-    /// A press must be held at least this long before it records, so a quick tap
-    /// still routes to dictation. Matches `LongPressGesture(minimumDuration:)`.
-    /// Set to the system long-press feel (0.5s) so a deliberate tap — which can
-    /// linger ~0.3s on screen — isn't mistaken for a hold.
-    static let holdActivationDelay: TimeInterval = 0.5
-    /// Sliding the finger up past this many points arms cancel-on-release.
-    static let cancelTranslationThreshold: CGFloat = 80
+    /// With "Tap Mic for Voice Note" off, a press must be held this long before it records,
+    /// so a quicker tap still dictates (Hermex's behaviour).
+    static let holdActivationDelay: TimeInterval = 0.3
+    /// A release sooner than this after touch-down is a tap, not a hold-and-release.
+    static let tapDuration: TimeInterval = 0.35
+    /// Swiping up this far while holding locks the note.
+    static let lockTranslationThreshold: CGFloat = 70
+    /// Sliding left this far while holding cancels the note.
+    static let cancelTranslationThreshold: CGFloat = 110
 
-    /// Dragging up yields a negative height; cancel once it passes the threshold.
-    /// Sliding down (positive height) never cancels.
-    static func isCancelArmed(dragTranslationHeight: CGFloat) -> Bool {
-        dragTranslationHeight <= -cancelTranslationThreshold
+    enum DragAction: Equatable { case none, lock, cancel }
+
+    /// What a drag while holding does: mostly-left past the threshold cancels, mostly-up
+    /// past the threshold locks.
+    static func dragAction(translation: CGSize) -> DragAction {
+        let left = -translation.width, up = -translation.height
+        if left >= cancelTranslationThreshold && left > up { return .cancel }
+        if up >= lockTranslationThreshold && up >= left { return .lock }
+        return .none
+    }
+
+    enum ReleaseAction: Equatable {
+        /// An unlocked hold ended: send the note.
+        case send
+        /// A quick tap: keep recording, hands-free (locked).
+        case lock
+        /// Locked or already cancelled: the release does nothing.
+        case none
+    }
+
+    static func releaseAction(isLocked: Bool, wasCancelled: Bool, heldFor: TimeInterval) -> ReleaseAction {
+        if wasCancelled || isLocked { return .none }
+        return heldFor < tapDuration ? .lock : .send
+    }
+
+    /// How far the slide-to-cancel has gone, 0...1, for the hint.
+    static func cancelProgress(translationWidth: CGFloat) -> CGFloat {
+        max(0, min(1, -translationWidth / cancelTranslationThreshold))
     }
 }

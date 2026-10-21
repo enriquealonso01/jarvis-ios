@@ -75293,6 +75293,7 @@
     "Live data from %@, refreshed when you open JARVIS." : { "shouldTranslate" : false },
     "Load" : { "shouldTranslate" : false },
     "Lock JARVIS with Face ID?" : { "shouldTranslate" : false },
+    "Locked" : { "shouldTranslate" : false },
     "Messages and the composer only; code stays left-to-right." : {
       "localizations" : {
         "ar" : {
@@ -75399,6 +75400,7 @@
         }
       }
     },
+    "Microphone access is off. Turn it on in Settings > JARVIS to record voice notes." : { "shouldTranslate" : false },
     "Microphone muted" : { "shouldTranslate" : false },
     "Move %@ Next" : {
       "localizations" : {
@@ -77764,12 +77766,14 @@
         }
       }
     },
+    "Slide to cancel" : { "shouldTranslate" : false },
     "Speaker off" : { "shouldTranslate" : false },
     "Speaker on" : { "shouldTranslate" : false },
     "Speaking" : { "shouldTranslate" : false },
     "Submit vote" : { "shouldTranslate" : false },
     "Submitted" : { "shouldTranslate" : false },
     "Subscription usage" : { "shouldTranslate" : false },
+    "Swipe up to lock" : { "shouldTranslate" : false },
     "Synced with this server's WebUI." : {
       "localizations" : {
         "ar" : {

@@ -340,9 +340,8 @@ struct MessageComposerView: View {
     @State private var showFileImporter = false
     @State private var voiceInput = ComposerVoiceInputController()
     @State private var voiceNoteRecorder = ComposerVoiceNoteRecorder()
-    @State private var voiceNoteCancelArmed = false
-    /// JARVIS: the note in progress was started with a tap, so it records hands-free.
-    @State private var voiceNoteHandsFree = false
+    /// JARVIS: the held finger's offset while a voice note records (slide-to-cancel hint).
+    @State private var voiceNoteDrag: CGSize = .zero
     @AppStorage(JarvisVoiceNoteSettings.tapRecordsKey) private var micTapRecordsVoiceNote = true
     @State private var didAutoStartVoiceInput = false
     @AppStorage(ComposerSTTProviderPreference.storageKey) private var sttProviderPreferenceRawValue = ComposerSTTProviderPreference.defaultValue.rawValue
@@ -552,11 +551,12 @@ struct MessageComposerView: View {
                 if voiceNoteRecorder.hasNoteInProgress {
                     ComposerVoiceRecordingBar(
                         elapsed: voiceNoteRecorder.elapsed,
-                        isCancelArmed: voiceNoteCancelArmed,
-                        onStop: { finishVoiceNote(translationHeight: 0) },
-                        onCancel: cancelVoiceNote,
+                        levels: voiceNoteRecorder.levels,
+                        isLocked: voiceNoteRecorder.isLocked,
                         isPaused: voiceNoteRecorder.isPaused,
-                        isHandsFree: voiceNoteHandsFree,
+                        cancelProgress: ComposerVoiceNoteGesture.cancelProgress(translationWidth: voiceNoteDrag.width),
+                        onSend: sendVoiceNote,
+                        onDelete: cancelVoiceNote,
                         onPause: { voiceNoteRecorder.pause() },
                         onResume: { voiceNoteRecorder.resume() }
                     )
@@ -761,10 +761,10 @@ struct MessageComposerView: View {
             }
         }
         .onChange(of: voiceNoteRecorder.elapsed) { _, elapsed in
-            // Enforce the max-duration cap: auto-stop and send (not cancel) once
-            // the clip hits the limit, mirroring a finger release.
+            // JARVIS: at the length cap the note pauses (locked) and waits for Send or
+            // Delete; nothing is sent without Send.
             if voiceNoteRecorder.isRecording, elapsed >= ComposerVoiceNoteRecorder.maximumDuration {
-                finishVoiceNote(translationHeight: 0)
+                voiceNoteRecorder.pause()
             }
         }
         .onChange(of: showsGitBranchPicker) { _, isPresented in
@@ -1054,17 +1054,18 @@ struct MessageComposerView: View {
     private var voiceControlButton: some View {
         ComposerVoiceControlButton(
             isListening: voiceInput.isListening,
-            isDisabled: isVoiceInputDisabled,
+            // JARVIS: a voice note can be recorded while a reply streams (it is queued on Send).
+            isDisabled: micTapRecordsVoiceNote && !voiceInput.isListening ? isVoiceNoteRecordingDisabled : isVoiceInputDisabled,
             color: metaControlColor,
             isRecordingVoiceNote: voiceNoteRecorder.hasNoteInProgress,
-            onTap: micTapped,
-            onRecordingStart: startVoiceNoteRecording,
-            onRecordingDragChanged: { height in
-                voiceNoteCancelArmed = ComposerVoiceNoteGesture.isCancelArmed(dragTranslationHeight: height)
-            },
-            onRecordingEnd: { height in
-                finishVoiceNote(translationHeight: height)
-            }
+            tapRecords: micTapRecordsVoiceNote && !voiceInput.isListening,
+            isLocked: voiceNoteRecorder.isLocked,
+            onTap: toggleVoiceInput,
+            onPressBegan: startVoiceNoteRecording,
+            onDrag: { voiceNoteDrag = $0 },
+            onLock: lockVoiceNote,
+            onCancel: cancelVoiceNote,
+            onRelease: sendVoiceNote
         )
     }
 
@@ -1461,14 +1462,15 @@ struct MessageComposerView: View {
     /// Whether a hold-to-record gesture is allowed to start a new voice note.
     /// Recording mid-stream is fine (it queues like any send), so unlike dictation
     /// this does not block on `isWaitingForStream`.
+    /// JARVIS: Hermex allowed voice notes only on webui sessions (`showsSessionControls`), so on
+    /// every JARVIS (Hermes) chat this was always true and the mic silently did nothing (P0 on
+    /// build 76-79). Hermes chats send voice notes through `sendHermesVoiceNote`; recording is
+    /// only blocked while the previous note is still going out or the chat can't take input.
     private var isVoiceNoteRecordingDisabled: Bool {
-        !showsSessionControls
-            || isReadOnly
-            || isSending
+        isReadOnly
             || isSendingVoiceNote
             || isCompressingSession
             || isUploadingAttachment
-            || isUpdatingConfiguration
     }
 
     private var actionAppearance: ChatComposerActionAppearance {
@@ -1559,19 +1561,6 @@ struct MessageComposerView: View {
         toggleVoiceInput()
     }
 
-    /// JARVIS: a tap records a hands-free voice note (Settings → Composer can make it dictate
-    /// instead, as in Hermex); a hold records while held, as before.
-    @MainActor
-    private func micTapped() {
-        if micTapRecordsVoiceNote && !voiceInput.isListening {
-            if voiceNoteRecorder.hasNoteInProgress { return }
-            startVoiceNoteRecording()
-            voiceNoteHandsFree = true
-        } else {
-            toggleVoiceInput()
-        }
-    }
-
     @MainActor
     private func toggleVoiceInput() {
         voiceInput.transcribe = hermesTranscriber ?? apiClient?.dictationTranscriber
@@ -1581,42 +1570,48 @@ struct MessageComposerView: View {
         }
     }
 
-    /// Hold recognized → start recording a voice note. Gated by the recording
-    /// disabled conditions; stops dictation first if it's running.
+    /// Mic pressed (WhatsApp-style): a voice note starts recording at once, unlocked. Stops
+    /// dictation first if it's running. A blocked start says why instead of doing nothing.
     @MainActor
     private func startVoiceNoteRecording() {
-        guard !isVoiceNoteRecordingDisabled, !voiceNoteRecorder.hasNoteInProgress else { return }
-        voiceNoteHandsFree = false
-
+        guard !voiceNoteRecorder.hasNoteInProgress, !voiceNoteRecorder.isRequestingPermission else { return }
+        guard !isVoiceNoteRecordingDisabled else {
+            VoiceNoteHaptics.refused()
+            return
+        }
         if voiceInput.isListening {
             voiceInput.stopKeepingTranscript()
         }
-        voiceNoteCancelArmed = false
+        voiceNoteDrag = .zero
+        VoiceNoteHaptics.started()
         Task { await voiceNoteRecorder.begin() }
     }
 
-    /// Finger lifted (or max duration hit). Cancels if slid up past the threshold,
-    /// otherwise stops and sends the clip.
+    /// Swiped up while holding, or tapped: hands-free until Send, Pause or Delete.
     @MainActor
-    private func finishVoiceNote(translationHeight: CGFloat) {
-        let shouldCancel = ComposerVoiceNoteGesture.isCancelArmed(dragTranslationHeight: translationHeight)
-        voiceNoteCancelArmed = false
-        voiceNoteHandsFree = false
+    private func lockVoiceNote() {
+        voiceNoteDrag = .zero
+        voiceNoteRecorder.lock()
+        VoiceNoteHaptics.locked()
+    }
 
-        guard !shouldCancel else {
-            voiceNoteRecorder.cancel()
-            return
-        }
-
+    /// Send (the bar's button, or releasing an unlocked hold). Only now is the note uploaded
+    /// and transcribed; the chat then shows just the audio bubble.
+    @MainActor
+    private func sendVoiceNote() {
+        voiceNoteDrag = .zero
         guard let note = voiceNoteRecorder.finish() else { return }
+        VoiceNoteHaptics.sent()
         onSendVoiceNote(note.data, note.filename)
     }
 
+    /// Slide left while holding, or Delete in the bar: discard the note.
     @MainActor
     private func cancelVoiceNote() {
-        voiceNoteCancelArmed = false
-        voiceNoteHandsFree = false
+        voiceNoteDrag = .zero
+        guard voiceNoteRecorder.hasNoteInProgress || voiceNoteRecorder.isRequestingPermission else { return }
         voiceNoteRecorder.cancel()
+        VoiceNoteHaptics.cancelled()
     }
 
     private var canFocusTextView: Bool {

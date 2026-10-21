@@ -1,6 +1,8 @@
 appId: com.enriquecodes.jarvis
-# Voice note UI: tap records hands-free, Pause keeps the note, Continue resumes, Delete discards.
-# CI has no microphone input, so sending and transcription are checked on the phone.
+# WhatsApp-style voice notes (requirement 12). The CI simulator has no microphone, so the QA
+# lane turns on the Debug-only fake microphone (JarvisFakeMicrophone); sending and the
+# transcript are checked on the phone. Covers: a tap leaves the note recording, locked; Pause;
+# Resume into the same note; Delete; hold and swipe up locks; hold and slide left cancels.
 name: 06 voice note pause continue and delete
 ---
 - launchApp:
@@ -16,7 +18,9 @@ name: 06 voice note pause continue and delete
 - extendedWaitUntil:
     visible: Ask anything.*
     timeout: 15000
-- tapOn: Voice input
+# A quick tap: the note starts and stays recording, locked (Pause, Delete, Send).
+- tapOn:
+    id: composer.mic
 - tapOn:
     text: Allow
     optional: true
@@ -24,20 +28,24 @@ name: 06 voice note pause continue and delete
     visible:
       id: voiceNote.bar
     timeout: 15000
-- takeScreenshot: 06-recording
+- assertVisible:
+    id: voiceNote.pause
+- takeScreenshot: 06-locked
 - tapOn:
     id: voiceNote.pause
 - extendedWaitUntil:
     visible:
-      id: voiceNote.continue
+      id: voiceNote.resume
     timeout: 5000
+- assertVisible: Paused
 - takeScreenshot: 06-paused
 - tapOn:
-    id: voiceNote.continue
+    id: voiceNote.resume
 - extendedWaitUntil:
     visible:
       id: voiceNote.pause
     timeout: 5000
+- takeScreenshot: 06-resumed
 - tapOn:
     id: voiceNote.delete
 - extendedWaitUntil:
@@ -45,3 +53,32 @@ name: 06 voice note pause continue and delete
       id: voiceNote.bar
     timeout: 5000
 - takeScreenshot: 06-deleted
+# Press, hold and swipe up: locked, so lifting the finger doesn't send.
+- swipe:
+    from:
+      id: composer.mic
+    direction: UP
+    duration: 1500
+- extendedWaitUntil:
+    visible:
+      id: voiceNote.bar
+    timeout: 10000
+- assertVisible:
+    id: voiceNote.pause
+- takeScreenshot: 06-swipe-up-locked
+- tapOn:
+    id: voiceNote.delete
+- extendedWaitUntil:
+    notVisible:
+      id: voiceNote.bar
+    timeout: 5000
+# Press, hold and slide left: cancelled, nothing left behind.
+- swipe:
+    from:
+      id: composer.mic
+    direction: LEFT
+    duration: 1500
+- assertNotVisible:
+    id: voiceNote.bar
+- assertNotVisible: Automated QA ping
+- takeScreenshot: 06-slide-left-cancelled
