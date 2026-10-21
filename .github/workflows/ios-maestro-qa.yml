@@ -91,6 +91,31 @@ jobs:
           maestro --device "$UDID" hierarchy > qa-out/hierarchy-first-launch.json 2>/dev/null || true
           xcrun simctl terminate "$UDID" "$APP_ID" || true
 
+      # The flake hunt (flow 03, and run 39609721211's sign-in): the host's event loop stalls
+      # 17-43 s on its first real requests while the simulator and Maestro load the 3-core
+      # runner, so a request times out and the journey fails. Warm the host's first-request
+      # paths (sign-in, identity, profiles, sessions, config) before the journeys, raise its
+      # scheduling priority over the simulator, and log the timings and load for the next pass.
+      - name: Warm up the local host
+        continue-on-error: true
+        run: |
+          set +e
+          BASE="http://127.0.0.1:$HERMES_PORT"
+          PGID=$(ps -o pgid= -p "$(cat /tmp/local-hermes.pid)" | tr -d ' ')
+          sudo renice -n -10 -g "$PGID" > /dev/null 2>&1 && echo "Hermes process group $PGID reniced to -10" || echo "renice not permitted"
+          uptime
+          JAR=$(mktemp)
+          timed() { local start=$(date +%s); curl -sS -o /dev/null -w "%{http_code}" --max-time 90 -b "$JAR" -c "$JAR" "$@" || true; echo " $(( $(date +%s) - start ))s  ${@: -1}"; }
+          for round in 1 2; do
+            echo "-- round $round"
+            timed -H 'Content-Type: application/json' -X POST               -d '{"provider":"basic","username":"hermex","password":"hermex-local"}' "$BASE/auth/password-login"
+            for path in api/status api/auth/me api/profiles/active api/config "api/sessions?limit=20" api/model/info; do
+              timed "$BASE/$path"
+            done
+          done
+          uptime
+          rm -f "$JAR"
+
       - name: Run Maestro journeys
         id: maestro
         continue-on-error: true

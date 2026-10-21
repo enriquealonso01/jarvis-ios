@@ -9,6 +9,10 @@ name: 06 voice note pause continue and delete
     visible: Settings
     timeout: 30000
 - tapOn: New Session
+# Once a project lane names a folder, New Session asks where; General is the default.
+- tapOn:
+    text: General
+    optional: true
 - extendedWaitUntil:
     visible: Ask anything.*
     timeout: 15000

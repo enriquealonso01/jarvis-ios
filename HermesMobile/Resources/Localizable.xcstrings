@@ -77417,6 +77417,7 @@
         }
       }
     },
+    "Repositories" : { "shouldTranslate" : false },
     "Restart JARVIS" : { "shouldTranslate" : false },
     "Restart JARVIS?" : { "shouldTranslate" : false },
     "Restart `hermes dashboard` on your host, then check again." : {

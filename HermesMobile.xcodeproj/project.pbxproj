@@ -608,6 +608,8 @@
 		41184382A4411C96A4980790 /* RichBlocksViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D615D7927967E97A8451F06 /* RichBlocksViews.swift */; };
 		53410C5AFB6F19D8F0CA2595 /* RichTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B9A9A50BFD29D632A0F246D /* RichTokens.swift */; };
 		E1752DF69B4412E2719B55FB /* RichMessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078B9C5EBE6C50ED3944B81F /* RichMessageContent.swift */; };
+		A12F1EC764CDF3FDAE543ECF /* ChatPDFExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A67880F5BC765614975CA16A /* ChatPDFExport.swift */; };
+		36413DDE3EABAE7C1BD149DC /* ChatPDFExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1685E4A514A299D624BED4 /* ChatPDFExportTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1255,6 +1257,8 @@
 		8D615D7927967E97A8451F06 /* RichBlocksViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichBlocksViews.swift; sourceTree = "<group>"; };
 		5B9A9A50BFD29D632A0F246D /* RichTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichTokens.swift; sourceTree = "<group>"; };
 		078B9C5EBE6C50ED3944B81F /* RichMessageContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichMessageContent.swift; sourceTree = "<group>"; };
+		A67880F5BC765614975CA16A /* ChatPDFExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPDFExport.swift; sourceTree = "<group>"; };
+		AA1685E4A514A299D624BED4 /* ChatPDFExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPDFExportTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1366,6 +1370,7 @@
 		1A2B3C4D5E6F700000000034 /* HermesMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				AA1685E4A514A299D624BED4 /* ChatPDFExportTests.swift */,
 				B48200000000000000000007 /* BotProfileEditorTests.swift */,
 				B48200000000000000000035 /* BotLifecycleTests.swift */,
 				B48200000000000000000023 /* BotFaceMotionTests.swift */,
@@ -1788,6 +1793,7 @@
 		1A2B3C4D5E6F7000000000C6 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
+				A67880F5BC765614975CA16A /* ChatPDFExport.swift */,
 				5B2FA0E3DFE844F8B3A710FD /* ChatComposerPresentation.swift */,
 				1A2B3C4D5E6F7000000000BF /* ChatView.swift */,
 				C05100000000000000000011 /* ChatTranscriptView.swift */,
@@ -2412,6 +2418,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A12F1EC764CDF3FDAE543ECF /* ChatPDFExport.swift in Sources */,
 				E1752DF69B4412E2719B55FB /* RichMessageContent.swift in Sources */,
 				53410C5AFB6F19D8F0CA2595 /* RichTokens.swift in Sources */,
 				41184382A4411C96A4980790 /* RichBlocksViews.swift in Sources */,
@@ -2793,6 +2800,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				36413DDE3EABAE7C1BD149DC /* ChatPDFExportTests.swift in Sources */,
 				A4790000000000000000E006 /* PushRegistrationTests.swift in Sources */,
 				B48200000000000000000008 /* BotProfileEditorTests.swift in Sources */,
 				B48200000000000000000036 /* BotLifecycleTests.swift in Sources */,
