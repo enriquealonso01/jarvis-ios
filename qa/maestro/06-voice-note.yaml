@@ -27,7 +27,7 @@ name: 06 voice note pause continue and delete
           timeout: 10000
 # A quick tap: the note starts and stays recording, locked (Pause, Delete, Send).
 - tapOn:
-    id: composer.mic
+    text: Voice input
 - tapOn:
     text: Allow
     optional: true
@@ -63,7 +63,7 @@ name: 06 voice note pause continue and delete
 # Press, hold and swipe up: locked, so lifting the finger doesn't send.
 - swipe:
     from:
-      id: composer.mic
+      text: Voice input
     direction: UP
     duration: 1500
 - extendedWaitUntil:
@@ -82,7 +82,7 @@ name: 06 voice note pause continue and delete
 # Press, hold and slide left: cancelled, nothing left behind.
 - swipe:
     from:
-      id: composer.mic
+      text: Voice input
     direction: LEFT
     duration: 1500
 - assertNotVisible:
