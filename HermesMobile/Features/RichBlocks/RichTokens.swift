@@ -88,3 +88,80 @@ struct MarkdownText: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+// MARK: - v2 DesignSystem pieces the rich renderers use
+
+private struct JarvisCardBackground: ViewModifier {
+    let padding: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                    .fill(Tokens.Palette.elevated))
+            .overlay(
+                RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                    .strokeBorder(Tokens.Palette.border, lineWidth: 1))
+    }
+}
+
+extension View {
+    /// The rich-card surface.
+    func jarvisCard(padding: CGFloat = 14) -> some View {
+        modifier(JarvisCardBackground(padding: padding))
+    }
+}
+
+/// Primary (accent) and ghost button styles used by rich cards.
+struct JarvisButtonStyle: ButtonStyle {
+    enum Kind { case primary, ghost, danger }
+    var kind: Kind
+    @Environment(\.isEnabled) private var isEnabled
+
+    init(_ kind: Kind = .primary) { self.kind = kind }
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(kind == .primary ? Tokens.Palette.onAccent : Tokens.Palette.textPrimary)
+            .padding(.horizontal, 17)
+            .frame(minHeight: Tokens.Layout.hitTarget)
+            .background(
+                RoundedRectangle(cornerRadius: Tokens.Radius.control, style: .continuous)
+                    .fill(kind == .primary ? Tokens.Palette.accent
+                          : (kind == .danger ? Tokens.Palette.danger.opacity(0.18) : Tokens.Palette.raised)))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.control, style: .continuous))
+    }
+}
+
+/// Fenced code in a rich block: language caption and a horizontally scrolling monospace body.
+struct MarkdownCodeBlock: View {
+    let language: String?
+    let code: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(verbatim: (language ?? "code").uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Tokens.Palette.textMuted)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Tokens.Palette.raised.opacity(0.6))
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(verbatim: code)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(Tokens.Palette.textBody)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: Tokens.Radius.control, style: .continuous).fill(Tokens.Palette.sunken))
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.control, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.control, style: .continuous)
+            .strokeBorder(Tokens.Palette.border, lineWidth: 1))
+    }
+}
