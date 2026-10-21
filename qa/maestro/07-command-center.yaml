@@ -1,0 +1,23 @@
+appId: com.enriquecodes.jarvis
+# Local Hermes has no JARVIS Control Center routes, so usage, map and vitals show their
+# errors here; the live host serves them. Cron issues and the layout are checked.
+name: 07 command center tab
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn: Command
+- extendedWaitUntil:
+    visible: Scheduled tasks with issues
+    timeout: 20000
+- waitForAnimationToEnd:
+    timeout: 8000
+- takeScreenshot: 07-command-center
+- scrollUntilVisible:
+    element: Core vitals
+    direction: DOWN
+    optional: true
+- takeScreenshot: 07-command-center-bottom
+- tapOn: Sessions
