@@ -61,6 +61,7 @@
 		1A2B3C4D5E6F700000000006 /* Splash in Frameworks */ = {isa = PBXBuildFile; productRef = 1A2B3C4D5E6F700000000096 /* Splash */; };
 		1A2B3C4D5E6F700000000007 /* Highlightr in Frameworks */ = {isa = PBXBuildFile; productRef = 1A2B3C4D5E6F700000000097 /* Highlightr */; };
 		1A2B3C4D5E6F700000000008 /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = 1A2B3C4D5E6F700000000098 /* KeychainAccess */; };
+		7EB4C0000000000000000008 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 7EB4C0000000000000000098 /* WebRTC */; };
 		5417A7400000000000000092 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 5417A7400000000000000091 /* SwiftMath */; };
 		1A2B3C4D5E6F7000000000A0 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7000000000B0 /* KeychainStore.swift */; };
 		1A2B3C4D5E6F7000000000A1 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7000000000B1 /* AuthManager.swift */; };
@@ -595,6 +596,12 @@
 		34C24AA7BCF93FF795ABA446 /* JarvisSignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FBAD340D75CA90C5723A918 /* JarvisSignInView.swift */; };
 		4407997CDCBD434FFB012BB8 /* JarvisBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FCE8A9771A1D8E9B4DC0080 /* JarvisBrand.swift */; };
 		245D164927B0F84D51C98259 /* JarvisServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04FC86A7B475930FCFB72670 /* JarvisServer.swift */; };
+		D358957A66E730AD990FFDC3 /* JarvisVoiceAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A4217B2D8A853DF6A115DA2 /* JarvisVoiceAuth.swift */; };
+		504955B59FF4C26CEF099DCD /* WebRTCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1344A9C7F3B9612C941C4133 /* WebRTCClient.swift */; };
+		ABBBCBD884874768A27C79D1 /* CallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 505D71E8E8F417F68FF621F8 /* CallManager.swift */; };
+		2C2099675761BCDE29536BA2 /* CallLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5099445758FC386999C4A641 /* CallLogStore.swift */; };
+		762A0408D4EF7D307456FBCC /* CallsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121CCC40E57CCDB82BE91102 /* CallsView.swift */; };
+		CE8DF23DE7AC528467C6F1CB /* JarvisVoiceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1230,6 +1237,12 @@
 		6FBAD340D75CA90C5723A918 /* JarvisSignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisSignInView.swift; sourceTree = "<group>"; };
 		7FCE8A9771A1D8E9B4DC0080 /* JarvisBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisBrand.swift; sourceTree = "<group>"; };
 		04FC86A7B475930FCFB72670 /* JarvisServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisServer.swift; sourceTree = "<group>"; };
+		7A4217B2D8A853DF6A115DA2 /* JarvisVoiceAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisVoiceAuth.swift; sourceTree = "<group>"; };
+		1344A9C7F3B9612C941C4133 /* WebRTCClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRTCClient.swift; sourceTree = "<group>"; };
+		505D71E8E8F417F68FF621F8 /* CallManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallManager.swift; sourceTree = "<group>"; };
+		5099445758FC386999C4A641 /* CallLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallLogStore.swift; sourceTree = "<group>"; };
+		121CCC40E57CCDB82BE91102 /* CallsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallsView.swift; sourceTree = "<group>"; };
+		81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisVoiceScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1242,6 +1255,7 @@
 				1A2B3C4D5E6F700000000006 /* Splash in Frameworks */,
 				1A2B3C4D5E6F700000000007 /* Highlightr in Frameworks */,
 				1A2B3C4D5E6F700000000008 /* KeychainAccess in Frameworks */,
+				7EB4C0000000000000000008 /* WebRTC in Frameworks */,
 				5417A7400000000000000092 /* SwiftMath in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1655,6 +1669,7 @@
 		1A2B3C4D5E6F7000000000C3 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				760C4365BFA3BC653889E180 /* Calls */,
 				B48200000000000000000001 /* BotProfileAppearance.swift */,
 				B48200000000000000000011 /* BotExpressionPickerView.swift */,
 				B48200000000000000000031 /* BotCreator.swift */,
@@ -2125,6 +2140,19 @@
 			path = Insights;
 			sourceTree = "<group>";
 		};
+		760C4365BFA3BC653889E180 /* Calls */ = {
+			isa = PBXGroup;
+			children = (
+				81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */,
+				121CCC40E57CCDB82BE91102 /* CallsView.swift */,
+				5099445758FC386999C4A641 /* CallLogStore.swift */,
+				505D71E8E8F417F68FF621F8 /* CallManager.swift */,
+				1344A9C7F3B9612C941C4133 /* WebRTCClient.swift */,
+				7A4217B2D8A853DF6A115DA2 /* JarvisVoiceAuth.swift */,
+			);
+			path = Calls;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -2152,6 +2180,7 @@
 				1A2B3C4D5E6F700000000097 /* Highlightr */,
 				1A2B3C4D5E6F700000000098 /* KeychainAccess */,
 				5417A7400000000000000091 /* SwiftMath */,
+				7EB4C0000000000000000098 /* WebRTC */,
 			);
 			productName = HermesMobile;
 			productReference = 1A2B3C4D5E6F700000000010 /* HermesMobile.app */;
@@ -2288,6 +2317,7 @@
 				1A2B3C4D5E6F700000000092 /* XCRemoteSwiftPackageReference "Splash" */,
 				1A2B3C4D5E6F700000000093 /* XCRemoteSwiftPackageReference "Highlightr" */,
 				1A2B3C4D5E6F700000000099 /* XCRemoteSwiftPackageReference "KeychainAccess" */,
+				7EB4C0000000000000000099 /* XCRemoteSwiftPackageReference "WebRTC" */,
 				5417A7400000000000000090 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 			);
 			productRefGroup = 1A2B3C4D5E6F700000000032 /* Products */;
@@ -2348,6 +2378,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CE8DF23DE7AC528467C6F1CB /* JarvisVoiceScreen.swift in Sources */,
+				762A0408D4EF7D307456FBCC /* CallsView.swift in Sources */,
+				2C2099675761BCDE29536BA2 /* CallLogStore.swift in Sources */,
+				ABBBCBD884874768A27C79D1 /* CallManager.swift in Sources */,
+				504955B59FF4C26CEF099DCD /* WebRTCClient.swift in Sources */,
+				D358957A66E730AD990FFDC3 /* JarvisVoiceAuth.swift in Sources */,
 				245D164927B0F84D51C98259 /* JarvisServer.swift in Sources */,
 				4407997CDCBD434FFB012BB8 /* JarvisBrand.swift in Sources */,
 				34C24AA7BCF93FF795ABA446 /* JarvisSignInView.swift in Sources */,
@@ -3487,6 +3523,14 @@
 				minimumVersion = 1.7.3;
 			};
 		};
+		7EB4C0000000000000000099 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC.git";
+			requirement = {
+				kind = exactVersion;
+				version = 130.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -3524,6 +3568,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5417A7400000000000000090 /* XCRemoteSwiftPackageReference "SwiftMath" */;
 			productName = SwiftMath;
+		};
+		7EB4C0000000000000000098 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7EB4C0000000000000000099 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

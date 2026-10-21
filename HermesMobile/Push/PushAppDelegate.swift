@@ -18,7 +18,11 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
     ) -> Bool {
         // Set before launch finishes, or the tap that cold-started the app is lost.
         UNUserNotificationCenter.current().delegate = self
-        MainActor.assumeIsolated { PushRegistrar.shared?.refreshOnLaunch() }
+        MainActor.assumeIsolated {
+            PushRegistrar.shared?.refreshOnLaunch()
+            // JARVIS calls: PushKit VoIP registration (CallManager reports every push to CallKit).
+            CallManager.shared.registerVoIP()
+        }
         return true
     }
 

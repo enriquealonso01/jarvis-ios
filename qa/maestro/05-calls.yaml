@@ -1,0 +1,33 @@
+appId: com.enriquecodes.jarvis
+# The call UI only: CI has no push bridge or voice gateway, so the line itself fails
+# (Voice unavailable). Real ring and audio are tested on the phone.
+name: 05 calls screen and the voice conversation screen
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn: Calls
+- extendedWaitUntil:
+    visible:
+      id: calls.talk
+    timeout: 10000
+- takeScreenshot: 05-calls
+- tapOn:
+    id: calls.talk
+- tapOn:
+    text: Allow
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: voice.screen
+    timeout: 15000
+- takeScreenshot: 05-voice-connecting
+- waitForAnimationToEnd:
+    timeout: 15000
+- takeScreenshot: 05-voice-after
+- tapOn:
+    id: voice.closeButton
+    optional: true
+- takeScreenshot: 05-after-close

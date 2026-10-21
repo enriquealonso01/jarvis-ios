@@ -1096,6 +1096,18 @@ struct ChatView: View {
                             }
                         }
 
+                        if isHermesSession {
+                            ChatToolbarActionSlot {
+                                Button {
+                                    JarvisVoicePresenter.shared.startConversation()
+                                } label: {
+                                    Label("Voice", systemImage: "waveform")
+                                }
+                                .accessibilityLabel("Talk to JARVIS")
+                                .accessibilityIdentifier("chat.voiceButton")
+                            }
+                        }
+
                         if showsFilesButton, !isHermesSession || browsableHermesWorkspace != nil {
                             ChatToolbarActionSlot {
                                 NavigationLink {

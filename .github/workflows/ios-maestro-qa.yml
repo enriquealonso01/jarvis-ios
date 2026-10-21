@@ -70,7 +70,6 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath /tmp/dd \
-            -disableAutomaticPackageResolution \
             CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=JARVISQA00 2>&1 | tee qa-out/build.log | grep -E "error:|warning: .*JARVIS|BUILD" || true
           test -d "$(find /tmp/dd/Build/Products -name 'HermesMobile.app' -path '*iphonesimulator*' | head -1)"
 

@@ -180,6 +180,7 @@ struct HermesSessionListView: View {
             })
             .id(chat.id)
         }
+        .navigationDestination(isPresented: $covers.showingCalls) { CallsView() }
         .navigationDestination(isPresented: $covers.showingArchived) {
             if let profile {
                 ArchivedSessionsView(server: entry.server, hermes: .saved(entry.connection, server: entry.server, profile: profile))
@@ -328,7 +329,7 @@ struct HermesSessionListView: View {
         return SidebarSectionVisibility(
             bots: false, tasks: isHome && showsTasks, skills: isHome && showsSkills,
             memory: isHome && showsMemory, insights: isHome && showsInsights, activeProfile: false,
-            projects: !viewModel.hermesShowsAllProfiles
+            projects: !viewModel.hermesShowsAllProfiles, calls: isHome
         )
     }
 
@@ -336,6 +337,7 @@ struct HermesSessionListView: View {
     /// New Session opens in, on a list of every Profile).
     private func open(_ destination: SessionListUtilityDestination) {
         let server = entry.server, connection = entry.connection
+        if destination == .calls { covers.showingCalls = true; return }
         guard let profile else { return }
         switch destination {
         case .tasks:
@@ -888,6 +890,7 @@ struct HermesSessionListCovers {
     var deleting: SessionSummary?
     var exported: SessionExportShareItem?
     var showingArchived = false
+    var showingCalls = false
     var creatingProject: HermesProjectCreation?
     var renamingProject: ProjectSummary?
     var deletingProject: ProjectSummary?
@@ -903,7 +906,7 @@ struct HermesSessionListCovers {
 
     /// A screen this list pushed covers it, so the socket stays closed until it returns.
     var isCoveredByScreen: Bool {
-        showingArchived || tasks != nil || skills != nil || memory != nil || insights != nil
+        showingArchived || showingCalls || tasks != nil || skills != nil || memory != nil || insights != nil
     }
 
     /// Counts the links that brought the rows forward, so work started before one (an export)

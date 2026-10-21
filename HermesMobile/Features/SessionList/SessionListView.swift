@@ -248,6 +248,8 @@ enum SessionListUtilityDestination: Hashable, Identifiable {
     /// Archived sessions screen (issue #17), also reachable from Settings.
     case archived
     case scheduled
+    /// JARVIS calls (CallsView).
+    case calls
 
     var id: Self { self }
 }

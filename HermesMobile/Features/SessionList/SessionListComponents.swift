@@ -382,6 +382,8 @@ struct SidebarSectionVisibility: Equatable {
     var insights: Bool
     var activeProfile: Bool
     var projects: Bool
+    /// JARVIS calls, on the Hermes home only.
+    var calls: Bool = false
 
     /// Show every row, primarily for previews and tests.
     static let showAll = SidebarSectionVisibility(
@@ -397,7 +399,7 @@ struct SidebarSectionVisibility: Equatable {
     /// The plain links share one List row, so that row is dropped entirely
     /// once all of them are hidden rather than leaving an empty padded gap.
     var showsAnyUtilityLink: Bool {
-        bots || tasks || skills || memory || insights
+        bots || tasks || skills || memory || insights || calls
     }
 }
 
@@ -481,6 +483,12 @@ struct SessionSidebarUtilityRows: View {
 
     private var utilityLinks: some View {
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
+            if sectionVisibility.calls {
+                SidebarNavButton(title: String(localized: "Calls"), assetImage: "sf:phone") {
+                    openDestination(.calls)
+                }
+            }
+
             if sectionVisibility.bots {
                 SidebarNavButton(title: String(localized: "Bots"), assetImage: "LucideBot") {
                     openDestination(.bots)
@@ -1450,7 +1458,8 @@ struct SidebarUtilityIcon: View {
     var tint: Color = .primary
 
     var body: some View {
-        Image(assetImage)
+        // "sf:<name>" names an SF Symbol (JARVIS rows without a Lucide asset).
+        (assetImage.hasPrefix("sf:") ? Image(systemName: String(assetImage.dropFirst(3))) : Image(assetImage))
             .renderingMode(.template)
             .resizable()
             .scaledToFit()
