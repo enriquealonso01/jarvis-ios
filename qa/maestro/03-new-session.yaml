@@ -40,6 +40,14 @@ name: 03 new session send approve and reply
     timeout: 60000
     optional: true
 - takeScreenshot: 03-approval
+# iOS's one-time "slide to type" keyboard tip is a system sheet that swallows taps on the
+# approval card (run 39626602327); the workflow also marks it seen before launch.
+- tapOn:
+    text: Continue
+    optional: true
+- tapOn:
+    text: Allow once
+    optional: true
 - tapOn:
     text: Approve.*
     optional: true
