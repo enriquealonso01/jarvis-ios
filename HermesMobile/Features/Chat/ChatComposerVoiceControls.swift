@@ -142,11 +142,19 @@ struct ComposerVoiceControlButton: View {
             }
             .onEnded { _ in
                 cancelHold()
+                let sawTouchDown = isPressing
                 defer {
                     isPressing = false
                     didStart = false
                     isHandled = false
                     ignoresPress = false
+                }
+                // A very quick tap can arrive as an end with no touch-down update (Maestro's taps
+                // do, run 39652026792): treat it as the tap it is.
+                guard sawTouchDown else {
+                    guard !isRecordingVoiceNote, !isDisabled else { return }
+                    if tapRecords { onPressBegan(); onLock() } else { onTap() }
+                    return
                 }
                 guard !ignoresPress else { return }
                 guard didStart else {

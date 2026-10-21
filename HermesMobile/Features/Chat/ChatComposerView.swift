@@ -1563,6 +1563,7 @@ struct MessageComposerView: View {
 
     @MainActor
     private func toggleVoiceInput() {
+        JarvisClientLog.trace("mic: dictation toggle")
         voiceInput.transcribe = hermesTranscriber ?? apiClient?.dictationTranscriber
         voiceInput.providerPreference = ComposerSTTProviderPreference.storedValue(sttProviderPreferenceRawValue)
         voiceInput.scheduleToggle(currentDraft: draftMessage) { newDraft in
@@ -1574,6 +1575,7 @@ struct MessageComposerView: View {
     /// dictation first if it's running. A blocked start says why instead of doing nothing.
     @MainActor
     private func startVoiceNoteRecording() {
+        JarvisClientLog.trace("mic: press began, recorder=\(voiceNoteRecorder.state) disabled=\(isVoiceNoteRecordingDisabled)")
         guard !voiceNoteRecorder.hasNoteInProgress, !voiceNoteRecorder.isRequestingPermission else { return }
         guard !isVoiceNoteRecordingDisabled else {
             VoiceNoteHaptics.refused()
@@ -1590,6 +1592,7 @@ struct MessageComposerView: View {
     /// Swiped up while holding, or tapped: hands-free until Send, Pause or Delete.
     @MainActor
     private func lockVoiceNote() {
+        JarvisClientLog.trace("mic: lock, recorder=\(voiceNoteRecorder.state)")
         voiceNoteDrag = .zero
         voiceNoteRecorder.lock()
         VoiceNoteHaptics.locked()
