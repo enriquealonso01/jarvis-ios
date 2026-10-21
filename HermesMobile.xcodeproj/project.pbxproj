@@ -617,6 +617,8 @@
 		17028AA17923CE04495C9613 /* JarvisCustomWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD25AAAE5F7B1610FF5D4EF /* JarvisCustomWidget.swift */; };
 		F6BEBCD170AA4C7955DE8686 /* JarvisWidgetPreviewCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29F8250B0A537D57A254AA98 /* JarvisWidgetPreviewCard.swift */; };
 		BC887AA37FC423650C10BA6C /* JarvisWidgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D288D5E859CDB14194854AD9 /* JarvisWidgetTests.swift */; };
+		9E49A0E315D54C92FBAB395E /* JarvisClientLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */; };
+		85D43804AFA2C80C8B59F267 /* JarvisClientLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1E07C2F6245B1851CCEB47 /* JarvisClientLog.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1272,6 +1274,8 @@
 		DDD25AAAE5F7B1610FF5D4EF /* JarvisCustomWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisCustomWidget.swift; sourceTree = "<group>"; };
 		29F8250B0A537D57A254AA98 /* JarvisWidgetPreviewCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisWidgetPreviewCard.swift; sourceTree = "<group>"; };
 		D288D5E859CDB14194854AD9 /* JarvisWidgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisWidgetTests.swift; sourceTree = "<group>"; };
+		9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClientLogTests.swift; sourceTree = "<group>"; };
+		DA1E07C2F6245B1851CCEB47 /* JarvisClientLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClientLog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1337,6 +1341,7 @@
 		1A2B3C4D5E6F700000000031 /* HermesMobile */ = {
 			isa = PBXGroup;
 			children = (
+				0ED9C0F6DB54490E893B37BE /* Diagnostics */,
 				FCA0DE6F657A17DD9C555991 /* Widgets */,
 				1A2B3C4D5E6F700000000011 /* HermesMobileApp.swift */,
 				1A2B3C4D5E6F700000000012 /* ContentView.swift */,
@@ -1384,6 +1389,7 @@
 		1A2B3C4D5E6F700000000034 /* HermesMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */,
 				D288D5E859CDB14194854AD9 /* JarvisWidgetTests.swift */,
 				5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */,
 				AA1685E4A514A299D624BED4 /* ChatPDFExportTests.swift */,
@@ -2220,6 +2226,14 @@
 			path = Widgets;
 			sourceTree = "<group>";
 		};
+		0ED9C0F6DB54490E893B37BE /* Diagnostics */ = {
+			isa = PBXGroup;
+			children = (
+				DA1E07C2F6245B1851CCEB47 /* JarvisClientLog.swift */,
+			);
+			path = Diagnostics;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -2445,6 +2459,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				85D43804AFA2C80C8B59F267 /* JarvisClientLog.swift in Sources */,
 				F6BEBCD170AA4C7955DE8686 /* JarvisWidgetPreviewCard.swift in Sources */,
 				B20FBEF7E3003A6960A96315 /* JarvisWidgetSpec.swift in Sources */,
 				63DEF4D3BA4ADA13CD94EFA8 /* JarvisFilesView.swift in Sources */,
@@ -2830,6 +2845,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9E49A0E315D54C92FBAB395E /* JarvisClientLogTests.swift in Sources */,
 				BC887AA37FC423650C10BA6C /* JarvisWidgetTests.swift in Sources */,
 				C80F1E6C44BFF736CDC8FFCD /* JarvisFilesTests.swift in Sources */,
 				36413DDE3EABAE7C1BD149DC /* ChatPDFExportTests.swift in Sources */,

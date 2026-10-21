@@ -587,10 +587,20 @@ struct HermesServerHome: View {
             await CallManager.shared.retryDeviceRegistration()
         }
         // JARVIS's home-screen widgets take their live data files' values each time the app
-        // comes forward (requirement 8).
+        // comes forward (requirement 8), and the phone's failure log goes to the host both ways
+        // (requirement 9).
         .task(id: widgetScenePhase) {
-            guard widgetScenePhase == .active, let sessions else { return }
-            await JarvisWidgetRefresher.refresh(server: server, connection: sessions.entry.connection)
+            guard let sessions else { return }
+            let connection = sessions.entry.connection
+            switch widgetScenePhase {
+            case .active:
+                await JarvisClientLog.flush(server: server, connection: connection)
+                await JarvisWidgetRefresher.refresh(server: server, connection: connection)
+            case .background:
+                await JarvisClientLog.flush(server: server, connection: connection)
+            default:
+                break
+            }
         }
         .alert("Lock JARVIS with Face ID?", isPresented: $isOfferingAppLock) {
             Button("Turn On") {

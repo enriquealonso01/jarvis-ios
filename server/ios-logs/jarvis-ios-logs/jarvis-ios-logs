@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# jarvis-ios-logs: every log that touches the JARVIS iPhone app, in one read-only pass.
+#
+#   jarvis-ios-logs [--since 2h] [--errors] [--section app|hermes|caddy|services] [--lines 200]
+#
+# Sections:
+#   app       the phone's own failure log, uploaded by the app to ~/.jarvis-ios/logs/<day>.jsonl
+#   hermes    Hermes logs ($HERMES_HOME/logs: agent, errors, gui, dashboard-auth)
+#   caddy     reverse-proxy access log lines for the app (User-Agent JARVIS-iOS, /bridge, /voice-gw, /v1/)
+#   services  journald for the push bridge, voice gateway and v2 chat adapter units
+#
+# It only reads. It never restarts, edits or deletes anything.
+set -uo pipefail
+
+SINCE="2h"; ERRORS=0; SECTION="all"; LINES=200
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --since) SINCE="$2"; shift 2 ;;
+    --errors) ERRORS=1; shift ;;
+    --section) SECTION="$2"; shift 2 ;;
+    --lines) LINES="$2"; shift 2 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+# "2h" / "30m" / "1d" -> minutes, for find -mmin and journalctl --since.
+to_minutes() {
+  local v="${1%[mhd]}" u="${1: -1}"
+  case "$u" in m) echo "$v" ;; h) echo $((v * 60)) ;; d) echo $((v * 1440)) ;; *) echo "$1" ;; esac
+}
+MINUTES=$(to_minutes "$SINCE")
+SINCE_ISO=$(date -u -d "-${MINUTES} minutes" +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo "")
+ERR_RE='error|exception|traceback|fail|refus|denied|timeout|timed out|stall|401|403|5[0-9][0-9]'
+
+want() { [ "$SECTION" = "all" ] || [ "$SECTION" = "$1" ]; }
+header() { printf '\n===== %s =====\n' "$1"; }
+filter() { if [ "$ERRORS" = 1 ]; then grep -Ei "$ERR_RE" || true; else cat; fi; }
+
+if want app; then
+  header "app: the phone's failure log (~/.jarvis-ios/logs)"
+  DIR="$HOME/.jarvis-ios/logs"
+  if [ -d "$DIR" ]; then
+    # Entries are JSON Lines with an ISO "ts"; keep those inside the window.
+    find "$DIR" -name '*.jsonl' -mmin "-$((MINUTES + 1440))" -print0 2>/dev/null | sort -z | xargs -0 -r cat \
+      | awk -v since="$SINCE_ISO" 'since == "" || match($0, /"ts":"[^"]+"/) && substr($0, RSTART + 6, 19) >= since' \
+      | filter | tail -n "$LINES"
+  else
+    echo "(none yet: the app writes here after its first failure, when it comes forward or goes to the background)"
+  fi
+fi
+
+if want hermes; then
+  HOME_DIR="${HERMES_HOME:-$HOME/.hermes}"
+  for f in agent errors gui dashboard-auth; do
+    LOG="$HOME_DIR/logs/$f.log"
+    [ -f "$LOG" ] || continue
+    header "hermes: $LOG"
+    # Hermes lines start "YYYY-MM-DD HH:MM:SS,ms" (a traceback's lines follow their entry);
+    # dashboard-auth lines are JSON starting {"ts":"YYYY-MM-DDTHH:MM:SS.
+    awk -v since="${SINCE_ISO/T/ }" '
+      since == "" { print; next }
+      /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / { keep = substr($0, 1, 19) >= since }
+      /^\{"ts":"/ { t = substr($0, 8, 19); sub("T", " ", t); keep = t >= since }
+      keep { print }' "$LOG" \
+      | filter | tail -n "$LINES"
+  done
+fi
+
+if want caddy; then
+  header "caddy: the app's requests"
+  CADDYFILE=""
+  for c in /etc/caddy/Caddyfile /opt/caddy/Caddyfile; do [ -f "$c" ] && CADDYFILE="$c" && break; done
+  LOGS=$( { [ -n "$CADDYFILE" ] && grep -Eo 'output +file +[^ ]+' "$CADDYFILE" | awk '{print $3}'; ls /var/log/caddy/*.log 2>/dev/null; } | sort -u)
+  if [ -z "$LOGS" ]; then
+    echo "(no Caddy file log found; journald instead)"
+    journalctl -u caddy --since "-${MINUTES} min" --no-pager 2>/dev/null \
+      | grep -E 'JARVIS-iOS|/bridge|/voice-gw|/v1/' | filter | tail -n "$LINES"
+  else
+    for LOG in $LOGS; do
+      [ -f "$LOG" ] || continue
+      echo "-- $LOG"
+      # Caddy's JSON access log: keep the app's lines and print the useful fields.
+      grep -E 'JARVIS-iOS|"/bridge|"/voice-gw|"/v1/' "$LOG" | tail -n 5000 | python3 -c '
+import json, sys, time
+since = time.time() - '"$MINUTES"' * 60
+for line in sys.stdin:
+    try: e = json.loads(line)
+    except Exception: continue
+    if e.get("ts", 0) < since: continue
+    r = e.get("request", {})
+    ua = ",".join(r.get("headers", {}).get("User-Agent", []))[:60]
+    print("%s %s %s %s %.3fs %s" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(e.get("ts", 0))),
+          e.get("status"), r.get("method"), r.get("uri", "").split("?")[0], e.get("duration", 0), ua))
+' | filter | tail -n "$LINES"
+    done
+  fi
+fi
+
+if want services; then
+  UNITS=$(systemctl list-units --type=service --all --no-legend 2>/dev/null \
+    | awk '{print $1}' | grep -Ei 'voice|bridge|push|v2-chat|jarvis' || true)
+  for U in $UNITS; do
+    header "service: $U"
+    if [ "$ERRORS" = 1 ]; then
+      journalctl -u "$U" --since "-${MINUTES} min" -p warning --no-pager 2>/dev/null | tail -n "$LINES"
+    else
+      journalctl -u "$U" --since "-${MINUTES} min" --no-pager 2>/dev/null | tail -n "$LINES"
+    fi
+  done
+  [ -n "$UNITS" ] || echo "(no voice/bridge/push units found by name; check: systemctl list-units --type=service)"
+fi
