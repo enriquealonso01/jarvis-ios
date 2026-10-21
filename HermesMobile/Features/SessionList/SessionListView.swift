@@ -250,6 +250,8 @@ enum SessionListUtilityDestination: Hashable, Identifiable {
     case scheduled
     /// JARVIS calls (CallsView).
     case calls
+    /// Files from JARVIS (JarvisFilesView).
+    case files
 
     var id: Self { self }
 }

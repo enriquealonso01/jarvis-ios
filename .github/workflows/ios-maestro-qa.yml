@@ -114,6 +114,7 @@ jobs:
             done
           done
           uptime
+          echo "processes: $(ps -A | wc -l)"; ps -Ao pcpu=,comm= | sort -rn | head -10
           rm -f "$JAR"
 
       - name: Run Maestro journeys

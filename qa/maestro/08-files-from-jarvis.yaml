@@ -1,0 +1,17 @@
+appId: com.enriquecodes.jarvis
+# Files from JARVIS: the home row opens the read-only viewer of ~/JARVIS-Files. The CI host has
+# no such folder, so the screen explains where JARVIS's files will show up.
+name: 08 files from jarvis
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn: Files from JARVIS
+- extendedWaitUntil:
+    visible:
+      id: jarvisFiles.empty
+    timeout: 30000
+- assertVisible: No Files Yet
+- takeScreenshot: 08-files-empty

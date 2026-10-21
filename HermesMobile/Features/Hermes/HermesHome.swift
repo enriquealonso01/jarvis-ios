@@ -58,17 +58,20 @@ private struct HiddenBottomScrollEdge: ViewModifier {
     }
 }
 
-/// `[Bots | Sessions]`. It keeps a system bar's size at accessibility text sizes; a long press
-/// shows the Large Content Viewer instead.
+/// `[Bots | Sessions | Command]`, as icons: three text segments are wider than an iPhone's
+/// bottom bar leaves between the filter and New Session, and the bar then folds both ends into
+/// a "..." overflow menu (Maestro run 39617467048). Each icon keeps its name for VoiceOver and
+/// the Large Content Viewer. It keeps a system bar's size at accessibility text sizes; a long
+/// press shows the Large Content Viewer instead.
 private struct HermesHomeSwitch: View {
     @Binding var tab: HermesHomeTab
 
     var body: some View {
         // The segments name themselves; the picker needs no label of its own.
         Picker(selection: $tab) {
-            Text("Bots").tag(HermesHomeTab.bots)
-            Text("Sessions").tag(HermesHomeTab.sessions)
-            Text("Command").tag(HermesHomeTab.center)
+            segment("Bots", systemImage: "cpu").tag(HermesHomeTab.bots)
+            segment("Sessions", systemImage: "bubble.left.and.bubble.right").tag(HermesHomeTab.sessions)
+            segment("Command", systemImage: "gauge.with.dots.needle.67percent").tag(HermesHomeTab.center)
         } label: {
             EmptyView()
         }
@@ -76,5 +79,10 @@ private struct HermesHomeSwitch: View {
         .fixedSize()
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .accessibilityShowsLargeContentViewer()
+    }
+
+    private func segment(_ title: LocalizedStringKey, systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .accessibilityLabel(Text(title))
     }
 }

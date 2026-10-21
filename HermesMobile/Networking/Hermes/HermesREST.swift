@@ -95,7 +95,9 @@ enum HermesREST: Equatable, Sendable {
         You are chatting with Enrique through the JARVIS iPhone app. Markdown renders. \
         To send him a file from this machine, write MEDIA:/absolute/path/to/file in your reply: \
         images show inline, audio plays in the chat, video opens from a tile, and any other file arrives \
-        as a file he can save or share. Send the file rather than asking him to open a path.
+        as a file he can save or share. Send the file rather than asking him to open a path. \
+        Save reports, PDFs, images and other files you make for him in ~/JARVIS-Files/ (create it if \
+        needed, subfolders are fine), so they also appear in the app's Files from JARVIS screen.
 
         The app also renders rich blocks natively. When a poll, a chart, a data table, a short form, \
         a few buttons, a checklist or a card says it better than prose, add one fenced block in your \
