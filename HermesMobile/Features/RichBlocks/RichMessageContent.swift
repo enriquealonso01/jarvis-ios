@@ -1,0 +1,95 @@
+import SwiftUI
+
+/// Where an assistant reply carries `jarvis-rich` blocks (requirement 5): the reply's markdown is
+/// split around each fenced ```jarvis-rich block, which renders natively (polls, charts with a
+/// data table, forms, buttons, checklists, tables, cards…) while the text around it renders as
+/// usual. A fence that doesn't parse stays visible as text, so nothing is ever lost.
+enum RichMessageSegments {
+    enum Part: Equatable {
+        case text(String)
+        case rich([RichBlock], raw: String)
+
+        static func == (lhs: Part, rhs: Part) -> Bool {
+            switch (lhs, rhs) {
+            case let (.text(a), .text(b)): return a == b
+            case let (.rich(_, a), .rich(_, b)): return a == b
+            default: return false
+            }
+        }
+    }
+
+    static let opening = "```" + RichContentPayload.fenceMarker
+
+    /// The reply's parts, or nil when it has no parseable rich block (the usual case).
+    static func split(_ content: String) -> [Part]? {
+        guard content.contains(opening) else { return nil }
+        var parts: [Part] = []
+        var rest = Substring(content)
+        var foundRich = false
+        while let start = rest.range(of: opening) {
+            let before = String(rest[..<start.lowerBound])
+            let afterOpening = rest[start.upperBound...]
+            // The fence closes at the next line that is exactly ```.
+            guard let bodyStart = afterOpening.firstIndex(of: "\n"),
+                  let close = afterOpening[bodyStart...].range(of: "\n```") else { break }
+            let fenced = String(rest[start.lowerBound..<close.upperBound])
+            if !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(before)) }
+            if let blocks = RichContentPayload.parse(fenced) {
+                parts.append(.rich(blocks, raw: fenced))
+                foundRich = true
+            } else {
+                parts.append(.text(fenced))
+            }
+            rest = rest[close.upperBound...]
+        }
+        let tail = String(rest)
+        if !tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(tail)) }
+        return foundRich ? parts : nil
+    }
+}
+
+/// Sends a rich block's reply (a button, a poll vote, a form) as the user's next message.
+struct RichReplyAction {
+    var send: (String) -> Void = { _ in }
+    func callAsFunction(_ text: String) { send(text) }
+}
+
+private struct RichReplyKey: EnvironmentKey {
+    static let defaultValue: RichReplyAction? = nil
+}
+
+extension EnvironmentValues {
+    var richReply: RichReplyAction? {
+        get { self[RichReplyKey.self] }
+        set { self[RichReplyKey.self] = newValue }
+    }
+}
+
+extension RichInteractionStore {
+    /// Poll picks, checklist ticks and form drafts, per message and block, for this launch.
+    @MainActor static let shared = RichInteractionStore()
+}
+
+/// An assistant reply with rich blocks.
+struct RichMessageContent: View {
+    let parts: [RichMessageSegments.Part]
+    let messageID: String
+    @Environment(\.richReply) private var richReply
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                switch part {
+                case .text(let text):
+                    MarkdownRenderer(content: text)
+                case .rich(let blocks, _):
+                    RichBlocksView(blocks: blocks, messageID: messageID, interactions: RichInteractionStore.shared,
+                                   onSend: richReply.map { reply in { reply($0) } })
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("rich.message")
+    }
+}

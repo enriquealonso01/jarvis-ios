@@ -604,6 +604,10 @@
 		CE8DF23DE7AC528467C6F1CB /* JarvisVoiceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */; };
 		807BE0556A96F96E5B501113 /* CommandCenterModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D70CEE7647331DB00DD54C5B /* CommandCenterModel.swift */; };
 		FF54B93938CF425E621DFA13 /* CommandCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67852DFC290332239D9B3F60 /* CommandCenterView.swift */; };
+		6EB28747EC370C7B07248FEB /* RichBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E557B5E3E8A5C135BAA89C7 /* RichBlocks.swift */; };
+		41184382A4411C96A4980790 /* RichBlocksViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D615D7927967E97A8451F06 /* RichBlocksViews.swift */; };
+		53410C5AFB6F19D8F0CA2595 /* RichTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B9A9A50BFD29D632A0F246D /* RichTokens.swift */; };
+		E1752DF69B4412E2719B55FB /* RichMessageContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078B9C5EBE6C50ED3944B81F /* RichMessageContent.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1247,6 +1251,10 @@
 		81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisVoiceScreen.swift; sourceTree = "<group>"; };
 		D70CEE7647331DB00DD54C5B /* CommandCenterModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterModel.swift; sourceTree = "<group>"; };
 		67852DFC290332239D9B3F60 /* CommandCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterView.swift; sourceTree = "<group>"; };
+		9E557B5E3E8A5C135BAA89C7 /* RichBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichBlocks.swift; sourceTree = "<group>"; };
+		8D615D7927967E97A8451F06 /* RichBlocksViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichBlocksViews.swift; sourceTree = "<group>"; };
+		5B9A9A50BFD29D632A0F246D /* RichTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichTokens.swift; sourceTree = "<group>"; };
+		078B9C5EBE6C50ED3944B81F /* RichMessageContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichMessageContent.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1673,6 +1681,7 @@
 		1A2B3C4D5E6F7000000000C3 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				2EE6D050A0B72E36A5F57D59 /* RichBlocks */,
 				30610250CB879B8661165BFB /* CommandCenter */,
 				760C4365BFA3BC653889E180 /* Calls */,
 				B48200000000000000000001 /* BotProfileAppearance.swift */,
@@ -2167,6 +2176,17 @@
 			path = CommandCenter;
 			sourceTree = "<group>";
 		};
+		2EE6D050A0B72E36A5F57D59 /* RichBlocks */ = {
+			isa = PBXGroup;
+			children = (
+				078B9C5EBE6C50ED3944B81F /* RichMessageContent.swift */,
+				5B9A9A50BFD29D632A0F246D /* RichTokens.swift */,
+				8D615D7927967E97A8451F06 /* RichBlocksViews.swift */,
+				9E557B5E3E8A5C135BAA89C7 /* RichBlocks.swift */,
+			);
+			path = RichBlocks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -2392,6 +2412,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E1752DF69B4412E2719B55FB /* RichMessageContent.swift in Sources */,
+				53410C5AFB6F19D8F0CA2595 /* RichTokens.swift in Sources */,
+				41184382A4411C96A4980790 /* RichBlocksViews.swift in Sources */,
+				6EB28747EC370C7B07248FEB /* RichBlocks.swift in Sources */,
 				FF54B93938CF425E621DFA13 /* CommandCenterView.swift in Sources */,
 				807BE0556A96F96E5B501113 /* CommandCenterModel.swift in Sources */,
 				CE8DF23DE7AC528467C6F1CB /* JarvisVoiceScreen.swift in Sources */,

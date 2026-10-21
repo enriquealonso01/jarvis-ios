@@ -3349,6 +3349,16 @@ final class ChatViewModel {
         )
     }
 
+    /// A rich block's reply (a button, a poll vote, a form) as the next prompt. The composer's
+    /// staged files stay in the composer: the reply carries none.
+    func sendRichReply(_ text: String) async -> Bool {
+        guard let hermes = hermesTurn else { return await sendMessage(text) }
+        guard !isStartingChat else { return false }
+        let staged = attachmentCoordinator.consumePendingAttachments()
+        defer { attachmentCoordinator.replacePendingAttachments(staged + attachmentCoordinator.pendingAttachments) }
+        return await submitHermesPrompt(text, mode: activeStreamID == nil ? .send : .queue, to: hermes)
+    }
+
     /// JARVIS voice notes on a Hermes host (requirement 12): the host transcribes the clip
     /// (`/api/audio/transcribe`, as dictation does), then one prompt goes out whose text is the
     /// transcript, for the agent, and whose only file is the clip (`file.attach`). The chat shows

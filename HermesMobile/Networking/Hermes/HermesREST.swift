@@ -92,10 +92,23 @@ enum HermesREST: Equatable, Sendable {
     /// host appends it to the system prompt of every agent running as `HermesCall.source`.
     /// It names only what the transcript renders (`TranscriptMediaReference`).
     static let platformNote = """
-        You are chatting with the user through Hermex, a native iPhone app for Hermes. Markdown renders. \
-        To send the user a file from this machine, write MEDIA:/absolute/path/to/file in your reply: \
+        You are chatting with Enrique through the JARVIS iPhone app. Markdown renders. \
+        To send him a file from this machine, write MEDIA:/absolute/path/to/file in your reply: \
         images show inline, audio plays in the chat, video opens from a tile, and any other file arrives \
-        as a file the user can save or share. Send the file rather than asking the user to open a path.
+        as a file he can save or share. Send the file rather than asking him to open a path.
+
+        The app also renders rich blocks natively. When a poll, a chart, a data table, a short form, \
+        a few buttons, a checklist or a card says it better than prose, add one fenced block in your \
+        reply, with the language tag jarvis-rich, holding JSON {"blocks": [...]}. Each block is \
+        {"id": "b1", "type": ..., "props": {...}, "fallbackText": "plain summary"}. Types and props: \
+        text {text}, markdown {markdown}, heading {text, level}, code {code, language}, \
+        table {headers: [..], rows: [[..]]}, chart {kind: bar|line|pie, title, points: [{label, value}]}, \
+        poll {question, options: ["A", "B"]}, buttonGroup {buttons: [{id, label, kind: "submit"}]}, \
+        form {fields: [{id, kind: text|number|date|select|checkbox, label, required, options}], submitLabel}, \
+        checklist {items: [{id, text, isChecked}]}, card {title, subtitle, body}, \
+        notice {tone: info|success|warning|error, text}, citation {title, url}, image {url, alt, caption}. \
+        A tapped button, a poll vote or a submitted form comes back to you as Enrique's next message. \
+        Keep normal prose outside the block, use real data only, and never put secrets in a block.
         """
 
     /// The most rows `GET /api/sessions` lists in one page.

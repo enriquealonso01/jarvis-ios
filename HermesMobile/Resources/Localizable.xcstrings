@@ -19561,6 +19561,7 @@
         }
       }
     },
+    "*" : { "shouldTranslate" : false },
     "+%lld" : { "shouldTranslate" : false },
     "+%lld more" : {
       "localizations" : {
@@ -42034,6 +42035,7 @@
         }
       }
     },
+    "Confirm action" : { "shouldTranslate" : false },
     "Confirm this model change?" : {"localizations": {"de": {"stringUnit": {"state": "needs_review", "value": "Diesen Modellwechsel bestätigen?"}}, "es": {"stringUnit": {"state": "needs_review", "value": "¿Confirmar este cambio de modelo?"}}, "fr": {"stringUnit": {"state": "needs_review", "value": "Confirmer ce changement de modèle ?"}}, "it": {"stringUnit": {"state": "needs_review", "value": "Confermare il cambio di modello?"}}, "pl": {"stringUnit": {"state": "needs_review", "value": "Potwierdzić zmianę modelu?"}}, "pt-BR": {"stringUnit": {"state": "needs_review", "value": "Confirmar esta troca de modelo?"}}, "nl": {"stringUnit": {"state": "needs_review", "value": "Deze modelwijziging bevestigen?"}}, "tr": {"stringUnit": {"state": "needs_review", "value": "Bu model değişikliği onaylansın mı?"}}, "ru": {"stringUnit": {"state": "needs_review", "value": "Подтвердить смену модели?"}}, "ja": {"stringUnit": {"state": "needs_review", "value": "このモデル変更を確認しますか？"}}, "zh-Hans": {"stringUnit": {"state": "needs_review", "value": "确认更换模型？"}}, "ko": {"stringUnit": {"state": "needs_review", "value": "이 모델 변경을 확인할까요?"}}, "ar": {"stringUnit": {"state": "needs_review", "value": "هل تريد تأكيد تغيير النموذج؟"}}, "he": {"stringUnit": {"state": "needs_review", "value": "לאשר את החלפת המודל?"}}, "ur": {"stringUnit": {"state": "needs_review", "value": "کیا ماڈل کی اس تبدیلی کی تصدیق کریں؟"}}, "zh-Hant": {"stringUnit": {"state": "needs_review", "value": "確認更換模型？"}}, "zh-HK": {"stringUnit": {"state": "needs_review", "value": "確認更換模型？"}}}},
     "Conflict" : {
       "localizations" : {
@@ -77735,6 +77737,8 @@
     "Speaker off" : { "shouldTranslate" : false },
     "Speaker on" : { "shouldTranslate" : false },
     "Speaking" : { "shouldTranslate" : false },
+    "Submit vote" : { "shouldTranslate" : false },
+    "Submitted" : { "shouldTranslate" : false },
     "Subscription usage" : { "shouldTranslate" : false },
     "Synced with this server's WebUI." : {
       "localizations" : {
@@ -78176,6 +78180,7 @@
     "Transcript" : { "shouldTranslate" : false },
     "Turn On" : { "shouldTranslate" : false },
     "Unmute" : { "shouldTranslate" : false },
+    "Unsupported content" : { "shouldTranslate" : false },
     "Uptime" : { "shouldTranslate" : false },
     "Use %@’s Headers" : {
       "localizations" : {
@@ -78502,6 +78507,7 @@
       }
     },
     "Your Hermes sign-in expired. Sign in again." : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Deine Hermes-Anmeldung ist abgelaufen. Melde dich erneut an." } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "Tu inicio de sesión en Hermes caducó. Vuelve a iniciar sesión." } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "Votre connexion à Hermes a expiré. Reconnectez-vous." } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "L’accesso a Hermes è scaduto. Accedi di nuovo." } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Twoje logowanie do Hermes wygasło. Zaloguj się ponownie." } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "Seu login no Hermes expirou. Entre novamente." } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "Je aanmelding bij Hermes is verlopen. Meld je opnieuw aan." } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Hermes oturumunuzun süresi doldu. Yeniden oturum açın." } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Срок вашего входа в Hermes истёк. Войдите снова." } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "Hermes のサインインの有効期限が切れました。もう一度サインインしてください。" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "你的 Hermes 登录已过期。请重新登录。" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Hermes 로그인이 만료되었습니다. 다시 로그인하세요." } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "انتهت صلاحية تسجيل دخولك إلى Hermes. سجّل الدخول مرة أخرى." } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "תוקף ההתחברות שלך ל-Hermes פג. התחבר שוב." } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "آپ کے Hermes سائن اِن کی میعاد ختم ہو گئی۔ دوبارہ سائن اِن کریں۔" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "你的 Hermes 登入已過期。請重新登入。" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "你的 Hermes 登入已過期。請重新登入。" } } } },
+    "Your selection only" : { "shouldTranslate" : false },
     "You’ll sign in to your Hermes host first." : {
       "localizations" : {
         "ar" : {
@@ -170065,6 +170071,7 @@
         }
       }
     },
+    "required" : { "shouldTranslate" : false },
     "secret" : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "geheim" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "secreto" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "secret" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "segreto" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "sekret" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "secreto" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "geheim" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "gizli" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "секрет" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "シークレット" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "密钥" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "시크릿" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "سري" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "סודי" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "خفیہ" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "密鑰" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "密鑰" } } } },
     "sessions started or updated in this hour" : {
       "extractionState" : "manual",
