@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import UIKit
 
 /// The app's side of "JARVIS can read all backend logs for the iOS app" (requirement 9): the
@@ -35,11 +36,20 @@ enum JarvisClientLog {
         return "JARVIS-iOS/\(version) (\(build); iOS \(ProcessInfo.processInfo.operatingSystemVersionString))"
     }
 
+    nonisolated private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "HermesMobile", category: "JarvisClientLog")
+
+    /// The unified log only (never uploaded): step-by-step traces such as the mic's gestures.
+    nonisolated static func trace(_ message: String) {
+        logger.notice("\(message, privacy: .public)")
+    }
+
     static func record(_ category: String, _ message: String, path: String? = nil, now: Date = Date(),
                        defaults: UserDefaults = .standard) {
+        // Also to the unified log, so a simulator run's `log show` carries it.
+        trace("\(category): \(message)")
         var entries = stored(defaults)
         entries.append(Entry(ts: ISO8601DateFormatter().string(from: now), cat: category,
-                             msg: String(message.prefix(300)), path: path,
+                             msg: String(message.prefix(800)), path: path,
                              build: Bundle.main.infoDictionary?["CFBundleVersion"] as? String))
         if entries.count > limit { entries.removeFirst(entries.count - limit) }
         save(entries, defaults)

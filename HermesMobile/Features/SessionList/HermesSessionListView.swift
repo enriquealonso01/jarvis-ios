@@ -185,7 +185,9 @@ struct HermesSessionListView: View {
         .navigationDestination(isPresented: $covers.showingCalls) { CallsView() }
         .sheet(isPresented: $isChoosingWorkspace) { workspaceSheet }
         .navigationDestination(isPresented: $covers.showingFiles) {
-            if let profile { JarvisFilesView(server: entry.server, connection: entry.connection, profile: profile) }
+            // The folder is the host user's, whatever Profile the list shows; before the list
+            // has named one (or on a list of every Profile) the default Profile signs downloads.
+            JarvisFilesView(server: entry.server, connection: entry.connection, profile: profile ?? "default")
         }
         .navigationDestination(isPresented: $covers.showingArchived) {
             if let profile {
