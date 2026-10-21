@@ -45,6 +45,56 @@ import UIKit
         XCTAssertEqual(copies, 0, "the accepted send deletes the local copy")
     }
 
+    /// A voice note (JARVIS): transcribed once on the phone, the agent gets only the transcript,
+    /// marked as spoken. No `file.attach`, no `@file` reference, no attachment on the row, and
+    /// a photo staged for a typed message stays staged. The clip stays on the phone.
+    func testVoiceNoteSendsOnlyItsTranscriptText() async throws {
+        let chat = await openChat()
+        var imageUploads = 0
+        _ = HermesHostFixture.configuration { request in
+            guard request.url?.path == "/api/chat/image-upload" else { return nil }
+            imageUploads += 1
+            return .json(200, .object(["ok": .bool(true), "path": .string(Self.storedImage)]))
+        }
+        chat.host.always("file.attach", .init(result: .object([
+            "attached": .bool(true), "ref_text": .string("@file:`/home/u/.hermes/attachments/x-voice-note-1.m4a`")
+        ])))
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("streaming")])))
+        await chat.model.uploadAttachment(data: photo, filename: "photo.jpg", previewData: photo)
+
+        let audio = Data("m4a bytes".utf8)
+        var transcribed = 0
+        let sent = await chat.model.sendVoiceNote(
+            audioData: audio, filename: "voice-note-abcd1234.m4a",
+            transcriber: { _, _ in
+                transcribed += 1
+                return TranscribeResponse(ok: true, transcript: "  Hello Jarvis, this is a test.  ", error: nil)
+            }
+        )
+
+        XCTAssertTrue(sent)
+        XCTAssertEqual(transcribed, 1, "transcribed once, on the phone")
+        XCTAssertEqual(chat.writes("file.attach"), [], "the clip never reaches the agent's context")
+        XCTAssertEqual(imageUploads, 0, "staged files don't ride along with a voice note")
+        let submits = chat.writes("prompt.submit")
+        XCTAssertEqual(submits.map { $0["text"] }, [.string("🎤 Hello Jarvis, this is a test.")])
+        XCTAssertFalse(submits.first?["text"]?.text?.contains("@file") ?? true)
+        let row = try XCTUnwrap(chat.model.messages.last)
+        XCTAssertEqual(row.content, "🎤 Hello Jarvis, this is a test.")
+        XCTAssertNil(row.attachments, "text only: no attachment on the voice note's row")
+        XCTAssertEqual(chat.model.pendingAttachments.map(\.name), ["photo.jpg"])
+        XCTAssertEqual(VoiceNoteLocalStore.shared.audio(forMessageText: "🎤 Hello Jarvis, this is a test."), audio,
+                       "the audio stays on the phone for the bubble")
+        VoiceNoteLocalStore.shared.remove(forMessageText: "🎤 Hello Jarvis, this is a test.")
+    }
+
+    func testVoiceNoteTextMarker() {
+        XCTAssertEqual(VoiceNoteText.message(transcript: " hi "), "🎤 hi")
+        XCTAssertTrue(VoiceNoteText.isVoiceNote("🎤 hi"))
+        XCTAssertFalse(VoiceNoteText.isVoiceNote("hi 🎤"))
+        XCTAssertEqual(VoiceNoteText.transcript(from: "🎤 hi there"), "hi there")
+    }
+
     /// A document goes through `file.attach` on the attached runtime, and its `ref_text`
     /// goes into the prompt exactly as the host wrote it.
     func testFileAttachRefTextGoesIntoThePromptVerbatim() async throws {
