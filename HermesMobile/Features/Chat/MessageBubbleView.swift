@@ -238,7 +238,10 @@ struct MessageBubbleView: View {
 
     @ViewBuilder
     private func assistantContent(segments: [TranscriptMediaSegment]) -> some View {
-        if segments.containsTranscriptMedia {
+        // JARVIS rich blocks render once the reply has finished streaming.
+        if !isStreaming, let parts = RichMessageSegments.split(messageText) {
+            RichMessageContent(parts: parts, messageID: message.id)
+        } else if segments.containsTranscriptMedia {
             TranscriptMediaContentView(
                 segments: segments,
                 cacheNamespace: transcriptMediaCacheNamespace,

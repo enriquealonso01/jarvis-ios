@@ -2104,6 +2104,11 @@ struct ChatView: View {
         .environment(\.composerChipCatalog, viewModel.composerChipCatalog)
         .transcriptLinks(perform: handleTranscriptLink)
         .environment(\.chatWorkspaceRoot, session.workspace)
+        .environment(\.richReply, RichReplyAction { text in
+            Task {
+                if await viewModel.sendRichReply(text) { onConversationStarted() }
+            }
+        })
         .task(id: transcriptSkillReferenceCount) {
             await loadSkillSuggestionsForTranscriptChipsIfNeeded()
         }

@@ -3028,6 +3028,7 @@
         }
       }
     },
+    "%@ · %lld%%" : { "shouldTranslate" : false },
     "%@ · Approval needed" : { "comment" : "Push banner title; %@ is the bot's name.", "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Genehmigung erforderlich" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Aprobación requerida" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Approbation requise" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Approvazione richiesta" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Wymagane zatwierdzenie" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Aprovação necessária" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Goedkeuring vereist" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Onay gerekli" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Требуется подтверждение" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 承認が必要" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 需要审批" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 승인 필요" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · الموافقة مطلوبة" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · נדרש אישור" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · منظوری درکار" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 需要審核" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 需要審批" } } } },
     "%@ · Question" : { "comment" : "Push banner title; %@ is the bot's name.", "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Frage" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Pregunta" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Question" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Domanda" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Pytanie" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Pergunta" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Vraag" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Soru" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · Вопрос" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 質問" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 问题" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 질문" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · سؤال" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · שאלה" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · سوال" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 問題" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "%@ · 問題" } } } },
     "%@ · added" : {
@@ -3161,6 +3162,7 @@
       },
       "shouldTranslate" : false
     },
+    "%@, %@, %lld percent" : { "shouldTranslate" : false },
     "%@, %@, active server" : {
       "localizations" : {
         "ar" : {
@@ -3379,8 +3381,10 @@
         }
       }
     },
+    "%@, no votes" : { "shouldTranslate" : false },
     "%@, reacted by %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "%1$@, reacted by %2$@" } }, "de" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, Reaktion von %2$@" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, reacción de %2$@" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, réaction de %2$@" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, reazione di %2$@" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, reakcja: %2$@" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, reação de %2$@" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, reactie van %2$@" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, %2$@ tepkisi" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, реакция: %2$@" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@、%2$@のリアクション" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@，%2$@ 的回应" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, %2$@의 반응" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@، تفاعل %2$@" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@, התגובה של %2$@" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@، %2$@ کا ردعمل" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@，%2$@ 的回應" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "%1$@，%2$@ 的回應" } } } },
     "%@, reacted by you" : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, deine Reaktion" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, tu reacción" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, votre réaction" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, la tua reazione" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, twoja reakcja" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, sua reação" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, jouw reactie" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, tepkiniz" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, ваша реакция" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "%@、あなたのリアクション" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "%@，你的回应" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, 내 반응" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "%@، تفاعلك" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "%@, התגובה שלך" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "%@، آپ کا ردعمل" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "%@，你的回應" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "%@，你的回應" } } } },
+    "%@, your vote" : { "shouldTranslate" : false },
     "%@. %@" : {"localizations":{"de":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"es":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"fr":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"it":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"pl":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"pt-BR":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"nl":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"tr":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"ru":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"ja":{"stringUnit":{"state":"needs_review","value":"%@。%@"}},"zh-Hans":{"stringUnit":{"state":"needs_review","value":"%@。%@"}},"ko":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"ar":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"he":{"stringUnit":{"state":"needs_review","value":"%@. %@"}},"ur":{"stringUnit":{"state":"needs_review","value":"%@۔ %@"}},"zh-Hant":{"stringUnit":{"state":"needs_review","value":"%@。%@"}},"zh-HK":{"stringUnit":{"state":"needs_review","value":"%@。%@"}}}},
     "%@. Check them in %@." : {
       "localizations" : {
@@ -19561,6 +19565,7 @@
         }
       }
     },
+    "*" : { "shouldTranslate" : false },
     "+%lld" : { "shouldTranslate" : false },
     "+%lld more" : {
       "localizations" : {
@@ -42034,6 +42039,7 @@
         }
       }
     },
+    "Confirm action" : { "shouldTranslate" : false },
     "Confirm this model change?" : {"localizations": {"de": {"stringUnit": {"state": "needs_review", "value": "Diesen Modellwechsel bestätigen?"}}, "es": {"stringUnit": {"state": "needs_review", "value": "¿Confirmar este cambio de modelo?"}}, "fr": {"stringUnit": {"state": "needs_review", "value": "Confirmer ce changement de modèle ?"}}, "it": {"stringUnit": {"state": "needs_review", "value": "Confermare il cambio di modello?"}}, "pl": {"stringUnit": {"state": "needs_review", "value": "Potwierdzić zmianę modelu?"}}, "pt-BR": {"stringUnit": {"state": "needs_review", "value": "Confirmar esta troca de modelo?"}}, "nl": {"stringUnit": {"state": "needs_review", "value": "Deze modelwijziging bevestigen?"}}, "tr": {"stringUnit": {"state": "needs_review", "value": "Bu model değişikliği onaylansın mı?"}}, "ru": {"stringUnit": {"state": "needs_review", "value": "Подтвердить смену модели?"}}, "ja": {"stringUnit": {"state": "needs_review", "value": "このモデル変更を確認しますか？"}}, "zh-Hans": {"stringUnit": {"state": "needs_review", "value": "确认更换模型？"}}, "ko": {"stringUnit": {"state": "needs_review", "value": "이 모델 변경을 확인할까요?"}}, "ar": {"stringUnit": {"state": "needs_review", "value": "هل تريد تأكيد تغيير النموذج؟"}}, "he": {"stringUnit": {"state": "needs_review", "value": "לאשר את החלפת המודל?"}}, "ur": {"stringUnit": {"state": "needs_review", "value": "کیا ماڈل کی اس تبدیلی کی تصدیق کریں؟"}}, "zh-Hant": {"stringUnit": {"state": "needs_review", "value": "確認更換模型？"}}, "zh-HK": {"stringUnit": {"state": "needs_review", "value": "確認更換模型？"}}}},
     "Conflict" : {
       "localizations" : {
@@ -51349,6 +51355,7 @@
         }
       }
     },
+    "Cover page" : { "shouldTranslate" : false },
     "Crashed" : { "localizations" : {
       "de" : { "stringUnit" : { "state" : "translated", "value" : "Abgestürzt" } },
       "es" : { "stringUnit" : { "state" : "translated", "value" : "Falló" } },
@@ -51474,6 +51481,7 @@
         }
       }
     },
+    "Create PDF" : { "shouldTranslate" : false },
     "Create Ready, Unassigned Card?" : {
       "localizations" : {
         "ar" : { "stringUnit" : { "state" : "translated", "value" : "هل تريد إنشاء بطاقة جاهزة وغير مخصصة؟" } },
@@ -61905,6 +61913,7 @@
         }
       }
     },
+    "Export PDF" : { "shouldTranslate" : false },
     "Export as HTML" : {
       "localizations" : {
         "ar" : {
@@ -67056,6 +67065,7 @@
     "Groups" : {"localizations":{"de":{"stringUnit":{"state":"needs_review","value":"Gruppen"}},"es":{"stringUnit":{"state":"needs_review","value":"Grupos"}},"fr":{"stringUnit":{"state":"needs_review","value":"Groupes"}},"it":{"stringUnit":{"state":"needs_review","value":"Gruppi"}},"pl":{"stringUnit":{"state":"needs_review","value":"Grupy"}},"pt-BR":{"stringUnit":{"state":"needs_review","value":"Grupos"}},"nl":{"stringUnit":{"state":"needs_review","value":"Groepen"}},"tr":{"stringUnit":{"state":"needs_review","value":"Gruplar"}},"ru":{"stringUnit":{"state":"needs_review","value":"Группы"}},"ja":{"stringUnit":{"state":"needs_review","value":"グループ"}},"zh-Hans":{"stringUnit":{"state":"needs_review","value":"群组"}},"ko":{"stringUnit":{"state":"needs_review","value":"그룹"}},"ar":{"stringUnit":{"state":"needs_review","value":"المجموعات"}},"he":{"stringUnit":{"state":"needs_review","value":"קבוצות"}},"ur":{"stringUnit":{"state":"needs_review","value":"گروپس"}},"zh-Hant":{"stringUnit":{"state":"needs_review","value":"群組"}},"zh-HK":{"stringUnit":{"state":"needs_review","value":"群組"}}}},
     "Groups can have up to six members." : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Gruppen können bis zu sechs Mitglieder haben." } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "Los grupos pueden tener hasta seis miembros." } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "Un groupe peut compter jusqu’à six membres." } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "I gruppi possono avere fino a sei membri." } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Grupy mogą mieć maksymalnie sześciu członków." } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "Os grupos podem ter até seis membros." } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "Groepen kunnen maximaal zes leden hebben." } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Gruplarda en fazla altı üye olabilir." } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "В группе может быть не более шести участников." } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "グループのメンバーは最大6つまでです。" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "群组最多可有 6 名成员。" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "그룹에는 멤버를 최대 6개까지 둘 수 있습니다." } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "يمكن أن تضم المجموعات ستة أعضاء كحد أقصى." } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "בקבוצה יכולים להיות עד שישה חברים." } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "گروپس میں زیادہ سے زیادہ چھ ممبرز ہو سکتے ہیں۔" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "群組最多可有 6 位成員。" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "群組最多可有 6 位成員。" } } } },
     "Guidance queued. The bot may not have read it yet." : {"extractionState" : "manual", "localizations" : {"de" : {"stringUnit" : {"state" : "needs_review", "value" : "Hinweis eingereiht. Der Bot hat ihn möglicherweise noch nicht gelesen."}}, "es" : {"stringUnit" : {"state" : "needs_review", "value" : "Indicaciones en cola. Puede que el bot aún no las haya leído."}}, "fr" : {"stringUnit" : {"state" : "needs_review", "value" : "Indications en attente. Le bot ne les a peut-être pas encore lues."}}, "it" : {"stringUnit" : {"state" : "needs_review", "value" : "Indicazioni in coda. Il bot potrebbe non averle ancora lette."}}, "pl" : {"stringUnit" : {"state" : "needs_review", "value" : "Wskazówki w kolejce. Bot mógł ich jeszcze nie przeczytać."}}, "pt-BR" : {"stringUnit" : {"state" : "needs_review", "value" : "Orientações na fila. O bot pode ainda não ter lido."}}, "nl" : {"stringUnit" : {"state" : "needs_review", "value" : "Aanwijzingen in de wachtrij. De bot heeft ze mogelijk nog niet gelezen."}}, "tr" : {"stringUnit" : {"state" : "needs_review", "value" : "Yönlendirme sıraya alındı. Bot henüz okumamış olabilir."}}, "ru" : {"stringUnit" : {"state" : "needs_review", "value" : "Указания в очереди. Возможно, бот ещё не прочитал их."}}, "ja" : {"stringUnit" : {"state" : "needs_review", "value" : "指示をキューに追加しました。ボットはまだ読んでいない可能性があります。"}}, "zh-Hans" : {"stringUnit" : {"state" : "needs_review", "value" : "指导已排队。机器人可能尚未读取。"}}, "ko" : {"stringUnit" : {"state" : "needs_review", "value" : "지침이 대기열에 추가되었습니다. 봇이 아직 읽지 않았을 수 있습니다."}}, "ar" : {"stringUnit" : {"state" : "needs_review", "value" : "أُضيفت التوجيهات إلى قائمة الانتظار. ربما لم يقرأها البوت بعد."}}, "he" : {"stringUnit" : {"state" : "needs_review", "value" : "ההנחיות נוספו לתור. ייתכן שהבוט עדיין לא קרא אותן."}}, "ur" : {"stringUnit" : {"state" : "needs_review", "value" : "رہنمائی قطار میں شامل ہو گئی۔ ممکن ہے بوٹ نے ابھی اسے نہ پڑھا ہو۔"}}, "zh-Hant" : {"stringUnit" : {"state" : "needs_review", "value" : "指引已排入佇列。機器人可能尚未讀取。"}}, "zh-HK" : {"stringUnit" : {"state" : "needs_review", "value" : "指引已加入佇列。機械人可能尚未讀取。"}}, "en" : {"stringUnit" : {"state" : "translated", "value" : "Guidance queued. The bot may not have read it yet."}}}},
+    "Header" : { "shouldTranslate" : false },
     "Hermes %@ is current. Checked today at %@." : {
       "localizations" : {
         "ar" : {
@@ -76554,6 +76564,7 @@
         }
       }
     },
+    "Page numbers" : { "shouldTranslate" : false },
     "Password or browser sign-in" : {
       "localizations" : {
         "ar" : {
@@ -77516,9 +77527,15 @@
     },
     "Restarts the JARVIS gateway. Running turns stop, and WhatsApp, Signal and the other channels reconnect within a minute." : { "shouldTranslate" : false },
     "Ringing now." : { "shouldTranslate" : false },
+    "Saved on this device · no other voters or aggregated results" : { "shouldTranslate" : false },
     "Scheduled for %@." : { "shouldTranslate" : false },
     "Scheduled tasks with issues" : { "shouldTranslate" : false },
+    "Select All" : { "shouldTranslate" : false },
+    "Select None" : { "shouldTranslate" : false },
+    "Selected messages" : { "shouldTranslate" : false },
     "Send voice note" : { "shouldTranslate" : false },
+    "Sent" : { "shouldTranslate" : false },
+    "Sent to JARVIS · your vote only, no aggregated results" : { "shouldTranslate" : false },
     "Sent. It should arrive in a few seconds." : {
       "localizations" : {
         "ar" : {
@@ -77735,6 +77752,8 @@
     "Speaker off" : { "shouldTranslate" : false },
     "Speaker on" : { "shouldTranslate" : false },
     "Speaking" : { "shouldTranslate" : false },
+    "Submit vote" : { "shouldTranslate" : false },
+    "Submitted" : { "shouldTranslate" : false },
     "Subscription usage" : { "shouldTranslate" : false },
     "Synced with this server's WebUI." : {
       "localizations" : {
@@ -78172,10 +78191,12 @@
     "This evening (8:30 PM)" : { "shouldTranslate" : false },
     "This server signs in through the browser, so JARVIS sends its own Authorization header. Remove this header to connect. For Cloudflare Access, use the CF-Access-Client-Id and CF-Access-Client-Secret headers instead." : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Dieser Server meldet sich über den Browser an, daher sendet JARVIS einen eigenen Authorization-Header. Entferne diesen Header, um dich zu verbinden. Verwende für Cloudflare Access stattdessen die Header CF-Access-Client-Id und CF-Access-Client-Secret." } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "Este servidor inicia sesión a través del navegador, así que JARVIS envía su propio encabezado Authorization. Quita este encabezado para conectarte. Para Cloudflare Access, usa en su lugar los encabezados CF-Access-Client-Id y CF-Access-Client-Secret." } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "Ce serveur se connecte via le navigateur, donc JARVIS envoie son propre en-tête Authorization. Supprimez cet en-tête pour vous connecter. Pour Cloudflare Access, utilisez plutôt les en-têtes CF-Access-Client-Id et CF-Access-Client-Secret." } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "Questo server accede tramite il browser, quindi JARVIS invia una propria intestazione Authorization. Rimuovi questa intestazione per connetterti. Per Cloudflare Access, usa invece le intestazioni CF-Access-Client-Id e CF-Access-Client-Secret." } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Ten serwer loguje się przez przeglądarkę, więc JARVIS wysyła własny nagłówek Authorization. Usuń ten nagłówek, aby się połączyć. W przypadku Cloudflare Access użyj zamiast tego nagłówków CF-Access-Client-Id i CF-Access-Client-Secret." } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "Este servidor faz login pelo navegador, então o JARVIS envia o próprio cabeçalho Authorization. Remova este cabeçalho para conectar. Para o Cloudflare Access, use os cabeçalhos CF-Access-Client-Id e CF-Access-Client-Secret." } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "Deze server meldt aan via de browser, dus JARVIS stuurt een eigen Authorization-header. Verwijder deze header om verbinding te maken. Gebruik voor Cloudflare Access in plaats daarvan de headers CF-Access-Client-Id en CF-Access-Client-Secret." } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Bu sunucu tarayıcı üzerinden oturum açar, bu yüzden JARVIS kendi Authorization başlığını gönderir. Bağlanmak için bu başlığı kaldırın. Cloudflare Access için bunun yerine CF-Access-Client-Id ve CF-Access-Client-Secret başlıklarını kullanın." } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Этот сервер выполняет вход через браузер, поэтому JARVIS отправляет собственный заголовок Authorization. Удалите этот заголовок, чтобы подключиться. Для Cloudflare Access используйте вместо него заголовки CF-Access-Client-Id и CF-Access-Client-Secret." } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "このサーバーはブラウザでサインインするため、JARVIS が独自の Authorization ヘッダーを送信します。接続するには、このヘッダーを削除してください。Cloudflare Access の場合は、代わりに CF-Access-Client-Id と CF-Access-Client-Secret ヘッダーを使用してください。" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "此服务器通过浏览器登录，因此 JARVIS 会发送它自己的 Authorization 请求头。请移除此请求头以连接。如使用 Cloudflare Access，请改用 CF-Access-Client-Id 和 CF-Access-Client-Secret 请求头。" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "이 서버는 브라우저로 로그인하므로 JARVIS가 자체 Authorization 헤더를 보냅니다. 연결하려면 이 헤더를 삭제하세요. Cloudflare Access에는 대신 CF-Access-Client-Id 및 CF-Access-Client-Secret 헤더를 사용하세요." } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "يسجّل هذا الخادم الدخول عبر المتصفح، لذا يرسل JARVIS ترويسة Authorization الخاصة به. أزل هذه الترويسة للاتصال. في Cloudflare Access، استخدم بدلًا منها الترويستين CF-Access-Client-Id وCF-Access-Client-Secret." } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "השרת הזה מתחבר דרך הדפדפן, ולכן JARVIS שולח כותרת Authorization משלו. הסר את הכותרת הזו כדי להתחבר. עבור Cloudflare Access, השתמש במקום זאת בכותרות CF-Access-Client-Id ו-CF-Access-Client-Secret." } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "یہ سرور براؤزر کے ذریعے سائن اِن کرتا ہے، اس لیے JARVIS اپنا Authorization ہیڈر بھیجتا ہے۔ کنیکٹ کرنے کے لیے یہ ہیڈر ہٹا دیں۔ Cloudflare Access کے لیے اس کی بجائے CF-Access-Client-Id اور CF-Access-Client-Secret ہیڈرز استعمال کریں۔" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "此伺服器透過瀏覽器登入，因此 JARVIS 會傳送它自己的 Authorization 標頭。請移除此標頭以連線。若使用 Cloudflare Access，請改用 CF-Access-Client-Id 和 CF-Access-Client-Secret 標頭。" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "此伺服器透過瀏覽器登入，因此 JARVIS 會傳送它自己的 Authorization 請求標頭。請移除此請求標頭以連線。若使用 Cloudflare Access，請改用 CF-Access-Client-Id 和 CF-Access-Client-Secret 請求標頭。" } } } },
     "This server signs in through your browser." : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Dieser Server meldet sich über deinen Browser an." } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "Este servidor inicia sesión a través de tu navegador." } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "Ce serveur se connecte via votre navigateur." } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "Questo server accede tramite il tuo browser." } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Ten serwer loguje się przez Twoją przeglądarkę." } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "Este servidor faz login pelo seu navegador." } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "Deze server meldt aan via je browser." } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Bu sunucu tarayıcınız üzerinden oturum açar." } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Этот сервер выполняет вход через ваш браузер." } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "このサーバーはブラウザでサインインします。" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "此服务器通过你的浏览器登录。" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "이 서버는 브라우저로 로그인합니다." } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "يسجّل هذا الخادم الدخول عبر متصفحك." } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "השרת הזה מתחבר דרך הדפדפן שלך." } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "یہ سرور آپ کے براؤزر کے ذریعے سائن اِن کرتا ہے۔" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "此伺服器透過你的瀏覽器登入。" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "此伺服器透過你的瀏覽器登入。" } } } },
+    "Timestamps" : { "shouldTranslate" : false },
     "Transcribing…" : { "shouldTranslate" : false },
     "Transcript" : { "shouldTranslate" : false },
     "Turn On" : { "shouldTranslate" : false },
     "Unmute" : { "shouldTranslate" : false },
+    "Unsupported content" : { "shouldTranslate" : false },
     "Uptime" : { "shouldTranslate" : false },
     "Use %@’s Headers" : {
       "localizations" : {
@@ -78393,6 +78414,7 @@
     "Voice note" : { "shouldTranslate" : false },
     "Voice unavailable" : { "shouldTranslate" : false },
     "When" : { "shouldTranslate" : false },
+    "Whole chat" : { "shouldTranslate" : false },
     "Working on it." : { "shouldTranslate" : false },
     "Workspaces" : { "shouldTranslate" : false },
     "You can do this later in Settings › %@." : {
@@ -78502,6 +78524,7 @@
       }
     },
     "Your Hermes sign-in expired. Sign in again." : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "Deine Hermes-Anmeldung ist abgelaufen. Melde dich erneut an." } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "Tu inicio de sesión en Hermes caducó. Vuelve a iniciar sesión." } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "Votre connexion à Hermes a expiré. Reconnectez-vous." } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "L’accesso a Hermes è scaduto. Accedi di nuovo." } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "Twoje logowanie do Hermes wygasło. Zaloguj się ponownie." } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "Seu login no Hermes expirou. Entre novamente." } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "Je aanmelding bij Hermes is verlopen. Meld je opnieuw aan." } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "Hermes oturumunuzun süresi doldu. Yeniden oturum açın." } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "Срок вашего входа в Hermes истёк. Войдите снова." } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "Hermes のサインインの有効期限が切れました。もう一度サインインしてください。" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "你的 Hermes 登录已过期。请重新登录。" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "Hermes 로그인이 만료되었습니다. 다시 로그인하세요." } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "انتهت صلاحية تسجيل دخولك إلى Hermes. سجّل الدخول مرة أخرى." } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "תוקף ההתחברות שלך ל-Hermes פג. התחבר שוב." } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "آپ کے Hermes سائن اِن کی میعاد ختم ہو گئی۔ دوبارہ سائن اِن کریں۔" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "你的 Hermes 登入已過期。請重新登入。" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "你的 Hermes 登入已過期。請重新登入。" } } } },
+    "Your selection only" : { "shouldTranslate" : false },
     "You’ll sign in to your Hermes host first." : {
       "localizations" : {
         "ar" : {
@@ -170065,6 +170088,7 @@
         }
       }
     },
+    "required" : { "shouldTranslate" : false },
     "secret" : { "localizations" : { "de" : { "stringUnit" : { "state" : "needs_review", "value" : "geheim" } }, "es" : { "stringUnit" : { "state" : "needs_review", "value" : "secreto" } }, "fr" : { "stringUnit" : { "state" : "needs_review", "value" : "secret" } }, "it" : { "stringUnit" : { "state" : "needs_review", "value" : "segreto" } }, "pl" : { "stringUnit" : { "state" : "needs_review", "value" : "sekret" } }, "pt-BR" : { "stringUnit" : { "state" : "needs_review", "value" : "secreto" } }, "nl" : { "stringUnit" : { "state" : "needs_review", "value" : "geheim" } }, "tr" : { "stringUnit" : { "state" : "needs_review", "value" : "gizli" } }, "ru" : { "stringUnit" : { "state" : "needs_review", "value" : "секрет" } }, "ja" : { "stringUnit" : { "state" : "needs_review", "value" : "シークレット" } }, "zh-Hans" : { "stringUnit" : { "state" : "needs_review", "value" : "密钥" } }, "ko" : { "stringUnit" : { "state" : "needs_review", "value" : "시크릿" } }, "ar" : { "stringUnit" : { "state" : "needs_review", "value" : "سري" } }, "he" : { "stringUnit" : { "state" : "needs_review", "value" : "סודי" } }, "ur" : { "stringUnit" : { "state" : "needs_review", "value" : "خفیہ" } }, "zh-Hant" : { "stringUnit" : { "state" : "needs_review", "value" : "密鑰" } }, "zh-HK" : { "stringUnit" : { "state" : "needs_review", "value" : "密鑰" } } } },
     "sessions started or updated in this hour" : {
       "extractionState" : "manual",
