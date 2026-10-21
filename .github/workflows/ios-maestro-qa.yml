@@ -103,6 +103,14 @@ jobs:
           BASE="http://127.0.0.1:$HERMES_PORT"
           PGID=$(ps -o pgid= -p "$(cat /tmp/local-hermes.pid)" | tr -d ' ')
           sudo renice -n -10 -g "$PGID" > /dev/null 2>&1 && echo "Hermes process group $PGID reniced to -10" || echo "renice not permitted"
+          # Run 39621937102: with the 1-minute load near 480 (the freshly booted simulator's
+          # diagnosticd, apsd, Family and friends), a warm host still took over 15 s, the app's
+          # request timeout, to answer the sign-in. Wait for the runner to settle (up to 8 min).
+          for i in $(seq 1 48); do
+            LOAD=$(sysctl -n vm.loadavg | awk '{print int($2)}')
+            [ "$LOAD" -lt 40 ] && break
+            echo "load $LOAD, waiting for the simulator to settle ($i)"; sleep 10
+          done
           uptime
           JAR=$(mktemp)
           timed() { local start=$(date +%s); curl -sS -o /dev/null -w "%{http_code}" --max-time 90 -b "$JAR" -c "$JAR" "$@" || true; echo " $(( $(date +%s) - start ))s  ${@: -1}"; }

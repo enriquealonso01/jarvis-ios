@@ -342,6 +342,7 @@ final class CallManager: NSObject, ObservableObject {
         guard activeCallUUID != nil else { return } // already ended/hangup path
         guard !callState.hasPrefix("failed") else { return }
         callState = "failed: \(why)"
+        JarvisClientLog.record("call", "call failed: \(why)")
         CallLogStore.shared.finish(id: logEntryID, outcome: "failed")
         logEntryID = nil
         callStart = nil
@@ -500,6 +501,7 @@ extension CallManager: PKPushRegistryDelegate {
         }
         // Exhausted (server down for the session): the next launch's
         // didUpdate credentials callback re-registers.
+        JarvisClientLog.record("push", "VoIP device registration failed after 5 attempts", path: "/bridge/register")
     }
 }
 

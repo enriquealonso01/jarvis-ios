@@ -109,6 +109,10 @@ import OSLog
         let standard = configuration.copy() as? URLSessionConfiguration ?? .ephemeral
         standard.timeoutIntervalForRequest = 15
         standard.timeoutIntervalForResource = 30
+        // Names the app in the server's access logs (requirement 9); a test's own headers stay.
+        var additional = standard.httpAdditionalHeaders ?? [:]
+        if additional["User-Agent"] == nil { additional["User-Agent"] = JarvisClientLog.userAgent }
+        standard.httpAdditionalHeaders = additional
         let provisioning = standard.copy() as? URLSessionConfiguration ?? .ephemeral
         provisioning.timeoutIntervalForRequest = 120
         provisioning.timeoutIntervalForResource = 180
@@ -379,6 +383,18 @@ import OSLog
     func authorized<T: Sendable>(_ request: URLRequest, deadline: Deadline = .standard,
                                  validateDispatch: (@MainActor () throws -> Void)? = nil,
                                  _ perform: @Sendable (URLRequest, URLSession) async throws -> T) async throws -> T {
+        do {
+            return try await authorizedSend(request, deadline: deadline, validateDispatch: validateDispatch, perform)
+        } catch {
+            // JARVIS reads the phone's failures beside the server's logs (requirement 9).
+            JarvisClientLog.recordRequestFailure(request, error)
+            throw error
+        }
+    }
+
+    private func authorizedSend<T: Sendable>(_ request: URLRequest, deadline: Deadline,
+                                             validateDispatch: (@MainActor () throws -> Void)?,
+                                             _ perform: @Sendable (URLRequest, URLSession) async throws -> T) async throws -> T {
         let request = prepared(request)
         let session = self.session(for: deadline)
         try await signIn(deadline: deadline)
