@@ -37,6 +37,7 @@ enum ChatPDFExport {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let isVoiceNote = (message.attachments ?? []).contains { VoiceNoteFilename.isVoiceNoteAttachment($0.name ?? $0.path) }
         if isVoiceNote { return content.isEmpty ? "Voice note" : "Voice note: \(content)" }
+        if VoiceNoteText.isVoiceNote(content) { return "Voice note: " + VoiceNoteText.transcript(from: content) }
         guard let parts = RichMessageSegments.split(content) else { return content }
         return parts.map { part -> String in
             switch part {

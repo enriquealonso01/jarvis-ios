@@ -92,8 +92,34 @@ struct MessageBubbleView: View {
 
     /// A voice note the user sent (requirement 12): only its audio bubble shows.
     private var isVoiceNote: Bool {
-        !textOnly && (message.attachments ?? []).contains {
+        !textOnly && ((message.attachments ?? []).contains {
             VoiceNoteFilename.isVoiceNoteAttachment($0.name ?? $0.path)
+        } || isTranscriptVoiceNote)
+    }
+
+    /// JARVIS: a voice note sent as its transcript only ("🎤 …"); its audio is on this phone.
+    private var isTranscriptVoiceNote: Bool {
+        !textOnly && VoiceNoteText.isVoiceNote(message.content)
+    }
+
+    /// The voice note's audio from this phone, or a note that it lives on the phone that sent it.
+    @ViewBuilder
+    private var localVoiceNotePlayer: some View {
+        let content = message.content ?? ""
+        if VoiceNoteLocalStore.shared.hasAudio(forMessageText: content) {
+            InlineAudioPlayerView(title: String(localized: "Voice note")) {
+                VoiceNoteLocalStore.shared.audio(forMessageText: content)
+            }
+            .frame(maxWidth: 280)
+            .accessibilityIdentifier("voiceNote.audio")
+        } else {
+            Label("Voice note", systemImage: "waveform")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(userBubbleBackground))
+                .accessibilityIdentifier("voiceNote.audioElsewhere")
         }
     }
 
@@ -108,6 +134,10 @@ struct MessageBubbleView: View {
         return VStack(alignment: .trailing, spacing: 8) {
             if !textOnly, let attachments = message.attachments, !attachments.isEmpty {
                 attachmentPreviews
+            }
+
+            if isTranscriptVoiceNote {
+                localVoiceNotePlayer
             }
 
             if isVoiceNote {
@@ -635,7 +665,9 @@ struct MessageBubbleView: View {
     /// The voice note's transcript button and overlay. The transcript is the message's own text
     /// (what the agent read); until the host has it, the button says so.
     private var voiceTranscriptButton: some View {
-        let transcript = userBubbleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let transcript = isTranscriptVoiceNote
+            ? VoiceNoteText.transcript(from: message.content ?? "")
+            : userBubbleText.trimmingCharacters(in: .whitespacesAndNewlines)
         return Button {
             showsVoiceTranscript = true
         } label: {

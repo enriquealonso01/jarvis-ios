@@ -619,6 +619,7 @@
 		BC887AA37FC423650C10BA6C /* JarvisWidgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D288D5E859CDB14194854AD9 /* JarvisWidgetTests.swift */; };
 		9E49A0E315D54C92FBAB395E /* JarvisClientLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */; };
 		85D43804AFA2C80C8B59F267 /* JarvisClientLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1E07C2F6245B1851CCEB47 /* JarvisClientLog.swift */; };
+		6DCD20D47F1FAC91CABFBF28 /* VoiceNoteLocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41FA8DA45F8DEDA706E83BE7 /* VoiceNoteLocalStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1276,6 +1277,7 @@
 		D288D5E859CDB14194854AD9 /* JarvisWidgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisWidgetTests.swift; sourceTree = "<group>"; };
 		9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClientLogTests.swift; sourceTree = "<group>"; };
 		DA1E07C2F6245B1851CCEB47 /* JarvisClientLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClientLog.swift; sourceTree = "<group>"; };
+		41FA8DA45F8DEDA706E83BE7 /* VoiceNoteLocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceNoteLocalStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1815,6 +1817,7 @@
 		1A2B3C4D5E6F7000000000C6 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
+				41FA8DA45F8DEDA706E83BE7 /* VoiceNoteLocalStore.swift */,
 				A67880F5BC765614975CA16A /* ChatPDFExport.swift */,
 				5B2FA0E3DFE844F8B3A710FD /* ChatComposerPresentation.swift */,
 				1A2B3C4D5E6F7000000000BF /* ChatView.swift */,
@@ -2459,6 +2462,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6DCD20D47F1FAC91CABFBF28 /* VoiceNoteLocalStore.swift in Sources */,
 				85D43804AFA2C80C8B59F267 /* JarvisClientLog.swift in Sources */,
 				F6BEBCD170AA4C7955DE8686 /* JarvisWidgetPreviewCard.swift in Sources */,
 				B20FBEF7E3003A6960A96315 /* JarvisWidgetSpec.swift in Sources */,

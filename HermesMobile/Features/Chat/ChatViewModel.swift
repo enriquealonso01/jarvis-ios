@@ -3396,15 +3396,17 @@ final class ChatViewModel {
             return false
         }
 
+        // JARVIS: transcribed once, here; the agent gets only the transcript, marked as spoken.
+        // The clip is never uploaded (no file.attach, no @file reference for the agent to
+        // transcribe again); its audio stays on this phone for the chat's audio bubble. Files
+        // the user staged for a typed message stay staged and don't ride along.
+        let text = VoiceNoteText.message(transcript: transcript)
+        VoiceNoteLocalStore.shared.save(audioData, forMessageText: text)
         let staged = attachmentCoordinator.consumePendingAttachments()
-        guard await attachmentCoordinator.uploadAttachment(data: audioData, filename: filename) != nil else {
-            attachmentCoordinator.replacePendingAttachments(staged)
-            return false
-        }
         let mode: BotPromptMode = activeStreamID == nil ? .send : .queue
-        let sent = await submitHermesPrompt(transcript, mode: mode, to: hermes)
-        // Sent: the clip's copy was consumed. Not sent: drop the clip, keep the user's own files.
-        attachmentCoordinator.replacePendingAttachments(sent ? staged + attachmentCoordinator.pendingAttachments : staged)
+        let sent = await submitHermesPrompt(text, mode: mode, to: hermes)
+        attachmentCoordinator.replacePendingAttachments(staged + attachmentCoordinator.pendingAttachments)
+        if !sent { VoiceNoteLocalStore.shared.remove(forMessageText: text) }
         return sent
     }
 
