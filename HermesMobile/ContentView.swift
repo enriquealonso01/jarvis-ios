@@ -530,6 +530,7 @@ struct HermesServerHome: View {
     /// JARVIS asks once, after the first sign-in, whether to turn on the Face ID lock.
     @State private var isOfferingAppLock = false
     @AppStorage("jarvis.appLockOffered") private var appLockOffered = false
+    @Environment(\.scenePhase) private var widgetScenePhase
 
     init(authManager: AuthManager, server: URL, pendingBotDestination: Binding<BotDestination?>,
          pendingSessionDestination: Binding<HermesSessionDestination?>, pendingNewChat: Binding<HermesNewChatDestination?>,
@@ -584,6 +585,12 @@ struct HermesServerHome: View {
             // authentication to turn on, so JARVIS offers it once instead of defaulting it on.
             if !appLockOffered, !AppLock.shared.isEnabled { isOfferingAppLock = true }
             await CallManager.shared.retryDeviceRegistration()
+        }
+        // JARVIS's home-screen widgets take their live data files' values each time the app
+        // comes forward (requirement 8).
+        .task(id: widgetScenePhase) {
+            guard widgetScenePhase == .active, let sessions else { return }
+            await JarvisWidgetRefresher.refresh(server: server, connection: sessions.entry.connection)
         }
         .alert("Lock JARVIS with Face ID?", isPresented: $isOfferingAppLock) {
             Button("Turn On") {

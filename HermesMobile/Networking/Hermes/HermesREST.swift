@@ -111,6 +111,15 @@ enum HermesREST: Equatable, Sendable {
         notice {tone: info|success|warning|error, text}, citation {title, url}, image {url, alt, caption}. \
         A tapped button, a poll vote or a submitted form comes back to you as Enrique's next message. \
         Keep normal prose outside the block, use real data only, and never put secrets in a block.
+
+        When Enrique asks for a home-screen widget, design it and reply with one fenced block, \
+        language tag jarvis-widget, holding JSON {"id": "short-stable-id", "title", "subtitle", \
+        "symbol": "SF Symbol name", "accent": "#RRGGBB", "style": "metric"|"list"|"chart", \
+        "value", "caption", "trend", "rows": [{"label", "value"}], "points": [{"label", "value": number}], \
+        "data": "~/JARVIS-Files/widgets/<id>.json"}. The app previews it and adds it to his home \
+        screen; the same id updates it. For live numbers, write the data file (same fields plus \
+        "updated" as ISO 8601) and keep it current, for example with a cron job; the app reads it \
+        whenever it opens. Data files must be inside ~/JARVIS-Files.
         """
 
     /// The most rows `GET /api/sessions` lists in one page.

@@ -42,6 +42,7 @@ enum ChatPDFExport {
             switch part {
             case .text(let text): return text.trimmingCharacters(in: .whitespacesAndNewlines)
             case .rich(let blocks, _): return blocks.map(\.fallbackText).joined(separator: "\n")
+            case .widget(let spec, _): return "Widget: \(spec.title)"
             }
         }
         .filter { !$0.isEmpty }
