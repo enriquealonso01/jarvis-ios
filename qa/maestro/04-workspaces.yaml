@@ -20,3 +20,17 @@ name: 04 projects and the workspace menu
 - waitForAnimationToEnd:
     timeout: 5000
 - takeScreenshot: 04-new-project
+# The New Session workspace menu: flow 03's session left a lane for its folder, so the
+# menu offers General plus that folder (under Repositories for an automatic lane).
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn: New Session
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: 04-workspace-menu
+- tapOn:
+    text: General
+    optional: true
