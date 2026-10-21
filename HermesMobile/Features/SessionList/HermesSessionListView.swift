@@ -66,6 +66,8 @@ struct HermesSessionListView: View {
     @State private var viewModel: SessionListViewModel
     /// The chat, pushed screens, sheets and confirmations over the rows.
     @State private var covers = HermesSessionListCovers()
+    /// New Session's "where?" sheet (JARVIS workspaces) is up.
+    @State private var isChoosingWorkspace = false
     @State private var actionToast = ActionToastState()
     /// The project lane the list shows; nil shows every session.
     @State private var selectedProjectID: String?
@@ -181,6 +183,7 @@ struct HermesSessionListView: View {
             .id(chat.id)
         }
         .navigationDestination(isPresented: $covers.showingCalls) { CallsView() }
+        .sheet(isPresented: $isChoosingWorkspace) { workspaceSheet }
         .navigationDestination(isPresented: $covers.showingFiles) {
             if let profile { JarvisFilesView(server: entry.server, connection: entry.connection, profile: profile) }
         }
@@ -378,51 +381,64 @@ struct HermesSessionListView: View {
     /// session at once, as in Hermex. Otherwise the tap asks where: the project lane on screen
     /// first, then General (the Profile's default folder) and every other workspace. A session's
     /// workspace is its working folder (`cwd`), so the host loads that folder's AGENTS.md /
-    /// CLAUDE.md / .hermes.md into the new conversation.
-    @ViewBuilder
+    /// CLAUDE.md / .hermes.md into the new conversation. The choice is a sheet rather than a
+    /// menu: with 15+ projects a list reads better, and a toolbar menu closed itself under the
+    /// list's live updates in Maestro run 39626602327.
     private var newSessionButton: some View {
-        if workspaces.isEmpty {
-            Button("New Session", systemImage: "square.and.pencil") { startNewSession(in: nil) }
-                .disabled(viewModel.isViewingCachedData || profile == nil)
-        } else {
-            workspaceMenu
-        }
-    }
-
-    private var workspaceMenu: some View {
-        Menu {
-            if let lane = workspaces.first(where: { $0.projectId == selectedProjectID }) {
-                Button("In \(lane.name ?? lane.hermes?.folder ?? "")", systemImage: "folder.fill") {
-                    startNewSession(in: lane.hermes?.folder)
-                }
-            }
-            Button("General", systemImage: "bubble.left.and.bubble.right") { startNewSession(in: nil) }
-            // The user's projects (the Hermes projects JARVIS registered), then the host's
-            // automatic per-repository lanes, each in the host's order.
-            let userWorkspaces = workspaces.filter { $0.hermes?.isAutomatic != true }
-            let repositories = workspaces.filter { $0.hermes?.isAutomatic == true }
-            if !userWorkspaces.isEmpty {
-                Section("Workspaces") {
-                    ForEach(userWorkspaces) { project in
-                        Button(project.name ?? project.hermes?.folder ?? "", systemImage: "folder") {
-                            startNewSession(in: project.hermes?.folder)
-                        }
-                    }
-                }
-            }
-            if !repositories.isEmpty {
-                Section("Repositories") {
-                    ForEach(repositories) { project in
-                        Button(project.name ?? project.hermes?.folder ?? "", systemImage: "folder.badge.gearshape") {
-                            startNewSession(in: project.hermes?.folder)
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label("New Session", systemImage: "square.and.pencil")
+        Button("New Session", systemImage: "square.and.pencil") {
+            if workspaces.isEmpty { startNewSession(in: nil) } else { isChoosingWorkspace = true }
         }
         .disabled(viewModel.isViewingCachedData || profile == nil)
+    }
+
+    private var workspaceSheet: some View {
+        // The user's projects (the Hermes projects JARVIS registered), then the host's automatic
+        // per-repository lanes, each in the host's order.
+        let userWorkspaces = workspaces.filter { $0.hermes?.isAutomatic != true }
+        let repositories = workspaces.filter { $0.hermes?.isAutomatic == true }
+        return NavigationStack {
+            List {
+                Section {
+                    if let lane = workspaces.first(where: { $0.projectId == selectedProjectID }) {
+                        workspaceRow(String(localized: "In \(lane.name ?? lane.hermes?.folder ?? "")"),
+                                     systemImage: "folder.fill", folder: lane.hermes?.folder)
+                    }
+                    workspaceRow(String(localized: "General"), systemImage: "bubble.left.and.bubble.right", folder: nil)
+                }
+                if !userWorkspaces.isEmpty {
+                    Section("Workspaces") {
+                        ForEach(userWorkspaces) { project in
+                            workspaceRow(project.name ?? project.hermes?.folder ?? "", systemImage: "folder",
+                                         folder: project.hermes?.folder)
+                        }
+                    }
+                }
+                if !repositories.isEmpty {
+                    Section("Repositories") {
+                        ForEach(repositories) { project in
+                            workspaceRow(project.name ?? project.hermes?.folder ?? "", systemImage: "folder.badge.gearshape",
+                                         folder: project.hermes?.folder)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("New Session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { isChoosingWorkspace = false } }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .accessibilityIdentifier("workspace.sheet")
+    }
+
+    private func workspaceRow(_ title: String, systemImage: String, folder: String?) -> some View {
+        Button {
+            isChoosingWorkspace = false
+            startNewSession(in: folder)
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
     }
 
     /// The listed Profile's projects that name a host folder, the user's first.
