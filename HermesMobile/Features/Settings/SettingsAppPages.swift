@@ -35,6 +35,7 @@ struct SettingsComposerPage: View {
     @AppStorage(ComposerSTTProviderPreference.storageKey) private var sttProviderPreferenceRawValue = ComposerSTTProviderPreference.defaultValue.rawValue
     @AppStorage(SectionVisibilitySettings.chatFilesKey) private var showsChatFilesButton = true
     @AppStorage(SectionVisibilitySettings.chatGitKey) private var showsChatGitControls = true
+    @AppStorage(JarvisVoiceNoteSettings.tapRecordsKey) private var micTapRecordsVoiceNote = true
 
     var body: some View {
         List {
@@ -66,6 +67,14 @@ struct SettingsComposerPage: View {
                         title: String(localized: "Dictation Provider"),
                         systemImage: "mic",
                         note: String(localized: "On-device only keeps audio on this iPhone.")
+                    )
+                }
+
+                Toggle(isOn: $micTapRecordsVoiceNote) {
+                    SettingsLabel(
+                        title: String(localized: "Tap Mic for Voice Note"),
+                        systemImage: "waveform",
+                        note: String(localized: "Off: a tap dictates text. Holding the mic always records a voice note.")
                     )
                 }
             }

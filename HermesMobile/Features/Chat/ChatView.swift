@@ -2698,7 +2698,8 @@ struct ChatView: View {
         let didSend = await viewModel.sendVoiceNote(
             audioData: audioData,
             filename: filename,
-            modelContext: modelContext
+            modelContext: modelContext,
+            transcriber: hermesTranscriber
         )
 
         if didSend {

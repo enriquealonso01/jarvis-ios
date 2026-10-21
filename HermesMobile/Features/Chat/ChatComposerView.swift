@@ -341,6 +341,9 @@ struct MessageComposerView: View {
     @State private var voiceInput = ComposerVoiceInputController()
     @State private var voiceNoteRecorder = ComposerVoiceNoteRecorder()
     @State private var voiceNoteCancelArmed = false
+    /// JARVIS: the note in progress was started with a tap, so it records hands-free.
+    @State private var voiceNoteHandsFree = false
+    @AppStorage(JarvisVoiceNoteSettings.tapRecordsKey) private var micTapRecordsVoiceNote = true
     @State private var didAutoStartVoiceInput = false
     @AppStorage(ComposerSTTProviderPreference.storageKey) private var sttProviderPreferenceRawValue = ComposerSTTProviderPreference.defaultValue.rawValue
     @AppStorage(SectionVisibilitySettings.chatGitKey) private var showsGitControls = true
@@ -546,12 +549,16 @@ struct MessageComposerView: View {
     private var composerWithLifecycle: some View {
         AdaptiveGlassContainer(spacing: 6) {
             VStack(spacing: 6) {
-                if voiceNoteRecorder.isRecording {
+                if voiceNoteRecorder.hasNoteInProgress {
                     ComposerVoiceRecordingBar(
                         elapsed: voiceNoteRecorder.elapsed,
                         isCancelArmed: voiceNoteCancelArmed,
                         onStop: { finishVoiceNote(translationHeight: 0) },
-                        onCancel: cancelVoiceNote
+                        onCancel: cancelVoiceNote,
+                        isPaused: voiceNoteRecorder.isPaused,
+                        isHandsFree: voiceNoteHandsFree,
+                        onPause: { voiceNoteRecorder.pause() },
+                        onResume: { voiceNoteRecorder.resume() }
                     )
                     .padding(.horizontal, 16)
                 } else if let voiceNoteStatus {
@@ -743,9 +750,9 @@ struct MessageComposerView: View {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active {
                 voiceInput.suspend()
-                // Backgrounding stops the recorder's run-loop ticker, so cancel
-                // the in-flight recording rather than leave it silently stalled.
-                cancelVoiceNote()
+                // JARVIS: leaving the app or locking the phone pauses a voice note; it is never
+                // discarded or sent by itself. Continue, Send and Delete wait on return.
+                if newPhase == .background { voiceNoteRecorder.pause() }
             } else {
                 voiceInput.resume()
                 // An intent that opened this composer may have foregrounded the app
@@ -1046,8 +1053,8 @@ struct MessageComposerView: View {
             isListening: voiceInput.isListening,
             isDisabled: isVoiceInputDisabled,
             color: metaControlColor,
-            isRecordingVoiceNote: voiceNoteRecorder.isRecording,
-            onTap: toggleVoiceInput,
+            isRecordingVoiceNote: voiceNoteRecorder.hasNoteInProgress,
+            onTap: micTapped,
             onRecordingStart: startVoiceNoteRecording,
             onRecordingDragChanged: { height in
                 voiceNoteCancelArmed = ComposerVoiceNoteGesture.isCancelArmed(dragTranslationHeight: height)
@@ -1550,6 +1557,19 @@ struct MessageComposerView: View {
     }
 
     @MainActor
+    /// JARVIS: a tap records a hands-free voice note (Settings → Composer can make it dictate
+    /// instead, as in Hermex); a hold records while held, as before.
+    @MainActor
+    private func micTapped() {
+        if micTapRecordsVoiceNote && !voiceInput.isListening {
+            if voiceNoteRecorder.hasNoteInProgress { return }
+            startVoiceNoteRecording()
+            voiceNoteHandsFree = true
+        } else {
+            toggleVoiceInput()
+        }
+    }
+
     private func toggleVoiceInput() {
         voiceInput.transcribe = hermesTranscriber ?? apiClient?.dictationTranscriber
         voiceInput.providerPreference = ComposerSTTProviderPreference.storedValue(sttProviderPreferenceRawValue)
@@ -1562,7 +1582,8 @@ struct MessageComposerView: View {
     /// disabled conditions; stops dictation first if it's running.
     @MainActor
     private func startVoiceNoteRecording() {
-        guard !isVoiceNoteRecordingDisabled, !voiceNoteRecorder.isRecording else { return }
+        guard !isVoiceNoteRecordingDisabled, !voiceNoteRecorder.hasNoteInProgress else { return }
+        voiceNoteHandsFree = false
 
         if voiceInput.isListening {
             voiceInput.stopKeepingTranscript()
@@ -1577,6 +1598,7 @@ struct MessageComposerView: View {
     private func finishVoiceNote(translationHeight: CGFloat) {
         let shouldCancel = ComposerVoiceNoteGesture.isCancelArmed(dragTranslationHeight: translationHeight)
         voiceNoteCancelArmed = false
+        voiceNoteHandsFree = false
 
         guard !shouldCancel else {
             voiceNoteRecorder.cancel()
@@ -1590,6 +1612,7 @@ struct MessageComposerView: View {
     @MainActor
     private func cancelVoiceNote() {
         voiceNoteCancelArmed = false
+        voiceNoteHandsFree = false
         voiceNoteRecorder.cancel()
     }
 
