@@ -33,51 +33,10 @@ name: 06 voice note pause continue and delete
     optional: true
 - waitForAnimationToEnd:
     timeout: 3000
-# An empty bar ends in the camera and the mic (Signal/WhatsApp); no greyed-out Send.
-- assertVisible: Camera
-# A quick tap: the note starts and stays recording, locked (Pause, Delete, Send).
-- tapOn:
-    text: Voice input
-- tapOn:
-    text: Allow
-    optional: true
-- extendedWaitUntil:
-    visible: Delete voice note
-    timeout: 15000
-- assertVisible: Pause
-- takeScreenshot: 06-locked
-- tapOn: Pause
-- extendedWaitUntil:
-    visible: Resume
-    timeout: 5000
-- assertVisible: Paused
-- takeScreenshot: 06-paused
-- tapOn: Resume
-- extendedWaitUntil:
-    visible: Pause
-    timeout: 5000
-- takeScreenshot: 06-resumed
-- tapOn: Delete voice note
-- extendedWaitUntil:
-    notVisible: Delete voice note
-    timeout: 5000
-- takeScreenshot: 06-deleted
-- assertVisible: Camera
-# Press, hold and swipe up: locked, so lifting the finger doesn't send.
-- swipe:
-    from:
-      text: Voice input
-    direction: UP
-    duration: 1500
-- extendedWaitUntil:
-    visible: Delete voice note
-    timeout: 10000
-- assertVisible: Pause
-- takeScreenshot: 06-swipe-up-locked
-- tapOn: Delete voice note
-- extendedWaitUntil:
-    notVisible: Delete voice note
-    timeout: 5000
+- runFlow:
+    file: lib/voice-note-controls.yaml
+    env:
+      PREFIX: "06"
 # Press, hold and slide left: cancelled, nothing left behind.
 - swipe:
     from:
@@ -85,5 +44,5 @@ name: 06 voice note pause continue and delete
     direction: LEFT
     duration: 1500
 - assertNotVisible: Delete voice note
-- assertNotVisible: Automated QA ping
+- assertVisible: Camera
 - takeScreenshot: 06-slide-left-cancelled

@@ -1,0 +1,33 @@
+appId: com.enriquecodes.jarvis
+# The same voice-note controls with the KEYBOARD OPEN (Enrique: "even when the keyboard is
+# open", build 83). The field is focused first; holding the mic swaps the whole input bar for
+# the recording bar, and the controls are pressed by coordinate.
+name: 09 voice note keyboard open
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- retry:
+    maxRetries: 3
+    commands:
+      - waitForAnimationToEnd:
+          timeout: 5000
+      - tapOn: New Session
+      - tapOn:
+          text: General
+          optional: true
+      - extendedWaitUntil:
+          visible: Ask anything.*
+          timeout: 10000
+# Keyboard up: tap the field.
+- tapOn:
+    text: Ask anything.*
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 09-keyboard-open
+- runFlow:
+    file: lib/voice-note-controls.yaml
+    env:
+      PREFIX: "09"
