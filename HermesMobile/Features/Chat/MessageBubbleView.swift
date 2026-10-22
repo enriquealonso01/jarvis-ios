@@ -102,13 +102,17 @@ struct MessageBubbleView: View {
         !textOnly && VoiceNoteText.isVoiceNote(message.content)
     }
 
+    /// Recorded, in the chat, and still waiting to be transcribed and sent (`VoiceNoteOutbox`).
+    private var isPendingVoiceNote: Bool {
+        VoiceNoteOutbox.entryID(fromMessageID: message.messageId) != nil
+    }
+
     /// The voice note's audio from this phone, or a note that it lives on the phone that sent it.
     @ViewBuilder
     private var localVoiceNotePlayer: some View {
-        let content = message.content ?? ""
-        if VoiceNoteLocalStore.shared.hasAudio(forMessageText: content) {
+        if VoiceNoteLocalStore.shared.hasAudio(for: message) {
             InlineAudioPlayerView(title: String(localized: "Voice note")) {
-                VoiceNoteLocalStore.shared.audio(forMessageText: content)
+                VoiceNoteLocalStore.shared.audio(for: message)
             }
             .frame(maxWidth: 280)
             .accessibilityIdentifier("voiceNote.audio")
@@ -671,7 +675,8 @@ struct MessageBubbleView: View {
         return Button {
             showsVoiceTranscript = true
         } label: {
-            Label(transcript.isEmpty ? "Transcribing…" : "Transcript", systemImage: "text.bubble")
+            Label(transcript.isEmpty ? (isPendingVoiceNote ? "Waiting to send…" : "Transcribing…") : "Transcript",
+                  systemImage: transcript.isEmpty && isPendingVoiceNote ? "clock" : "text.bubble")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         }

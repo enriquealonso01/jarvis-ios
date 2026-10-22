@@ -196,6 +196,8 @@ final class ComposerVoiceNoteRecorder {
     private(set) var state: State = .idle
     private(set) var elapsed: TimeInterval = 0
     private(set) var errorMessage: String?
+    /// A tip after a press that recorded nothing (too short): how the mic works.
+    private(set) var hintMessage: String?
     /// Release no longer sends: the note waits for Send in the bar.
     private(set) var isLocked = false
     /// Recent input levels, 0...1, for the live waveform.
@@ -268,6 +270,7 @@ final class ComposerVoiceNoteRecorder {
     func begin(locked: Bool = false) async {
         guard state == .idle else { return }
         errorMessage = nil
+        hintMessage = nil
         elapsed = 0
         levels = []
         isLocked = locked
@@ -343,6 +346,10 @@ final class ComposerVoiceNoteRecorder {
     /// Says why a finished note was not sent (silent, too short, undecodable).
     func reject(_ message: String) {
         errorMessage = message
+    }
+
+    func hint(_ message: String) {
+        hintMessage = message
     }
 
     private func finishDiagnostics(fileBytes: Int, duration: TimeInterval, analysis: VoiceNoteAudioAnalysis?) -> String {
@@ -590,5 +597,104 @@ enum ComposerVoiceNoteGesture {
     /// How far the slide-to-cancel has gone, 0...1, for the hint.
     static func cancelProgress(translationWidth: CGFloat) -> CGFloat {
         max(0, min(1, -translationWidth / cancelTranslationThreshold))
+    }
+}
+
+extension ComposerVoiceNoteGesture {
+    /// How far the held finger has swiped up toward the lock, 0...1.
+    static func lockProgress(translationHeight: CGFloat) -> CGFloat {
+        max(0, min(1, -translationHeight / lockTranslationThreshold))
+    }
+
+    enum Event: Equatable {
+        case touchDown(Date)
+        /// With taps set to dictate, the hold delay passed with the finger still down.
+        case holdDelayElapsed
+        case moved(CGSize)
+        case released(Date)
+        /// The system took the touch: a call, the app switcher, the lock screen, Control Center.
+        case cancelled
+    }
+
+    enum Effect: Equatable {
+        case begin
+        case drag(CGSize)
+        case lock
+        case cancel
+        case send
+        /// Dictation (taps set to dictate).
+        case tap
+    }
+
+    /// The mic's press as a state machine, apart from the view: what each touch event does,
+    /// given whether a tap records (or dictates), whether the note is locked, and whether a
+    /// note is already in progress. The view only runs the effects. Enrique (build 82): "if I
+    /// hold it and stop holding, or something happens, it doesn't quite work"; every path here
+    /// ends in a note that is sent, locked, or deliberately cancelled, and never in a stuck press.
+    struct Tracker: Equatable {
+        enum Phase: Equatable {
+            case idle
+            /// Finger down; `recording` once the note started (at once, or after the hold delay).
+            case pressing(began: Date, recording: Bool)
+            /// Locked or cancelled by a drag while the finger is still down: the release does nothing.
+            case settled
+            /// The press began on a note in progress or a disabled mic: nothing until it ends.
+            case ignored
+        }
+
+        private(set) var phase = Phase.idle
+        var isPressing: Bool { phase != .idle }
+        /// A hold timer is wanted: taps dictate and the note hasn't started.
+        var awaitsHoldDelay: Bool {
+            if case .pressing(_, false) = phase { return true }
+            return false
+        }
+
+        mutating func apply(_ event: Event, tapRecords: Bool, isLocked: Bool, noteInProgress: Bool,
+                            isDisabled: Bool) -> [Effect] {
+            switch (phase, event) {
+            case (.idle, .touchDown(let at)):
+                if noteInProgress || isDisabled { phase = .ignored; return [] }
+                if tapRecords { phase = .pressing(began: at, recording: true); return [.begin] }
+                phase = .pressing(began: at, recording: false)
+                return []
+            case (.pressing(let began, false), .holdDelayElapsed):
+                phase = .pressing(began: began, recording: true)
+                return [.begin]
+            case (.pressing(_, true), .moved(let translation)):
+                switch ComposerVoiceNoteGesture.dragAction(translation: translation) {
+                case .lock: phase = .settled; return [.drag(.zero), .lock]
+                case .cancel: phase = .settled; return [.drag(.zero), .cancel]
+                case .none: return [.drag(translation)]
+                }
+            case (.pressing(_, false), .released):
+                phase = .idle
+                return isDisabled ? [] : [.tap]
+            case (.pressing(let began, true), .released(let at)):
+                phase = .idle
+                switch ComposerVoiceNoteGesture.releaseAction(isLocked: isLocked, wasCancelled: false, heldFor: at.timeIntervalSince(began)) {
+                case .send: return [.drag(.zero), .send]
+                case .lock: return [.drag(.zero), .lock]
+                case .none: return [.drag(.zero)]
+                }
+            case (.pressing(_, true), .cancelled):
+                // Never lose the words: an interrupted hold leaves the note recording, locked;
+                // the interruption itself pauses it when it takes the microphone.
+                phase = .idle
+                return isLocked ? [.drag(.zero)] : [.drag(.zero), .lock]
+            case (.idle, .released(let at)):
+                // A tap so quick it arrives as an end alone (Maestro's taps do).
+                var effects = apply(.touchDown(at), tapRecords: tapRecords, isLocked: isLocked,
+                                    noteInProgress: noteInProgress, isDisabled: isDisabled)
+                effects += apply(.released(at), tapRecords: tapRecords, isLocked: isLocked,
+                                 noteInProgress: noteInProgress, isDisabled: isDisabled)
+                return effects
+            case (_, .released), (_, .cancelled):
+                phase = .idle
+                return [.drag(.zero)]
+            default:
+                return []
+            }
+        }
     }
 }

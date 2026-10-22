@@ -1041,6 +1041,13 @@ struct ChatView: View {
             }
             .onAppear {
                 viewModel.protectDraftAttachments(for: draftKey)
+                // JARVIS voice notes are queued offline-first; the host's transcription and the
+                // "conversation started" come later, through these.
+                viewModel.voiceNoteTranscriber = hermesTranscriber
+                viewModel.onVoiceNoteSent = {
+                    onConversationStarted()
+                    ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
+                }
                 isOnScreen = true
                 appearanceTask?.cancel()
                 appearanceTask = Task {
@@ -2723,9 +2730,13 @@ struct ChatView: View {
             transcriber: hermesTranscriber
         )
 
+        // JARVIS: a Hermes note is queued at once and sent when connected; `onVoiceNoteSent`
+        // marks the conversation started then. A webui note still sends here.
         if didSend {
-            onConversationStarted()
-            ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
+            if !isHermesSession {
+                onConversationStarted()
+                ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
+            }
             offerNotificationsIfNeeded()
         }
 

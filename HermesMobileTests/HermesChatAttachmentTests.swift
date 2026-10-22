@@ -88,6 +88,46 @@ import UIKit
         VoiceNoteLocalStore.shared.remove(forMessageText: "🎤 Hello Jarvis, this is a test.")
     }
 
+    /// JARVIS (offline-first, Enrique 2026-10-22): a note whose transcription can't reach the
+    /// host is in the chat at once as a pending bubble with its clip on the phone, and in the
+    /// outbox; the next drain, once the host answers, sends the transcript only and clears it.
+    func testAQueuedVoiceNoteWaitsForTheHostThenSendsItsTranscript() async throws {
+        let chat = await openChat()
+        VoiceNoteOutbox.shared.removeAll()
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("streaming")])))
+        var online = false
+        var transcriptions = 0
+        chat.model.voiceNoteTranscriber = { _, _ in
+            transcriptions += 1
+            guard online else { throw URLError(.notConnectedToInternet) }
+            return TranscribeResponse(ok: true, transcript: "Queued while offline.", error: nil)
+        }
+        let audio = Data("m4a bytes".utf8)
+        let sent = await chat.model.sendVoiceNote(audioData: audio, filename: "voice-note-1234abcd.m4a")
+        XCTAssertTrue(sent, "queued at once")
+        let pending = try XCTUnwrap(chat.model.messages.last)
+        XCTAssertTrue(pending.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true)
+        XCTAssertEqual(pending.role, "user")
+        XCTAssertEqual(pending.content, "🎤")
+        XCTAssertEqual(VoiceNoteLocalStore.shared.audio(for: pending), audio, "the clip is on the phone before any network")
+        XCTAssertEqual(chat.writes("prompt.submit"), [], "nothing reached the host")
+        XCTAssertEqual(transcriptions, 1)
+        let chatKey = VoiceNoteOutbox.chatKey(for: chat.turn.currentDraftKey)
+        XCTAssertEqual(VoiceNoteOutbox.shared.entries(for: chatKey).count, 1)
+
+        online = true
+        await chat.model.drainVoiceNoteOutbox()
+        XCTAssertEqual(transcriptions, 2, "transcribed once more, successfully")
+        XCTAssertEqual(chat.writes("prompt.submit").map { $0["text"] }, [.string("🎤 Queued while offline.")])
+        XCTAssertFalse(chat.model.messages.contains { $0.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true })
+        let row = try XCTUnwrap(chat.model.messages.last)
+        XCTAssertEqual(row.content, "🎤 Queued while offline.")
+        XCTAssertNil(row.attachments)
+        XCTAssertEqual(VoiceNoteLocalStore.shared.audio(for: row), audio, "the bubble still plays it")
+        XCTAssertTrue(VoiceNoteOutbox.shared.entries(for: chatKey).isEmpty)
+        VoiceNoteLocalStore.shared.remove(forMessageText: "🎤 Queued while offline.")
+    }
+
     func testVoiceNoteTextMarker() {
         XCTAssertEqual(VoiceNoteText.message(transcript: " hi "), "🎤 hi")
         XCTAssertTrue(VoiceNoteText.isVoiceNote("🎤 hi"))

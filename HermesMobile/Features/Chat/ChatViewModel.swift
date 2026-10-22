@@ -3079,6 +3079,8 @@ final class ChatViewModel {
         let retriesHistory = hermes.hasHistoryFailure
         await hermes.activate()
         if retriesHistory { await hermes.retryHistoryIfFailed() }
+        restoreQueuedVoiceNoteRows()
+        await drainVoiceNoteOutbox()
     }
 
     /// Sends one prompt to the Hermes session in `mode`, once (#1010). A Send shows the
@@ -3258,9 +3260,13 @@ final class ChatViewModel {
     @discardableResult
     func sendVoiceNote(audioData: Data, filename: String, modelContext: ModelContext? = nil,
                        transcriber: ComposerTranscriber? = nil) async -> Bool {
-        if let hermes = hermesTurn {
-            guard let transcriber else { return false }
-            return await sendHermesVoiceNote(audioData: audioData, filename: filename, transcriber: transcriber, to: hermes)
+        if hermesTurn != nil {
+            // JARVIS: offline-first. The bubble and the clip are in the chat at once; the
+            // transcript and the text-only prompt follow while connected (`drainVoiceNoteOutbox`).
+            if let transcriber { voiceNoteTranscriber = transcriber }
+            enqueueVoiceNote(audioData: audioData, filename: filename)
+            await drainVoiceNoteOutbox()
+            return true
         }
         // Reentrancy guard: bail if a voice note OR a regular chat send is already
         // in flight. `performChatSend` has no internal guard, so two overlapping
@@ -3365,49 +3371,113 @@ final class ChatViewModel {
     /// the note as an audio bubble with a transcript button, never the transcript as text
     /// (`MessageBubbleView`, `VoiceNoteFilename.isVoiceNoteAttachment`). Files already staged in
     /// the composer stay there for the next send.
-    private func sendHermesVoiceNote(audioData: Data, filename: String, transcriber: ComposerTranscriber,
-                                     to hermes: HermesChatTurnCoordinator) async -> Bool {
-        guard !isSendingVoiceNote, !isStartingChat, !audioData.isEmpty else { return false }
-        isSendingVoiceNote = true
-        setUploadAttachmentError(nil)
-        sendErrorMessage = nil
-        defer { isSendingVoiceNote = false }
+    // MARK: - JARVIS voice notes (requirement 12, offline-first)
 
-        let transcript: String
-        do {
-            let response = try await transcriber(audioData, filename)
-            if let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
-                JarvisClientLog.record("voice", "transcribe refused (\(audioData.count) bytes): \(error.prefix(120))",
+    /// Transcribes a queued note once the chat is connected (`HermesTranscription`); set by the
+    /// chat screen.
+    var voiceNoteTranscriber: ComposerTranscriber?
+    /// A queued note reached the host as its prompt: the chat screen's "conversation started".
+    var onVoiceNoteSent: (() -> Void)?
+    @ObservationIgnored private var isDrainingVoiceNotes = false
+
+    private var voiceNoteChatKey: String? {
+        hermesTurn.map { VoiceNoteOutbox.chatKey(for: $0.currentDraftKey) }
+    }
+
+    /// Puts the note in the chat now: its clip on the phone, its bubble at the end of the
+    /// transcript (a user row that keeps the marker alone until the transcript lands), and an
+    /// outbox entry that survives a relaunch. Nothing here needs the network.
+    func enqueueVoiceNote(audioData: Data, filename: String) {
+        guard let chatKey = voiceNoteChatKey, !audioData.isEmpty else { return }
+        let entry = VoiceNoteOutboxEntry(id: UUID().uuidString.lowercased(), chatKey: chatKey, filename: filename, createdAt: Date())
+        VoiceNoteLocalStore.shared.save(audioData, id: entry.id)
+        VoiceNoteOutbox.shared.add(entry)
+        messages.append(VoiceNoteOutbox.pendingMessage(for: entry))
+        scheduleStreamingScrollTrigger()
+        JarvisClientLog.record("voice", "queued \(audioData.count) bytes (\(filename))")
+    }
+
+    /// Sends the chat's queued notes in order, each transcribed once and submitted as its
+    /// transcript only (`VoiceNoteText`), never its audio. Stops at the first note the network
+    /// or the host won't take yet; the next connect, foreground or send tries again. A note the
+    /// host's speech-to-text refuses is dropped with the reason, as a failed send would be.
+    func drainVoiceNoteOutbox() async {
+        guard let hermes = hermesTurn, let chatKey = voiceNoteChatKey, !isDrainingVoiceNotes else { return }
+        isDrainingVoiceNotes = true
+        defer { isDrainingVoiceNotes = false }
+        for var entry in VoiceNoteOutbox.shared.entries(for: chatKey) {
+            guard hermes.engine.connectionState == .connected, !isViewingCachedData, !isHermesSubmissionUncertain else { return }
+            if entry.transcript == nil {
+                guard let audio = VoiceNoteLocalStore.shared.audio(forID: entry.id) else {
+                    dropQueuedVoiceNote(entry, reason: String(localized: "This voice note's recording is gone from the phone."))
+                    continue
+                }
+                guard let transcriber = voiceNoteTranscriber else { return }
+                isSendingVoiceNote = true
+                defer { isSendingVoiceNote = false }
+                entry.attempts += 1
+                let transcript: String
+                do {
+                    let response = try await transcriber(audio, entry.filename)
+                    if let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+                        JarvisClientLog.record("voice", "transcribe refused (\(audio.count) bytes): \(error.prefix(120))",
+                                               path: "/api/audio/transcribe")
+                        dropQueuedVoiceNote(entry, reason: error)
+                        continue
+                    }
+                    transcript = (response.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                } catch {
+                    // The network or the host: the note waits, as recorded, for the next try.
+                    JarvisClientLog.record("voice", "transcribe failed (\(audio.count) bytes, try \(entry.attempts)): "
+                                           + HermesConnectionLog.reason(error), path: "/api/audio/transcribe")
+                    VoiceNoteOutbox.shared.update(entry)
+                    return
+                }
+                JarvisClientLog.record("voice", "transcribed \(audio.count) bytes to \(transcript.count) chars",
                                        path: "/api/audio/transcribe")
-                setUploadAttachmentError(error)
-                return false
+                guard !transcript.isEmpty else {
+                    dropQueuedVoiceNote(entry, reason: String(localized: "Couldn't transcribe that voice note. Try recording again."))
+                    continue
+                }
+                entry.transcript = transcript
+                VoiceNoteOutbox.shared.update(entry)
             }
-            transcript = (response.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            JarvisClientLog.record("voice", "transcribe failed (\(audioData.count) bytes): \(HermesConnectionLog.reason(error))",
-                                   path: "/api/audio/transcribe")
-            setUploadAttachmentError(error.localizedDescription)
-            return false
+            guard let transcript = entry.transcript else { continue }
+            let text = VoiceNoteText.message(transcript: transcript)
+            VoiceNoteLocalStore.shared.link(messageText: text, toID: entry.id)
+            // The prompt's own row takes the pending row's place; files staged for a typed
+            // message stay staged and don't ride along.
+            messages.removeAll { $0.messageId == entry.messageID }
+            let staged = attachmentCoordinator.consumePendingAttachments()
+            let mode: BotPromptMode = activeStreamID == nil ? .send : .queue
+            let sent = await submitHermesPrompt(text, mode: mode, to: hermes)
+            attachmentCoordinator.replacePendingAttachments(staged + attachmentCoordinator.pendingAttachments)
+            guard sent else {
+                // Lost answer (#508): Hermex never resends a prompt the host may have run, so
+                // the note shows with its transcript and leaves the queue. Anything else waits.
+                if isHermesSubmissionUncertain { VoiceNoteOutbox.shared.remove(id: entry.id) }
+                messages.append(VoiceNoteOutbox.pendingMessage(for: entry))
+                return
+            }
+            VoiceNoteOutbox.shared.remove(id: entry.id)
+            onVoiceNoteSent?()
         }
-        JarvisClientLog.record("voice", "transcribed \(audioData.count) bytes to \(transcript.count) chars",
-                               path: "/api/audio/transcribe")
-        guard !transcript.isEmpty else {
-            setUploadAttachmentError(String(localized: "Couldn't transcribe that voice note. Try recording again."))
-            return false
-        }
+    }
 
-        // JARVIS: transcribed once, here; the agent gets only the transcript, marked as spoken.
-        // The clip is never uploaded (no file.attach, no @file reference for the agent to
-        // transcribe again); its audio stays on this phone for the chat's audio bubble. Files
-        // the user staged for a typed message stay staged and don't ride along.
-        let text = VoiceNoteText.message(transcript: transcript)
-        VoiceNoteLocalStore.shared.save(audioData, forMessageText: text)
-        let staged = attachmentCoordinator.consumePendingAttachments()
-        let mode: BotPromptMode = activeStreamID == nil ? .send : .queue
-        let sent = await submitHermesPrompt(text, mode: mode, to: hermes)
-        attachmentCoordinator.replacePendingAttachments(staged + attachmentCoordinator.pendingAttachments)
-        if !sent { VoiceNoteLocalStore.shared.remove(forMessageText: text) }
-        return sent
+    private func dropQueuedVoiceNote(_ entry: VoiceNoteOutboxEntry, reason: String) {
+        VoiceNoteOutbox.shared.remove(id: entry.id)
+        VoiceNoteLocalStore.shared.remove(id: entry.id)
+        messages.removeAll { $0.messageId == entry.messageID }
+        setUploadAttachmentError(reason)
+    }
+
+    /// The chat's queued notes as rows, after a transcript replaced the rows (an attach, a
+    /// turn's end): each once, at the end, in order.
+    private func restoreQueuedVoiceNoteRows() {
+        guard let chatKey = voiceNoteChatKey else { return }
+        for entry in VoiceNoteOutbox.shared.entries(for: chatKey) where !messages.contains(where: { $0.messageId == entry.messageID }) {
+            messages.append(VoiceNoteOutbox.pendingMessage(for: entry))
+        }
     }
 
     /// Shared optimistic-append + `startChat` + rollback core used by both the
@@ -6620,11 +6690,19 @@ final class ChatViewModel {
            let index = messages.firstIndex(where: { $0.messageId == streamingAssistantMessageID }) {
             let existing = messages[index]
             let currentContent = existing.content ?? ""
-            let textToAppend = deduplicatedReplayText(
+            var textToAppend = deduplicatedReplayText(
                 text,
                 existingContent: currentContent,
                 matchedPrefixLength: &activeStreamReplayMatchedInterimLength
             )
+            // JARVIS: the row already carries this interim's words, from the deltas that
+            // streamed them or from the snapshot an attach rebuilt the turn from, while the host
+            // reported it as not yet streamed (or replayed it). The same acknowledgement
+            // ("On it, sir...") showed twice on the phone, once per chat start. Only the part
+            // the row doesn't have yet is added, whatever the connection.
+            if !isActiveStreamReplayConnection {
+                textToAppend = Self.interimRemainder(textToAppend, alreadyShown: currentContent)
+            }
             guard !textToAppend.isEmpty else { return false }
 
             let shouldAppendReplaySuffixDirectly = isActiveStreamReplayConnection && textToAppend != text
@@ -6650,6 +6728,23 @@ final class ChatViewModel {
         }
 
         return appendAssistantToken(text)
+    }
+
+    /// What an interim reply adds to a row that may already show it, whitespace aside: nothing
+    /// when the row holds the whole text (as its end, or as a paragraph of its own), the
+    /// unseen tail when the interim extends the row's text, else the whole interim.
+    static func interimRemainder(_ text: String, alreadyShown shown: String) -> String {
+        func normalized(_ value: String) -> String {
+            value.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        }
+        let interim = normalized(text), current = normalized(shown)
+        guard !interim.isEmpty, !current.isEmpty else { return text }
+        if current == interim || current.hasSuffix(interim) { return "" }
+        if interim.hasPrefix(current) {
+            return String(interim.dropFirst(current.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if shown.components(separatedBy: "\n\n").map(normalized).contains(interim) { return "" }
+        return text
     }
 
     private func applyCompletedStreamSession(_ completedSession: SessionDetail) {
@@ -7674,7 +7769,9 @@ final class ChatViewModel {
         var own: [(after: String?, row: ChatMessage)] = []
         var previous: String?
         for message in shown {
-            if message.messageId?.hasPrefix(hermesBackgroundCardPrefix) == true || message.role?.hasPrefix("local_") == true {
+            // JARVIS: a voice note waiting to be sent (`VoiceNoteOutbox`) is this phone's row too.
+            if message.messageId?.hasPrefix(hermesBackgroundCardPrefix) == true || message.role?.hasPrefix("local_") == true
+                || message.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true {
                 own.append((previous, message))
             } else {
                 previous = message.messageId ?? "" // A row without an id is never found again.
@@ -8056,6 +8153,7 @@ extension ChatViewModel: HermesChatTurnDelegate {
             + (transcript.streamingReply.map { [$0] } ?? [])
         messagesOffset = Self.hermesMessagesOffset(keeping: messages, at: messagesOffset, in: next)
         messages = next
+        restoreQueuedVoiceNoteRows()
         transcriptRevision &+= 1
         hasOlderMessages = transcript.hasOlder
         setCompletedToolCallGroups(transcript.toolCallGroups)
@@ -8273,6 +8371,7 @@ extension ChatViewModel: HermesChatTurnDelegate {
             if sendErrorIsFromStreamRecovery { sendErrorMessage = nil }
             releaseSubmissionMark()
             if needsHermesForkCheck { Task { [weak self] in await self?.resolveHermesForkOrigin() } }
+            Task { [weak self] in await self?.drainVoiceNoteOutbox() }
             return
         }
         // With nothing on screen yet it is the chat's error, with its retry; otherwise the composer's.
@@ -8286,6 +8385,7 @@ extension ChatViewModel: HermesChatTurnDelegate {
 
     func hermesDraftKeyDidChange(from: ChatDraftKey, to: ChatDraftKey) {
         drafts.moveDraft(from: from, to: to)
+        VoiceNoteOutbox.shared.move(from: VoiceNoteOutbox.chatKey(for: from), to: VoiceNoteOutbox.chatKey(for: to))
     }
 
     func hermesRequestDidFail(_ message: String) {
