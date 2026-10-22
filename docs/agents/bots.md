@@ -2442,3 +2442,32 @@ screen (a webui session ID, or a Hermes session's current stored key) and, when 
 `active_until` lease: the app knows exactly what is on screen, and a lease would keep
 muting replies for up to two minutes after the user leaves. Local completion alerts are
 still never shown in the foreground.
+
+## Bot routing (JARVIS)
+
+JARVIS's specialists are Bots: one Profile per domain (iOS Builder first), each knowing only
+its own, routed on the box by `~/.hermes/dispatcher/profile_router.py`. A new chat on the
+general Profile (`default`) is the one surface that does not know which specialist it is for,
+so its first message asks (`JarvisBotRouting`, `Features/Hermes/`):
+
+- `ChatViewModel.sendMessage` on a Hermes chat that opened as `.new`, has not started, shows
+  no rows and stages no files, and whose Profile is `default`, first asks
+  `POST /bridge/route {text, profile}` through `JarvisBotRouter` (the push bridge, with the
+  native Bearer `JarvisVoiceAuth` mints). It waits at most six seconds; the composer shows
+  the send as starting meanwhile.
+- A reply naming another Profile with confidence at or above 0.7 moves the chat: a
+  `HermesSessionChat` with `.new(profile:)` for that Bot, `firstPrompt` set to the text and
+  `openingNotice` to "Opened in <Bot title>", takes this chat's place exactly as `/clear`'s
+  replacement does (`ChatView` watches `routedHermesChat` and calls `onReplaceHermesSession`).
+  The general chat never sent its prompt, so the host reaps its empty session.
+- The routed chat sends `firstPrompt` on its first successful attach
+  (`sendPendingFirstHermesPrompt`), after appending the notice as a local notice row. A failed
+  attach keeps the prompt for the next attach and shows the usual reconnect message.
+- Anything else (no reply, `general`, low confidence, the box slow or down, a chat opened in a
+  Bot or in a picked Profile) sends the message where it was typed. Routing never touches a
+  chat that has started.
+
+The Sessions list on JARVIS opens on All Profiles the first time (`HermesProfilePreference.
+seedJarvisAllProfiles`; a pick made since is an explicit false and is kept), and a merged
+list's rows show their Bot's face and title (`HermesBotLook`, from `profiles.list`'s
+`ui_meta["hermes-bots"]`) instead of the bare Profile name.

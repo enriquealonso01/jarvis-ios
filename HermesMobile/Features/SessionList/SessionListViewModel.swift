@@ -163,6 +163,9 @@ final class SessionListViewModel {
     private(set) var hermesShowsAllProfiles = false
     /// The Hermes host's Profiles, for the Profile menu; empty until `profiles.list` answers.
     private(set) var hermesProfiles: [String] = []
+    /// Each Bot's title and face by Profile name (`ui_meta["hermes-bots"]`), for the rows of a
+    /// merged list; a Profile that is not a Bot has none.
+    private(set) var hermesBotLooks: [String: HermesBotLook] = [:]
     /// The Hermes list has read the host's rows on its current connection, so its Profile is the
     /// host's. Closing or dropping the connection clears it until the next read.
     private var hasReadHermes = false
@@ -235,6 +238,7 @@ final class SessionListViewModel {
         self.unreadStore = unreadStore
         self.hermes = hermes
         hermesProfile = hermes?.profile
+        if let hermes { HermesProfilePreference.seedJarvisAllProfiles(for: server, in: hermes.preferences) }
         hermesShowsAllProfiles = hermes.map { HermesProfilePreference.showsAllProfiles(for: server, in: $0.preferences) } ?? false
         // A Hermes list loads as soon as it appears, so it starts on the skeleton.
         isLoading = hermes != nil
@@ -2144,6 +2148,11 @@ final class SessionListViewModel {
               let rows = reply["profiles"].list else { return }
         let names = rows.compactMap { $0["name"].text }.filter { !$0.isEmpty }
         if names != hermesProfiles { hermesProfiles = names }
+        var looks: [String: HermesBotLook] = [:]
+        for row in rows {
+            if let name = row["name"].text, let look = HermesBotLook(profileRow: row) { looks[name] = look }
+        }
+        if looks != hermesBotLooks { hermesBotLooks = looks }
         // A list of every Profile names only those the host still has, so a pick removed elsewhere
         // shows up here rather than as a refused watch.
         if hermesShowsAllProfiles, let pick = hermesProfile, !names.isEmpty, !names.contains(pick) {
