@@ -1654,6 +1654,8 @@ struct MessageComposerView: View {
         }
         voiceNoteDrag = .zero
         VoiceNoteHaptics.started()
+        // Claimed now, so a lock or cancel in the same event (a quick tap) applies to this note.
+        guard voiceNoteRecorder.arm() else { return }
         Task { await voiceNoteRecorder.begin() }
     }
 
