@@ -3263,7 +3263,7 @@ final class ChatViewModel {
         if hermesTurn != nil {
             // JARVIS: offline-first. The bubble and the clip are in the chat at once; the
             // transcript and the text-only prompt follow while connected (`drainVoiceNoteOutbox`).
-            if let transcriber { voiceNoteTranscriber = transcriber }
+            if voiceNoteTranscriber == nil, let transcriber { voiceNoteTranscriber = transcriber }
             enqueueVoiceNote(audioData: audioData, filename: filename)
             await drainVoiceNoteOutbox()
             return true
