@@ -52,6 +52,12 @@ name: 03 new session send approve and reply
 - tapOn:
     text: Continue
     optional: true
+# The approval card can land a few seconds after the interim reply (run 39783614012 tapped
+# before it was up); wait for it.
+- extendedWaitUntil:
+    visible: Allow once
+    timeout: 60000
+    optional: true
 - tapOn:
     text: Allow once
     optional: true

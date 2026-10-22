@@ -342,6 +342,108 @@ final class ComposerVoiceNoteRecorderTests: XCTestCase {
         XCTAssertEqual(G.cancelProgress(translationWidth: -500), 1)
     }
 
+    // MARK: - The press, as a state machine (Enrique: "if I hold it and stop holding, or
+    // something happens, it doesn't quite work")
+
+    private typealias Tracker = ComposerVoiceNoteGesture.Tracker
+    private typealias Effect = ComposerVoiceNoteGesture.Effect
+    private let t0 = Date(timeIntervalSince1970: 1_790_000_000)
+
+    private func apply(_ tracker: inout Tracker, _ event: ComposerVoiceNoteGesture.Event, tapRecords: Bool = true,
+                       isLocked: Bool = false, noteInProgress: Bool = false, isDisabled: Bool = false) -> [Effect] {
+        tracker.apply(event, tapRecords: tapRecords, isLocked: isLocked, noteInProgress: noteInProgress, isDisabled: isDisabled)
+    }
+
+    func testHoldAndReleaseSends() {
+        var tracker = Tracker()
+        XCTAssertEqual(apply(&tracker, .touchDown(t0)), [.begin])
+        XCTAssertEqual(apply(&tracker, .moved(CGSize(width: 3, height: -4))), [.drag(CGSize(width: 3, height: -4))])
+        XCTAssertEqual(apply(&tracker, .released(t0 + 1.2)), [.drag(.zero), .send])
+        XCTAssertFalse(tracker.isPressing)
+    }
+
+    func testEarlyReleaseKeepsTheNoteRecordingLocked() {
+        var tracker = Tracker()
+        XCTAssertEqual(apply(&tracker, .touchDown(t0)), [.begin])
+        XCTAssertEqual(apply(&tracker, .released(t0 + 0.15)), [.drag(.zero), .lock], "a tap: hands-free, nothing lost")
+        XCTAssertFalse(tracker.isPressing)
+    }
+
+    func testSwipeUpLocksAndTheReleaseThenDoesNothing() {
+        var tracker = Tracker()
+        _ = apply(&tracker, .touchDown(t0))
+        XCTAssertEqual(apply(&tracker, .moved(CGSize(width: 0, height: -ComposerVoiceNoteGesture.lockTranslationThreshold))),
+                       [.drag(.zero), .lock])
+        XCTAssertEqual(apply(&tracker, .moved(CGSize(width: 0, height: -200))), [], "settled: later drift does nothing")
+        XCTAssertEqual(apply(&tracker, .released(t0 + 2), isLocked: true), [.drag(.zero)])
+        XCTAssertFalse(tracker.isPressing)
+    }
+
+    func testSlideLeftCancelsAndTheReleaseThenDoesNothing() {
+        var tracker = Tracker()
+        _ = apply(&tracker, .touchDown(t0))
+        XCTAssertEqual(apply(&tracker, .moved(CGSize(width: -ComposerVoiceNoteGesture.cancelTranslationThreshold, height: 5))),
+                       [.drag(.zero), .cancel])
+        XCTAssertEqual(apply(&tracker, .released(t0 + 2)), [.drag(.zero)], "never a send after a cancel")
+    }
+
+    func testDriftUnderTheThresholdsOnlyMovesTheHintsAndStillSends() {
+        var tracker = Tracker()
+        _ = apply(&tracker, .touchDown(t0))
+        XCTAssertEqual(apply(&tracker, .moved(CGSize(width: -40, height: -30))), [.drag(CGSize(width: -40, height: -30))])
+        XCTAssertEqual(apply(&tracker, .moved(CGSize(width: 20, height: 10))), [.drag(CGSize(width: 20, height: 10))])
+        XCTAssertEqual(apply(&tracker, .released(t0 + 1)), [.drag(.zero), .send])
+    }
+
+    func testAnInterruptionMidHoldLocksTheNoteAndTheNextPressWorks() {
+        var tracker = Tracker()
+        _ = apply(&tracker, .touchDown(t0))
+        _ = apply(&tracker, .moved(CGSize(width: 0, height: -10)))
+        XCTAssertEqual(apply(&tracker, .cancelled), [.drag(.zero), .lock], "a call or the app switcher: keep the note, locked")
+        XCTAssertFalse(tracker.isPressing)
+        XCTAssertEqual(apply(&tracker, .touchDown(t0 + 10)), [.begin], "no press is left armed")
+    }
+
+    func testAnInterruptionOnALockedNoteChangesNothing() {
+        var tracker = Tracker()
+        _ = apply(&tracker, .touchDown(t0))
+        XCTAssertEqual(apply(&tracker, .cancelled, isLocked: true), [.drag(.zero)])
+    }
+
+    func testAPressOnANoteInProgressOrADisabledMicIsIgnored() {
+        var tracker = Tracker()
+        XCTAssertEqual(apply(&tracker, .touchDown(t0), noteInProgress: true), [])
+        XCTAssertEqual(apply(&tracker, .moved(CGSize(width: 0, height: -300)), noteInProgress: true), [])
+        XCTAssertEqual(apply(&tracker, .released(t0 + 1), noteInProgress: true), [.drag(.zero)])
+        XCTAssertEqual(apply(&tracker, .touchDown(t0), isDisabled: true), [])
+        XCTAssertEqual(apply(&tracker, .released(t0 + 1), isDisabled: true), [.drag(.zero)])
+        XCTAssertFalse(tracker.isPressing)
+    }
+
+    func testAQuickTapThatArrivesAsAnEndAloneStartsALockedNote() {
+        var tracker = Tracker()
+        XCTAssertEqual(apply(&tracker, .released(t0)), [.begin, .drag(.zero), .lock])
+        XCTAssertFalse(tracker.isPressing)
+    }
+
+    func testWithTapsSetToDictateAShortPressDictatesAndAHoldRecords() {
+        var tracker = Tracker()
+        XCTAssertEqual(apply(&tracker, .touchDown(t0), tapRecords: false), [])
+        XCTAssertTrue(tracker.awaitsHoldDelay)
+        XCTAssertEqual(apply(&tracker, .released(t0 + 0.1), tapRecords: false), [.tap])
+
+        XCTAssertEqual(apply(&tracker, .touchDown(t0), tapRecords: false), [])
+        XCTAssertEqual(apply(&tracker, .holdDelayElapsed, tapRecords: false), [.begin])
+        XCTAssertFalse(tracker.awaitsHoldDelay)
+        XCTAssertEqual(apply(&tracker, .released(t0 + 1), tapRecords: false), [.drag(.zero), .send])
+    }
+
+    func testLockProgressFollowsTheUpwardSwipe() {
+        XCTAssertEqual(ComposerVoiceNoteGesture.lockProgress(translationHeight: 0), 0)
+        XCTAssertEqual(ComposerVoiceNoteGesture.lockProgress(translationHeight: -ComposerVoiceNoteGesture.lockTranslationThreshold / 2), 0.5, accuracy: 0.001)
+        XCTAssertEqual(ComposerVoiceNoteGesture.lockProgress(translationHeight: 40), 0, "down never locks")
+    }
+
     // MARK: - Filename
 
     func testGenerateFilenameIsM4AVoiceNote() {

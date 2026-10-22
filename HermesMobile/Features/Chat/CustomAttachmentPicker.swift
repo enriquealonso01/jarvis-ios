@@ -529,6 +529,8 @@ struct HermexAttachmentPickerView: View {
     @State private var isDismissing = false
 
     let imageCapacity: Int
+    /// JARVIS: the composer's camera button opens straight on the camera, past the menu.
+    var opensCamera = false
     let onChooseFiles: () -> Void
     let onAdd: ([HermexPickedMedia]) -> Void
     let onDismiss: () -> Void
@@ -884,6 +886,7 @@ struct HermexAttachmentPickerView: View {
 
     private func presentPicker() {
         guard !isVisible else { return }
+        if opensCamera, mode == .menu { mode = .camera }
         guard !reduceMotion else {
             isVisible = true
             return

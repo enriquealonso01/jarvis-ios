@@ -69,6 +69,62 @@ import SwiftUI
         XCTAssertNil(chat.model.activeStreamID)
     }
 
+    /// JARVIS (Enrique, build 82): the same acknowledgement showed twice at a chat's start. The
+    /// host streams "On it, sir..." as deltas, then reports the assistant message that carries
+    /// the tool calls as an interim with the same words and `already_streamed` false. The row
+    /// shows it once, then the tools, then the answer; the host's transcript has one such row.
+    func testAnInterimRepeatingTheStreamedAcknowledgementShowsOnce() async {
+        let ack = "On it, sir — checking the box now."
+        let chat = await openChat()
+        chat.receive(event(1, "message.start"))
+        chat.receive(event(2, "message.delta", ["text": .string("On it, sir — ")]))
+        chat.receive(event(3, "message.delta", ["text": .string("checking the box now.")]))
+        chat.receive(event(4, "message.interim", ["text": .string(ack), "already_streamed": .bool(false)]))
+        chat.receive(event(5, "tool.start", ["name": .string("terminal"), "tool_id": .string("t1")]))
+        chat.receive(event(6, "tool.complete", ["name": .string("terminal"), "tool_id": .string("t1")]))
+        chat.receive(event(7, "message.complete", ["status": .string("complete"), "text": .string("All green.")]))
+        chat.receive(event(8, "session.info", ["running": .bool(false)]))
+        XCTAssertEqual(chat.model.messages.map(\.content), [ack + "\n\nAll green."])
+        XCTAssertEqual(chat.model.latestTurnToolCalls.map(\.name), ["terminal"])
+    }
+
+    /// The same when the phone locked mid-turn: the reattach's snapshot already holds the
+    /// acknowledgement, and the replay repeats the interim. Still once.
+    func testAReplayedInterimAfterAReattachShowsTheAcknowledgementOnce() async {
+        let ack = "On it, sir — checking the box now."
+        let chat = await openChat()
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("streaming")])))
+        _ = await chat.model.sendMessage("Check the box")
+        chat.receive(event(1, "message.start"))
+        chat.receive(event(2, "message.delta", ["text": .string(ack)]))
+        chat.model.suspendStreamForBackground()
+
+        chat.host.next("session.events.since", .init(result: BotFixtureWire.replay(latest: 5, events: [
+            event(3, "message.interim", ["text": .string(ack), "already_streamed": .bool(false)]),
+            event(4, "tool.start", ["name": .string("terminal"), "tool_id": .string("t1")]),
+            event(5, "tool.complete", ["name": .string("terminal"), "tool_id": .string("t1")])
+        ])))
+        chat.host.always("session.resume", .init(result: resume(running: true, history: [userRow("Check the box")],
+                                                               inflight: ["user": .string("Check the box"),
+                                                                          "assistant": .string(ack)])))
+        await chat.model.reconnectStreamIfNeeded()
+        chat.model.flushPendingStreamingContent()
+        XCTAssertEqual(chat.model.messages.map(\.content), ["Check the box", ack])
+
+        chat.receive(event(6, "message.complete", ["status": .string("complete"), "text": .string("All green.")]))
+        chat.receive(event(7, "session.info", ["running": .bool(false)]))
+        XCTAssertEqual(chat.model.messages.map(\.content), ["Check the box", ack + "\n\nAll green."])
+    }
+
+    func testInterimRemainderKeepsOnlyUnseenWords() {
+        XCTAssertEqual(ChatViewModel.interimRemainder("On it, sir.", alreadyShown: "On it,  sir."), "")
+        XCTAssertEqual(ChatViewModel.interimRemainder("On it, sir.", alreadyShown: "Hello.\n\nOn it, sir."), "")
+        XCTAssertEqual(ChatViewModel.interimRemainder("On it, sir.", alreadyShown: "On it, sir.\n\nThen more."), "")
+        XCTAssertEqual(ChatViewModel.interimRemainder("On it, sir. Checking.", alreadyShown: "On it, sir."), "Checking.")
+        XCTAssertEqual(ChatViewModel.interimRemainder("Something else.", alreadyShown: "On it, sir."), "Something else.")
+        XCTAssertEqual(ChatViewModel.interimRemainder("First words.", alreadyShown: ""), "First words.")
+    }
+
     func testReasoningDeltaIsReasoningAndThinkingDeltaIsNot() async {
         let chat = await openChat()
         chat.receive(event(1, "message.start"))

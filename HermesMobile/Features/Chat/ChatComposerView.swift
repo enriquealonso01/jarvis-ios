@@ -336,6 +336,8 @@ struct MessageComposerView: View {
 
     @State private var deferredUploadFocusPhase: DeferredUploadFocusPhase = .none
     @State private var showMediaPicker = false
+    /// The camera button opened the picker: it starts on the camera, past the menu.
+    @State private var mediaPickerOpensCamera = false
     @State private var presentFilesAfterMediaPickerDismisses = false
     @State private var showFileImporter = false
     @State private var voiceInput = ComposerVoiceInputController()
@@ -548,20 +550,7 @@ struct MessageComposerView: View {
     private var composerWithLifecycle: some View {
         AdaptiveGlassContainer(spacing: 6) {
             VStack(spacing: 6) {
-                if voiceNoteRecorder.hasNoteInProgress {
-                    ComposerVoiceRecordingBar(
-                        elapsed: voiceNoteRecorder.elapsed,
-                        levels: voiceNoteRecorder.levels,
-                        isLocked: voiceNoteRecorder.isLocked,
-                        isPaused: voiceNoteRecorder.isPaused,
-                        cancelProgress: ComposerVoiceNoteGesture.cancelProgress(translationWidth: voiceNoteDrag.width),
-                        onSend: sendVoiceNote,
-                        onDelete: cancelVoiceNote,
-                        onPause: { voiceNoteRecorder.pause() },
-                        onResume: { voiceNoteRecorder.resume() }
-                    )
-                    .padding(.horizontal, 16)
-                } else if let voiceNoteStatus {
+                if let voiceNoteStatus {
                     ComposerVoiceStatusView(status: voiceNoteStatus)
                 } else if let voiceStatus {
                     ComposerVoiceStatusView(status: voiceStatus)
@@ -637,28 +626,42 @@ struct MessageComposerView: View {
                 .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsSlashAutocomplete)
                 .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsFileAutocomplete)
 
-                composerSurface
-                    .padding(.horizontal)
-
-                if isExpanded {
-                    toolbarRow
+                VStack(spacing: 0) {
+                    composerSurface
                         .padding(.horizontal)
-                        .padding(.top, 8)
-                        .frame(maxWidth: .infinity)
-                        // Solid chat background behind the controls: the card
-                        // above is glass on purpose, but transcript text
-                        // scrolling under the row made the pills unreadable.
-                        // Bleeds up into the gap under the card and down past
-                        // the keyboard gap and the bottom safe area, so no strip
-                        // of transcript shows around the row.
-                        .background(
-                            Color(.systemBackground)
-                                .padding(.top, -10)
-                                .padding(.bottom, -12)
-                                .ignoresSafeArea(edges: .bottom)
-                        )
-                        .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
+
+                    if isExpanded {
+                        toolbarRow
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                            .frame(maxWidth: .infinity)
+                            // Solid chat background behind the controls: the card
+                            // above is glass on purpose, but transcript text
+                            // scrolling under the row made the pills unreadable.
+                            // Bleeds up into the gap under the card and down past
+                            // the keyboard gap and the bottom safe area, so no strip
+                            // of transcript shows around the row.
+                            .background(
+                                Color(.systemBackground)
+                                    .padding(.top, -10)
+                                    .padding(.bottom, -12)
+                                    .ignoresSafeArea(edges: .bottom)
+                            )
+                            .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
+                    }
                 }
+                // JARVIS (requirement 12, Signal/WhatsApp): while a voice note is in progress the
+                // whole input bar, text field included, is the recording UI. The mic the finger
+                // holds stays where it is underneath, so its gesture runs on; the surface draws
+                // the held mic in its place.
+                .overlay {
+                    if isRecordingVoiceNote {
+                        voiceNoteSurface
+                            .padding(.horizontal)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: isRecordingVoiceNote)
             }
             // Focus flips arrive from UIKit outside any withAnimation, so the
             // morph and the row's insertion take their animation from here.
@@ -684,6 +687,7 @@ struct MessageComposerView: View {
                             ? HermexAttachmentPickerPolicy.maximumBotAttachments
                             : HermexAttachmentPickerPolicy.maximumSessionImages
                     ),
+                    opensCamera: mediaPickerOpensCamera,
                     onChooseFiles: {
                         presentFilesAfterMediaPickerDismisses = true
                     },
@@ -694,6 +698,7 @@ struct MessageComposerView: View {
                     },
                     onDismiss: {
                         showMediaPicker = false
+                        mediaPickerOpensCamera = false
                     }
                 )
             }
@@ -1001,9 +1006,12 @@ struct MessageComposerView: View {
                         onPreview: onPreviewAttachment
                     )
 
-                    voiceControlButton
-
-                    actionButton
+                    if showsCameraAndMic {
+                        cameraButton
+                        voiceControlButton
+                    } else {
+                        actionButton
+                    }
                 }
             }
             .padding(.trailing, isExpanded ? 0 : pillInset)
@@ -1042,13 +1050,64 @@ struct MessageComposerView: View {
                     .padding(.horizontal, 4)
             }
 
-            // JARVIS: the mic (voice notes, requirement 12) stays pinned beside Send; at the end
-            // of the scroller it sat past the screen's edge behind the model, folder and
-            // Profile controls (Maestro run 39631269325).
-            voiceControlButton
-
-            actionButton
+            // JARVIS (requirement 12, Signal/WhatsApp): an empty bar ends in the camera and the
+            // mic, pinned beside each other (at the end of the scroller the mic sat past the
+            // screen's edge, Maestro run 39631269325); text turns them into Send.
+            if showsCameraAndMic {
+                cameraButton
+                voiceControlButton
+            } else {
+                actionButton
+            }
         }
+    }
+
+    /// A voice note is being recorded or paused, or waits on the microphone prompt.
+    private var isRecordingVoiceNote: Bool {
+        voiceNoteRecorder.hasNoteInProgress || voiceNoteRecorder.isRequestingPermission
+    }
+
+    /// JARVIS (Signal/WhatsApp): an empty bar offers the camera and the mic, nothing greyed out;
+    /// text, a quote or a staged file turns the trailing control into Send. Stop stays Stop,
+    /// and the mic stays through its own note or dictation.
+    private var showsCameraAndMic: Bool {
+        if isRecordingVoiceNote || voiceInput.isListening { return true }
+        return !showsStopButton && trimmedDraftMessage.isEmpty && quotes.isEmpty && pendingAttachments.isEmpty
+    }
+
+    private var cameraButton: some View {
+        Button {
+            mediaPickerOpensCamera = true
+            showMediaPicker = true
+        } label: {
+            Image(systemName: "camera")
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(metaControlColor)
+                .frame(width: circleSize, height: circleSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isReadOnly || isConfigurationControlDisabled || isRecordingVoiceNote)
+        .accessibilityLabel("Camera")
+        .accessibilityIdentifier("composer.camera")
+    }
+
+    /// The recording UI over the input bar (`VoiceNoteRecordingSurface`), styled as the bar.
+    private var voiceNoteSurface: some View {
+        VoiceNoteRecordingSurface(
+            elapsed: voiceNoteRecorder.elapsed,
+            levels: voiceNoteRecorder.levels,
+            isLocked: voiceNoteRecorder.isLocked,
+            isPaused: voiceNoteRecorder.isPaused,
+            isRequestingPermission: voiceNoteRecorder.isRequestingPermission,
+            cancelProgress: ComposerVoiceNoteGesture.cancelProgress(translationWidth: voiceNoteDrag.width),
+            lockProgress: ComposerVoiceNoteGesture.lockProgress(translationHeight: voiceNoteDrag.height),
+            onSend: sendVoiceNote,
+            onDelete: cancelVoiceNote,
+            onPause: { voiceNoteRecorder.pause() },
+            onResume: { voiceNoteRecorder.resume() }
+        )
+        .modifier(ChatComposerSurfaceStyle(isExpanded: isExpanded))
     }
 
     private var voiceControlButton: some View {
@@ -1414,6 +1473,10 @@ struct MessageComposerView: View {
             )
         }
 
+        if let hint = voiceNoteRecorder.hintMessage {
+            return ComposerVoiceStatus(text: hint, systemImage: "hand.tap", isError: false)
+        }
+
         return nil
     }
 
@@ -1603,7 +1666,15 @@ struct MessageComposerView: View {
     @MainActor
     private func sendVoiceNote() {
         voiceNoteDrag = .zero
-        guard let note = voiceNoteRecorder.finish() else { return }
+        // Released while the microphone prompt was still up: the note starts hands-free
+        // instead of vanishing.
+        if voiceNoteRecorder.isRequestingPermission { lockVoiceNote(); return }
+        guard let note = voiceNoteRecorder.finish() else {
+            if voiceNoteRecorder.errorMessage == nil {
+                voiceNoteRecorder.hint(String(localized: "Hold the mic to record, or tap it to record hands-free."))
+            }
+            return
+        }
         // Measured on the phone first: a silent, too-short or undecodable clip is never
         // uploaded (speech-to-text would come back empty), and the app log says why.
         guard note.isUsable else {

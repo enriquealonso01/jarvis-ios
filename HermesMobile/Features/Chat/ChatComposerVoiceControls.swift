@@ -25,7 +25,9 @@ struct ComposerVoiceStatusView: View {
 /// - release without locking: send;
 /// - a quick tap leaves the note recording, locked, with Pause, Delete and Send in the bar.
 /// With "Tap Mic for Voice Note" off, a quick tap toggles dictation as in Hermex and a hold
-/// past `holdActivationDelay` records. One `DragGesture(minimumDistance: 0)` handles all of it.
+/// past `holdActivationDelay` records. One `DragGesture(minimumDistance: 0)` feeds
+/// `ComposerVoiceNoteGesture.Tracker`, which decides; a touch the system takes away (a call,
+/// the app switcher, the lock screen) ends as `.cancelled`, so no press is ever left armed.
 struct ComposerVoiceControlButton: View {
     let isListening: Bool
     let isDisabled: Bool
@@ -48,17 +50,24 @@ struct ComposerVoiceControlButton: View {
     let onRelease: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isPressing = false
-    @State private var didStart = false
-    @State private var isHandled = false
-    @State private var ignoresPress = false
-    @State private var pressBegan = Date()
+    @State private var tracker = ComposerVoiceNoteGesture.Tracker()
+    @GestureState private var isTouching = false
     @State private var holdWorkItem: DispatchWorkItem?
 
     @ViewBuilder var body: some View {
         if supportsVoiceNotes {
             label
                 .gesture(pressGesture)
+                .onChange(of: isTouching) { _, touching in
+                    guard !touching else { return }
+                    // The gesture ended without `onEnded`: the system took the touch. Checked a
+                    // tick later, once a normal end has settled the tracker.
+                    DispatchQueue.main.async {
+                        guard tracker.isPressing else { return }
+                        cancelHold()
+                        run(apply(.cancelled))
+                    }
+                }
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction {
                     // VoiceOver synthesizes an activation rather than a real touch, so the
@@ -87,8 +96,6 @@ struct ComposerVoiceControlButton: View {
             .font(.system(size: 18, weight: .regular))
             .frame(width: 44, height: 44)
             .foregroundStyle(isListening || isRecordingVoiceNote ? Color.red : color)
-            .scaleEffect(reduceMotion ? 1 : (isPressing && didStart ? 1.5 : 1))
-            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: isPressing && didStart)
             .contentShape(Circle())
             .opacity(isDisabled && !isRecordingVoiceNote ? 0.4 : 1)
             .accessibilityLabel(accessibilityLabel)
@@ -108,76 +115,40 @@ struct ComposerVoiceControlButton: View {
 
     private var pressGesture: some Gesture {
         DragGesture(minimumDistance: 0)
+            .updating($isTouching) { _, state, _ in state = true }
             .onChanged { value in
-                if !isPressing {
-                    isPressing = true
-                    pressBegan = Date()
-                    didStart = false
-                    isHandled = false
-                    // A note already in progress is driven from its bar; this press does nothing.
-                    ignoresPress = isRecordingVoiceNote || isDisabled
-                    guard !ignoresPress else { return }
-                    if tapRecords {
-                        didStart = true
-                        onPressBegan()
-                    } else {
-                        scheduleHold()
-                    }
-                    return
+                if !tracker.isPressing {
+                    run(apply(.touchDown(Date())))
+                    if tracker.awaitsHoldDelay { scheduleHold() }
                 }
-                guard didStart, !isHandled, !ignoresPress else { return }
-                onDrag(value.translation)
-                switch ComposerVoiceNoteGesture.dragAction(translation: value.translation) {
-                case .lock:
-                    isHandled = true
-                    onDrag(.zero)
-                    onLock()
-                case .cancel:
-                    isHandled = true
-                    onDrag(.zero)
-                    onCancel()
-                case .none:
-                    break
-                }
+                run(apply(.moved(value.translation)))
             }
             .onEnded { _ in
                 cancelHold()
-                let sawTouchDown = isPressing
-                defer {
-                    isPressing = false
-                    didStart = false
-                    isHandled = false
-                    ignoresPress = false
-                }
-                // A very quick tap can arrive as an end with no touch-down update (Maestro's taps
-                // do, run 39652026792): treat it as the tap it is.
-                guard sawTouchDown else {
-                    guard !isRecordingVoiceNote, !isDisabled else { return }
-                    if tapRecords { onPressBegan(); onLock() } else { onTap() }
-                    return
-                }
-                guard !ignoresPress else { return }
-                guard didStart else {
-                    // Released before the hold delay with taps set to dictate.
-                    if !isDisabled { onTap() }
-                    return
-                }
-                onDrag(.zero)
-                switch ComposerVoiceNoteGesture.releaseAction(
-                    isLocked: isLocked, wasCancelled: isHandled, heldFor: Date().timeIntervalSince(pressBegan)
-                ) {
-                case .send: onRelease()
-                case .lock: onLock()
-                case .none: break
-                }
+                run(apply(.released(Date())))
             }
     }
 
-    private func scheduleHold() {
-        let item = DispatchWorkItem {
-            didStart = true
-            onPressBegan()
+    private func apply(_ event: ComposerVoiceNoteGesture.Event) -> [ComposerVoiceNoteGesture.Effect] {
+        tracker.apply(event, tapRecords: tapRecords, isLocked: isLocked, noteInProgress: isRecordingVoiceNote,
+                      isDisabled: isDisabled)
+    }
+
+    private func run(_ effects: [ComposerVoiceNoteGesture.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .begin: onPressBegan()
+            case .drag(let translation): onDrag(translation)
+            case .lock: onLock()
+            case .cancel: onCancel()
+            case .send: onRelease()
+            case .tap: onTap()
+            }
         }
+    }
+
+    private func scheduleHold() {
+        let item = DispatchWorkItem { run(apply(.holdDelayElapsed)) }
         holdWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + ComposerVoiceNoteGesture.holdActivationDelay, execute: item)
     }
@@ -216,22 +187,30 @@ struct VoiceNoteWaveformView: View {
     }
 }
 
-/// The bar above the composer while a voice note is in progress.
-/// - Holding (not locked): timer, live waveform, "< Slide to cancel" and the lock hint.
-/// - Locked: Delete, timer, waveform, Pause, Send.
-/// - Paused: Delete, timer, "Paused", Resume (records into the same note), Send.
-/// Nothing is sent or transcribed until Send.
-struct ComposerVoiceRecordingBar: View {
+/// The input bar while a voice note is in progress (Signal/WhatsApp): it takes the bar's whole
+/// surface, text field included.
+/// - Holding (unlocked): red dot, timer, live waveform, "Slide to cancel", and the lock hint
+///   above the mic the finger holds (drawn here, large, in the mic's slot).
+/// - Locked: Delete, timer, lock, waveform, Pause, Send.
+/// - Paused: Delete, timer, "Paused", waveform, Resume, Send.
+/// Nothing is sent or transcribed until Send, or the release of an unlocked hold.
+struct VoiceNoteRecordingSurface: View {
     let elapsed: TimeInterval
     let levels: [CGFloat]
     let isLocked: Bool
     let isPaused: Bool
+    /// The microphone prompt is up; the note starts once it is answered.
+    var isRequestingPermission = false
     /// How far the held finger has slid toward cancel, 0...1.
     var cancelProgress: CGFloat = 0
+    /// How far it has swiped up toward the lock, 0...1.
+    var lockProgress: CGFloat = 0
     let onSend: () -> Void
     let onDelete: () -> Void
     let onPause: () -> Void
     let onResume: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -241,12 +220,9 @@ struct ComposerVoiceRecordingBar: View {
                 holdingBar
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var timer: some View {
@@ -259,28 +235,50 @@ struct ComposerVoiceRecordingBar: View {
     private var holdingBar: some View {
         HStack(spacing: 10) {
             Circle().fill(Color.red).frame(width: 10, height: 10)
+                .opacity(isRequestingPermission ? 0.3 : 1)
             timer
-            VoiceNoteWaveformView(levels: levels, barCount: 16)
+            VoiceNoteWaveformView(levels: levels, barCount: 14)
             Spacer(minLength: 4)
             Label("Slide to cancel", systemImage: "chevron.left")
                 .font(.caption)
                 .foregroundStyle(cancelProgress > 0.6 ? Color.red : Color.secondary)
                 .opacity(1 - Double(cancelProgress) * 0.5)
-            VStack(spacing: 0) {
-                Image(systemName: "lock")
-                Image(systemName: "chevron.up").font(.caption2)
-            }
-            .foregroundStyle(.secondary)
-            .accessibilityLabel(Text("Swipe up to lock"))
+                .offset(x: -cancelProgress * 24)
+            heldMic
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("voiceNote.holdBar")
     }
 
+    /// The mic under the finger, grown, with the lock it swipes toward.
+    private var heldMic: some View {
+        VStack(spacing: 2) {
+            Image(systemName: lockProgress >= 1 ? "lock.fill" : "lock.open")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .opacity(0.5 + Double(lockProgress) * 0.5)
+            Image(systemName: "chevron.up")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.secondary)
+                .opacity(1 - Double(lockProgress))
+            ZStack {
+                Circle().fill(Color.red)
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 48, height: 48)
+            .scaleEffect(reduceMotion ? 1 : 1 + lockProgress * 0.1)
+        }
+        .frame(width: 52)
+        .accessibilityLabel(Text("Swipe up to lock"))
+        .allowsHitTesting(false)
+    }
+
     private var lockedBar: some View {
         HStack(spacing: 10) {
             Button(action: onDelete) {
-                Image(systemName: "trash").frame(width: 36, height: 36)
+                Image(systemName: "trash").frame(width: 40, height: 40)
             }
             .accessibilityLabel(Text("Delete voice note"))
             .accessibilityIdentifier("voiceNote.delete")
@@ -302,11 +300,12 @@ struct ComposerVoiceRecordingBar: View {
             if isPaused {
                 Button(action: onResume) {
                     Label("Resume", systemImage: "mic.fill").font(.callout.weight(.semibold))
+                        .frame(minHeight: 40)
                 }
                 .accessibilityIdentifier("voiceNote.resume")
             } else {
                 Button(action: onPause) {
-                    Image(systemName: "pause.fill").frame(width: 36, height: 36)
+                    Image(systemName: "pause.fill").frame(width: 40, height: 40)
                 }
                 .accessibilityLabel(Text("Pause"))
                 .accessibilityIdentifier("voiceNote.pause")
@@ -314,8 +313,8 @@ struct ComposerVoiceRecordingBar: View {
 
             Button(action: onSend) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-                    .frame(width: 36, height: 36)
+                    .font(.title)
+                    .frame(width: 44, height: 44)
             }
             .accessibilityLabel(Text("Send voice note"))
             .accessibilityIdentifier("voiceNote.send")
