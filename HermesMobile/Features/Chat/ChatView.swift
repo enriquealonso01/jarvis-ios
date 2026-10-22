@@ -1044,6 +1044,14 @@ struct ChatView: View {
                 // JARVIS voice notes are queued offline-first; the host's transcription and the
                 // "conversation started" come later, through these.
                 viewModel.voiceNoteTranscriber = hermesTranscriber
+                #if DEBUG
+                if QAFakeMicrophone.fakesTranscription {
+                    viewModel.voiceNoteTranscriber = { _, _ in
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        return TranscribeResponse(ok: true, transcript: QAFakeMicrophone.transcript, error: nil)
+                    }
+                }
+                #endif
                 viewModel.onVoiceNoteSent = {
                     onConversationStarted()
                     ChatHaptics.messageSent(isEnabled: isHapticsEnabled)

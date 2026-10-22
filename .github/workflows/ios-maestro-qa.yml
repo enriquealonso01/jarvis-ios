@@ -91,6 +91,8 @@ jobs:
           xcrun simctl spawn "$UDID" defaults write "$APP_ID" JarvisServerAddress "http://127.0.0.1:$HERMES_PORT"
           # No microphone on the runner: the Debug build records a silent stand-in (flow 06).
           xcrun simctl spawn "$UDID" defaults write "$APP_ID" JarvisFakeMicrophone -bool YES
+          # A note's transcription answers a fixed line instead of asking the local host (flows 06, 09).
+          xcrun simctl spawn "$UDID" defaults write "$APP_ID" JarvisFakeTranscriber -bool YES
           xcrun simctl launch "$UDID" "$APP_ID"
           sleep 8
           xcrun simctl io "$UDID" screenshot qa-out/00-first-launch.png || true
@@ -146,7 +148,7 @@ jobs:
         run: |
           UDID="${{ steps.env.outputs.udid }}"
           maestro --device "$UDID" hierarchy > qa-out/hierarchy-final.json 2>/dev/null || true
-          xcrun simctl spawn "$UDID" log show --last 20m --style compact \
+          xcrun simctl spawn "$UDID" log show --last 60m --style compact \
             --predicate 'process == "HermesMobile"' > qa-out/app.log 2>&1 || true
           cp -R ~/.maestro/tests qa-out/maestro-debug 2>/dev/null || true
           for f in $(ls -t ~/Library/Logs/DiagnosticReports/HermesMobile* 2>/dev/null | head -3); do cp "$f" qa-out/; done
@@ -158,6 +160,22 @@ jobs:
           HOME_DIR=$(grep "Kept the Hermes home at" qa-out/local-hermes.log | tail -1 | sed -e "s/^Kept the Hermes home at //" -e "s/[.]$//")
           if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then mkdir -p qa-out/hermes-logs; find "$HOME_DIR" -name "*.log" -size -20M -exec cp {} qa-out/hermes-logs/ \; ; ls -R "$HOME_DIR" | head -80 > qa-out/hermes-home-listing.txt; fi
 
+      # The recording bar's controls must be reachable: the Debug build asks UIKit what is under
+      # the center of Delete, Pause, Resume and Send (window.hitTest) and logs it ("probe:").
+      # Anything of the old text bar or the touch host in that chain fails the run.
+      - name: Voice-note hit-test probe
+        id: probe
+        continue-on-error: true
+        if: always()
+        run: |
+          grep -h "probe:" qa-out/app.log | sed 's/^.*JarvisClientLog] //' | sort -u > qa-out/probe.txt || true
+          cat qa-out/probe.txt
+          if [ ! -s qa-out/probe.txt ]; then echo "no hit-test probe lines: the recording bar never showed"; exit 1; fi
+          if grep -q "blocked=true" qa-out/probe.txt; then echo "a recording control is covered by something else"; exit 1; fi
+          for id in voiceNote.delete voiceNote.pause voiceNote.resume voiceNote.send; do
+            grep -q "probe: $id " qa-out/probe.txt || { echo "no probe for $id"; exit 1; }
+          done
+
       - name: Upload QA output
         if: always()
         uses: actions/upload-artifact@v7
@@ -167,5 +185,5 @@ jobs:
           if-no-files-found: warn
 
       - name: Fail if any journey failed
-        if: steps.maestro.outcome == 'failure'
+        if: steps.maestro.outcome == 'failure' || steps.probe.outcome == 'failure'
         run: exit 1

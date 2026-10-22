@@ -620,6 +620,8 @@
 		9E49A0E315D54C92FBAB395E /* JarvisClientLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */; };
 		85D43804AFA2C80C8B59F267 /* JarvisClientLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1E07C2F6245B1851CCEB47 /* JarvisClientLog.swift */; };
 		6DCD20D47F1FAC91CABFBF28 /* VoiceNoteLocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41FA8DA45F8DEDA706E83BE7 /* VoiceNoteLocalStore.swift */; };
+		501BF16DB5545BEECED36868 /* VoiceMicTouchHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8069AE6B4999D54C0F3CF55D /* VoiceMicTouchHost.swift */; };
+		E324E8E9145815A6AE7CFF45 /* VoiceMicTouchHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 765A674EA499DE6CB769E121 /* VoiceMicTouchHostTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1278,6 +1280,8 @@
 		9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClientLogTests.swift; sourceTree = "<group>"; };
 		DA1E07C2F6245B1851CCEB47 /* JarvisClientLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClientLog.swift; sourceTree = "<group>"; };
 		41FA8DA45F8DEDA706E83BE7 /* VoiceNoteLocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceNoteLocalStore.swift; sourceTree = "<group>"; };
+		8069AE6B4999D54C0F3CF55D /* VoiceMicTouchHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMicTouchHost.swift; sourceTree = "<group>"; };
+		765A674EA499DE6CB769E121 /* VoiceMicTouchHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMicTouchHostTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1391,6 +1395,7 @@
 		1A2B3C4D5E6F700000000034 /* HermesMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				765A674EA499DE6CB769E121 /* VoiceMicTouchHostTests.swift */,
 				9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */,
 				D288D5E859CDB14194854AD9 /* JarvisWidgetTests.swift */,
 				5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */,
@@ -1817,6 +1822,7 @@
 		1A2B3C4D5E6F7000000000C6 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
+				8069AE6B4999D54C0F3CF55D /* VoiceMicTouchHost.swift */,
 				41FA8DA45F8DEDA706E83BE7 /* VoiceNoteLocalStore.swift */,
 				A67880F5BC765614975CA16A /* ChatPDFExport.swift */,
 				5B2FA0E3DFE844F8B3A710FD /* ChatComposerPresentation.swift */,
@@ -2462,6 +2468,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				501BF16DB5545BEECED36868 /* VoiceMicTouchHost.swift in Sources */,
 				6DCD20D47F1FAC91CABFBF28 /* VoiceNoteLocalStore.swift in Sources */,
 				85D43804AFA2C80C8B59F267 /* JarvisClientLog.swift in Sources */,
 				F6BEBCD170AA4C7955DE8686 /* JarvisWidgetPreviewCard.swift in Sources */,
@@ -2849,6 +2856,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E324E8E9145815A6AE7CFF45 /* VoiceMicTouchHostTests.swift in Sources */,
 				9E49A0E315D54C92FBAB395E /* JarvisClientLogTests.swift in Sources */,
 				BC887AA37FC423650C10BA6C /* JarvisWidgetTests.swift in Sources */,
 				C80F1E6C44BFF736CDC8FFCD /* JarvisFilesTests.swift in Sources */,
