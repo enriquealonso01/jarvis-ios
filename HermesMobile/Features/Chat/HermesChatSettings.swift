@@ -25,7 +25,18 @@ enum HermesProfilePreference {
     }
 
     static func saveShowsAllProfiles(_ showsAll: Bool, for server: URL, in defaults: UserDefaults = .standard) {
-        if showsAll { defaults.set(true, forKey: showsAllKey(for: server)) } else { defaults.removeObject(forKey: showsAllKey(for: server)) }
+        // False is stored, not removed: JARVIS seeds an unset key as All Profiles (below).
+        defaults.set(showsAll, forKey: showsAllKey(for: server))
+    }
+
+    /// JARVIS's Bots share one Sessions list: the first time its list opens with nothing saved,
+    /// All Profiles is saved for it, so opening a Bot never makes the other Bots' sessions
+    /// disappear. A pick made since (an explicit false) is kept. Any other host keeps Hermex's
+    /// default (one Profile).
+    static func seedJarvisAllProfiles(for server: URL, in defaults: UserDefaults = .standard) {
+        guard let host = server.host, host == JarvisServer.productionAddress.host || host == JarvisServer.address.host,
+              defaults.object(forKey: showsAllKey(for: server)) == nil else { return }
+        defaults.set(true, forKey: showsAllKey(for: server))
     }
 
     private static func showsAllKey(for server: URL) -> String {

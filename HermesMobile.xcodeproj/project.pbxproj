@@ -503,6 +503,7 @@
 		A4750000000000000000B0A1 /* BotPendingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4750000000000000000B0A2 /* BotPendingRequest.swift */; };
 		C2A87F2CDEB941BB825EABA5 /* BotConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40877A8534C94AAF97EA1C7C /* BotConnectionView.swift */; };
 		E9030000000000000000A001 /* HermesConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9030000000000000000A002 /* HermesConversation.swift */; };
+		70675ACA28F67B99185A118F /* JarvisBotRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6C673256AD7FDE4839A37B /* JarvisBotRouting.swift */; };
 		709A0000000000000000A001 /* HermesHome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709A0000000000000000A002 /* HermesHome.swift */; };
 		B1176000000000000000A001 /* HermesSessionLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1176000000000000000A002 /* HermesSessionLookup.swift */; };
 		7EF4120B486B4243AF54FCAF /* BotsInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FE221A56F264309AF71E18B /* BotsInboxView.swift */; };
@@ -592,6 +593,7 @@
 		559000000000000000000005 /* PushNotificationRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 559000000000000000000015 /* PushNotificationRouter.swift */; };
 		559000000000000000000006 /* PushPreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 559000000000000000000016 /* PushPreviewTests.swift */; };
 		C0DE88500000000000000003 /* AppLockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE88500000000000000004 /* AppLockTests.swift */; };
+		71FBEF75786248D4E1C80061 /* JarvisBotRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC76449C3FF82F8B42045A5 /* JarvisBotRoutingTests.swift */; };
 		559000000000000000000007 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 10CA110C0DE000000000B002 /* Localizable.xcstrings */; };
 		34C24AA7BCF93FF795ABA446 /* JarvisSignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FBAD340D75CA90C5723A918 /* JarvisSignInView.swift */; };
 		4407997CDCBD434FFB012BB8 /* JarvisBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FCE8A9771A1D8E9B4DC0080 /* JarvisBrand.swift */; };
@@ -1162,6 +1164,7 @@
 		A4750000000000000000B0A2 /* BotPendingRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bots/BotPendingRequest.swift"; sourceTree = "<group>"; };
 		40877A8534C94AAF97EA1C7C /* BotConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bots/BotConnectionView.swift"; sourceTree = "<group>"; };
 		E9030000000000000000A002 /* HermesConversation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Hermes/HermesConversation.swift"; sourceTree = "<group>"; };
+		CE6C673256AD7FDE4839A37B /* JarvisBotRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisBotRouting.swift; sourceTree = "<group>"; };
 		709A0000000000000000A002 /* HermesHome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Hermes/HermesHome.swift"; sourceTree = "<group>"; };
 		B1176000000000000000A002 /* HermesSessionLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Hermes/HermesSessionLookup.swift"; sourceTree = "<group>"; };
 		9FE221A56F264309AF71E18B /* BotsInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bots/BotsInboxView.swift"; sourceTree = "<group>"; };
@@ -1252,6 +1255,7 @@
 		559000000000000000000015 /* PushNotificationRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationRouter.swift; sourceTree = "<group>"; };
 		559000000000000000000016 /* PushPreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushPreviewTests.swift; sourceTree = "<group>"; };
 		C0DE88500000000000000004 /* AppLockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockTests.swift; sourceTree = "<group>"; };
+		4DC76449C3FF82F8B42045A5 /* JarvisBotRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisBotRoutingTests.swift; sourceTree = "<group>"; };
 		6FBAD340D75CA90C5723A918 /* JarvisSignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisSignInView.swift; sourceTree = "<group>"; };
 		7FCE8A9771A1D8E9B4DC0080 /* JarvisBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisBrand.swift; sourceTree = "<group>"; };
 		04FC86A7B475930FCFB72670 /* JarvisServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisServer.swift; sourceTree = "<group>"; };
@@ -1591,6 +1595,7 @@
 				A04500000000000000000018 /* LiveActivityTests.swift */,
 				559000000000000000000016 /* PushPreviewTests.swift */,
 				C0DE88500000000000000004 /* AppLockTests.swift */,
+				4DC76449C3FF82F8B42045A5 /* JarvisBotRoutingTests.swift */,
 				1A2B3C4D5E6F700000000340 /* AppIntentNewChatTests.swift */,
 				1A2B3C4D5E6F700000000344 /* AppIntentNewChatInProfileTests.swift */,
 				A4790000000000000000F006 /* PushRegistrationTests.swift */,
@@ -1724,6 +1729,7 @@
 				AF0AA6F787074B4A8DC903FF /* BotSearchView.swift */,
 				41FCCA0BACC647998F9CC3D0 /* BotHistoryCache.swift */,
 				E9030000000000000000A002 /* HermesConversation.swift */,
+				CE6C673256AD7FDE4839A37B /* JarvisBotRouting.swift */,
 				709A0000000000000000A002 /* HermesHome.swift */,
 				B1176000000000000000A002 /* HermesSessionLookup.swift */,
 				3C75DCD3DB974E27A3CB405C /* BotPromptMode.swift */,
@@ -2525,6 +2531,7 @@
 				6F1EF01AA79B446C989D7FC1 /* BotSearchView.swift in Sources */,
 				F0907446778F4FBEBAEEC2B9 /* BotHistoryCache.swift in Sources */,
 				E9030000000000000000A001 /* HermesConversation.swift in Sources */,
+				70675ACA28F67B99185A118F /* JarvisBotRouting.swift in Sources */,
 				709A0000000000000000A001 /* HermesHome.swift in Sources */,
 				B1176000000000000000A001 /* HermesSessionLookup.swift in Sources */,
 				9BB85D722406416798DFA518 /* BotPromptMode.swift in Sources */,
@@ -3050,6 +3057,7 @@
 				A04500000000000000000008 /* LiveActivityTests.swift in Sources */,
 				559000000000000000000006 /* PushPreviewTests.swift in Sources */,
 				C0DE88500000000000000003 /* AppLockTests.swift in Sources */,
+				71FBEF75786248D4E1C80061 /* JarvisBotRoutingTests.swift in Sources */,
 				1A2B3C4D5E6F700000000341 /* AppIntentNewChatTests.swift in Sources */,
 				1A2B3C4D5E6F700000000345 /* AppIntentNewChatInProfileTests.swift in Sources */,
 			);
