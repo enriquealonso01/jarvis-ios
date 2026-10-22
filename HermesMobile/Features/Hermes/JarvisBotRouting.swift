@@ -19,8 +19,9 @@ enum JarvisBotRouting {
     static let generalProfile = "default"
     /// A guess below this keeps the chat general.
     static let minimumConfidence = 0.7
-    /// The first message waits at most this long for the box, then goes out as general.
-    static let timeout: Duration = .seconds(6)
+    /// The first message waits at most this long for the box, then goes out as general. The
+    /// box answers in two to five seconds (both classifiers run at once, keywords as a fallback).
+    static let timeout: Duration = .seconds(8)
 
     static func routes(profile: String) -> Bool { profile == generalProfile }
 
@@ -62,7 +63,7 @@ enum JarvisBotRouter {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "profile": current])
-        request.timeoutInterval = 8
+        request.timeoutInterval = 10
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let status = (response as? HTTPURLResponse)?.statusCode, (200...299).contains(status) else {
             throw URLError(.badServerResponse)

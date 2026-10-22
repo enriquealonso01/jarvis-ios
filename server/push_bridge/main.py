@@ -31,7 +31,7 @@ DASH_CONFIG_PATH = Path(os.environ.get("BRIDGE_DASH_CONFIG", "/root/.hermes/conf
 # {"profile", "confidence", "reason", "title"} for a message. The app asks it on the first
 # message of a new default-profile chat (docs/agents/bots.md, "Opened in <Bot>").
 ROUTE_BIN = os.environ.get("BRIDGE_ROUTE_BIN", "/usr/local/bin/jarvis-route")
-ROUTE_TIMEOUT_S = float(os.environ.get("BRIDGE_ROUTE_TIMEOUT_S", "9"))
+ROUTE_TIMEOUT_S = float(os.environ.get("BRIDGE_ROUTE_TIMEOUT_S", "12"))
 
 
 def _save_env_key(key: str, value: str) -> None:
@@ -808,7 +808,9 @@ async def route(request: Request, x_bridge_sig: str = Header(default="")):
         raise HTTPException(status_code=400, detail="route needs text")
     current = str(body.get("profile") or "").strip()[:64]
     args = [ROUTE_BIN] + (["--current", current] if current else []) + [text]
-    env = dict(os.environ, HOME=os.environ.get("HOME") or "/root")
+    # The router hedges Z.AI and Fireworks and falls back to keywords; a short per-call cap
+    # keeps the whole answer inside the app's wait.
+    env = dict(os.environ, HOME=os.environ.get("HOME") or "/root", JARVIS_CLASSIFY_TIMEOUT="5")
 
     def run() -> subprocess.CompletedProcess:
         return subprocess.run(args, capture_output=True, text=True, timeout=ROUTE_TIMEOUT_S, env=env)
