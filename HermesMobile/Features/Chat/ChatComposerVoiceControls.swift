@@ -293,13 +293,16 @@ struct VoiceNoteRecordingSurface: View {
                 Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
                     .accessibilityLabel(Text("Locked"))
             }
-            VoiceNoteWaveformView(levels: levels, color: isPaused ? .secondary : .red, barCount: 12)
+            VoiceNoteWaveformView(levels: levels, color: isPaused ? .secondary : .red, barCount: isPaused ? 8 : 12)
+                .layoutPriority(-1)
 
             Spacer(minLength: 4)
 
             if isPaused {
                 Button(action: onResume) {
                     Label("Resume", systemImage: "mic.fill").font(.callout.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize()
                         .frame(minHeight: 40)
                 }
                 .accessibilityIdentifier("voiceNote.resume")

@@ -1112,7 +1112,18 @@ struct MessageComposerView: View {
             onPause: { voiceNoteRecorder.pause() },
             onResume: { voiceNoteRecorder.resume() }
         )
+        // Solid under the glass: the bar's own glass showed the text field through the
+        // recording UI, opacity or not (Maestro runs 39788589264 and 39797573450).
+        .background(voiceNoteSurfaceShape.fill(Color(.systemBackground)))
         .modifier(ChatComposerSurfaceStyle(isExpanded: isExpanded))
+    }
+
+    private var voiceNoteSurfaceShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: isExpanded ? ChatComposerMetrics.cardCornerRadius
+                : (ChatComposerMetrics.actionSize + ChatComposerMetrics.pillInset * 2) / 2,
+            style: .continuous
+        )
     }
 
     private var voiceControlButton: some View {
