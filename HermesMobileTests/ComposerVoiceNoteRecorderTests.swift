@@ -211,6 +211,32 @@ final class ComposerVoiceNoteRecorderTests: XCTestCase {
         XCTAssertEqual(recorder.state, .idle)
     }
 
+    /// A quick tap's press and release arrive in one event: the lock lands before the async
+    /// `begin` has run (Maestro run 39793330797 logged "lock, recorder=idle"). Armed first, the
+    /// recorder keeps that lock for the note it is about to start.
+    func testALockBeforeBeginRunsLocksTheNoteItStarts() async {
+        let recorder = makeRecorder()
+        XCTAssertTrue(recorder.arm())
+        XCTAssertEqual(recorder.state, .requestingPermission)
+        recorder.lock()
+        await recorder.begin()
+        XCTAssertEqual(recorder.state, .recording)
+        XCTAssertTrue(recorder.isLocked)
+        XCTAssertFalse(recorder.arm(), "a note in progress can't be claimed again")
+    }
+
+    func testACancelBeforeBeginRunsStartsNothing() async {
+        let recorder = makeRecorder()
+        recorder.arm()
+        recorder.cancel()
+        await recorder.begin()
+        XCTAssertEqual(recorder.state, .recording, "begin from idle is a fresh note")
+        recorder.cancel()
+        recorder.arm()
+        recorder.cancel()
+        XCTAssertEqual(recorder.state, .idle)
+    }
+
     func testFirstNoteBehindThePermissionPromptStartsLocked() async {
         permission = .undetermined
         let recorder = makeRecorder()

@@ -268,14 +268,8 @@ final class ComposerVoiceNoteRecorder {
     /// `locked` starts it hands-free. A note that had to wait for the permission prompt starts
     /// locked too: the finger that held the mic has left the screen by then.
     func begin(locked: Bool = false) async {
-        guard state == .idle else { return }
-        errorMessage = nil
-        hintMessage = nil
-        elapsed = 0
-        levels = []
-        isLocked = locked
-        lockWhenStarted = false
-        state = .requestingPermission
+        if state == .idle { guard arm(locked: locked) else { return } }
+        guard state == .requestingPermission else { return }
 
         let wasUndetermined = permissionStatus() == .undetermined
         let granted = permissionStatus() == .granted ? true : await permissionRequester()
@@ -297,6 +291,22 @@ final class ComposerVoiceNoteRecorder {
         } catch {
             fail(error.localizedDescription)
         }
+    }
+
+    /// Claims the recorder for a press, synchronously, ahead of the async `begin`: a lock or a
+    /// cancel that lands before `begin` runs (a quick tap's release arrives in the same event)
+    /// then applies to this note instead of being lost on an idle recorder.
+    @discardableResult
+    func arm(locked: Bool = false) -> Bool {
+        guard state == .idle else { return false }
+        errorMessage = nil
+        hintMessage = nil
+        elapsed = 0
+        levels = []
+        isLocked = locked
+        lockWhenStarted = false
+        state = .requestingPermission
+        return true
     }
 
     /// Swipe up while holding (or a tap): hands-free from here on.
