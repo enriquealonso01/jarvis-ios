@@ -153,7 +153,6 @@ struct MessageComposerView: View {
     /// t3code sizing: every circle in the composer is 44 pt, which is also the
     /// minimum hit target, so no invisible hit padding is needed.
     private let circleSize = ChatComposerMetrics.actionSize
-    static let composerSpace = "jarvisComposer"
     private let pillInset = ChatComposerMetrics.pillInset
 
     /// The draft. Pass the owner's plain `$state`, not a get/set binding:
@@ -337,7 +336,7 @@ struct MessageComposerView: View {
 
     @State private var deferredUploadFocusPhase: DeferredUploadFocusPhase = .none
     @State private var showMediaPicker = false
-    /// The mic's frame in `composerSpace`, kept while the composer shows the recording bar.
+    /// The mic's frame in window coordinates, kept while the composer shows the recording bar.
     @State private var micFrame: CGRect = .zero
     /// The camera button opened the picker: it starts on the camera, past the menu.
     @State private var mediaPickerOpensCamera = false
@@ -670,7 +669,6 @@ struct MessageComposerView: View {
             // morph and the row's insertion take their animation from here.
             .animation(ChatMotion.composerChrome(reduceMotion: reduceMotion), value: isExpanded)
         }
-        .coordinateSpace(name: Self.composerSpace)
         // The mic's touch (see `VoiceMicTouchHost`): transparent, over the composer, taking
         // touches only inside the mic's last frame and only until the note locks.
         .overlay {
@@ -1136,7 +1134,7 @@ struct MessageComposerView: View {
                 lockVoiceNote()
             }
         )
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.composerSpace)) } action: { micFrame = $0 }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { micFrame = $0 }
         .onDisappear {
             // The text bar leaves for the recording bar with the finger still down: keep the
             // frame then. Any other disappearance (text typed, Send shown) clears it.

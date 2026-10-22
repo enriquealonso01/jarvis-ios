@@ -39,19 +39,23 @@ struct ComposerVoiceControlButton: View {
 
     @ViewBuilder var body: some View {
         if supportsVoiceNotes {
-            label
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction {
-                    // VoiceOver synthesizes an activation rather than a real touch, so the
-                    // touch host never sees it: start a locked note (or dictate).
-                    guard !isDisabled, !isRecordingVoiceNote else { return }
-                    if tapRecords { onVoiceOverRecord() } else { onTap() }
-                }
-                .accessibilityAction(named: Text("Record voice note")) {
-                    guard !isDisabled, !isRecordingVoiceNote else { return }
-                    onVoiceOverRecord()
-                }
-                .accessibilityIdentifier("composer.mic")
+            // A real button, so a tap (and Maestro, and VoiceOver) starts a locked note even
+            // when the window gesture that tracks a hold is not the view under the finger.
+            // The hold itself is VoiceMicTouchHost: this button leaves the tree the moment
+            // recording starts, and a SwiftUI gesture would die with it.
+            Button {
+                guard !isDisabled, !isRecordingVoiceNote else { return }
+                if tapRecords { onVoiceOverRecord() } else { onTap() }
+            } label: {
+                label
+            }
+            .buttonStyle(.plain)
+            .disabled(isDisabled)
+            .accessibilityAction(named: Text("Record voice note")) {
+                guard !isDisabled, !isRecordingVoiceNote else { return }
+                onVoiceOverRecord()
+            }
+            .accessibilityIdentifier("composer.mic")
         } else {
             Button {
                 onTap()

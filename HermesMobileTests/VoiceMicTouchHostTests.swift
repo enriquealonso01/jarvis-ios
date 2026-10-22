@@ -29,21 +29,22 @@ final class VoiceMicTouchHostTests: XCTestCase {
     private let open = VoiceMicPressContext(tapRecords: true, isLocked: false, noteInProgress: false, isDisabled: false)
     private let t0 = Date(timeIntervalSince1970: 1_790_000_000)
 
-    func testTheHostTakesTouchesOnlyInsideTheMicsFrameAndOnlyWhileEnabled() {
-        let host = VoiceMicTouchHost.HostView(frame: CGRect(x: 0, y: 0, width: 400, height: 120))
+    func testTheHostNeverCoversTheComposerAndOnlyClaimsTouchesOnTheMic() {
+        let host = VoiceMicTouchHost.HostView(frame: CGRect(x: 0, y: 0, width: 400, height: 800))
         let recognizer = UILongPressGestureRecognizer()
-        host.addGestureRecognizer(recognizer)
+        recognizer.isEnabled = true
         host.recognizer = recognizer
         host.micRect = CGRect(x: 340, y: 40, width: 44, height: 44)
-        XCTAssertTrue(host.point(inside: CGPoint(x: 360, y: 60), with: nil))
-        XCTAssertFalse(host.point(inside: CGPoint(x: 60, y: 60), with: nil), "the rest of the composer passes through")
-        XCTAssertNil(host.hitTest(CGPoint(x: 60, y: 60), with: nil))
+        // The view itself is not in the hit chain, so the text field and the recording
+        // buttons stay pressable. Only a touch that begins on the mic is claimed.
+        XCTAssertFalse(host.point(inside: CGPoint(x: 360, y: 60), with: nil))
+        XCTAssertNil(host.hitTest(CGPoint(x: 360, y: 60), with: nil))
+        XCTAssertTrue(host.acceptsTouch(at: CGPoint(x: 360, y: 60)))
+        XCTAssertFalse(host.acceptsTouch(at: CGPoint(x: 20, y: 700)), "the text field is not the mic")
 
-        // Locked or paused: micRect is zero and the recognizer is off, so nothing is ever taken.
         host.micRect = .zero
         recognizer.isEnabled = false
-        XCTAssertFalse(host.point(inside: CGPoint(x: 360, y: 60), with: nil), "Pause, Resume, Delete and Send are never shadowed")
-        XCTAssertNil(host.hitTest(CGPoint(x: 360, y: 60), with: nil))
+        XCTAssertFalse(host.acceptsTouch(at: CGPoint(x: 360, y: 60)), "Pause, Resume, Delete and Send are never claimed")
     }
 
     func testAHoldAndReleaseSendsThroughTheHandlers() {

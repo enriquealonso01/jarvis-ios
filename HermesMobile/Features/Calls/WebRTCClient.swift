@@ -51,6 +51,8 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
     private var pingTimer: DispatchSourceTimer?
     /// Called (off-main) for every JSON app message the gateway sends.
     var onAppMessage: (@Sendable ([String: Any]) -> Void)?
+    /// Inbound speech level, 0...1, about ten times a second while the remote audio track is live.
+    var onRemoteAudioLevel: (@Sendable (Float) -> Void)?
     /// Called (off-main) when the peer connection reaches a terminal ICE
     /// state (failed/disconnected/closed) after connect — CallManager turns
     /// this into callState "failed: …" + a missed/failed log stamp instead of
@@ -358,6 +360,8 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         connected = false
         statsTimer?.cancel()
         statsTimer = nil
+        levelTimer?.cancel()
+        levelTimer = nil
     }
 
     private func post(path: String, body: [String: Any]) async throws -> Data {
@@ -481,6 +485,30 @@ final class WebRTCClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDel
         }
         t.resume()
         statsTimer = t
+        startLevelSampling()
+    }
+
+    /// JARVIS's voice level for the Aura field. `audioLevel` on the inbound audio stat is 0...1.
+    private var levelTimer: DispatchSourceTimer?
+    private func startLevelSampling() {
+        guard levelTimer == nil, let pc else { return }
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + .milliseconds(200), repeating: .milliseconds(100))
+        t.setEventHandler { [weak self] in
+            guard let self, let pc = self.pc else { return }
+            pc.statistics { [weak self] report in
+                var level: Float = 0
+                for stat in report.statistics.values {
+                    guard (stat.values["type"] as? String) == "inbound-rtp" else { continue }
+                    let kind = (stat.values["kind"] as? String) ?? (stat.values["mediaType"] as? String)
+                    guard kind == "audio" else { continue }
+                    if let number = stat.values["audioLevel"] as? NSNumber { level = number.floatValue }
+                }
+                self?.onRemoteAudioLevel?(min(1, max(0, level)))
+            }
+        }
+        t.resume()
+        levelTimer = t
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
         // Required by RTCPeerConnectionDelegate (M130). The gateway client

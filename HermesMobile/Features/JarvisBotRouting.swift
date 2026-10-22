@@ -25,6 +25,13 @@ enum JarvisBotRouting {
 
     static func routes(profile: String) -> Bool { profile == generalProfile }
 
+    /// The push bridge that answers `/bridge/route` is the JARVIS host. A Debug build pointed
+    /// at `scripts/local-hermes` (the Maestro runner) has no bridge, and waiting on it only
+    /// delays the first message. Release builds always use the production address.
+    static func asksTheBox(at url: URL) -> Bool {
+        url.host?.caseInsensitiveCompare(JarvisServer.productionAddress.host ?? "") == .orderedSame
+    }
+
     /// The Bot `reply` moves the chat to, or nil: no reply, a general or low-confidence one, or
     /// the Profile the chat is already on.
     static func destination(_ reply: JarvisBotRoute?, current: String) -> String? {
@@ -48,7 +55,7 @@ enum JarvisBotRouting {
 enum JarvisBotRouter {
     static func route(_ text: String, current: String) async -> JarvisBotRoute? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        guard !trimmed.isEmpty, JarvisBotRouting.asksTheBox(at: JarvisServer.address) else { return nil }
         do {
             return try await withTimeout(JarvisBotRouting.timeout) { try await request(trimmed, current: current) }
         } catch {

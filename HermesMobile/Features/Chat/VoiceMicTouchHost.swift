@@ -21,21 +21,20 @@ struct VoiceMicPressHandlers {
     var onTap: () -> Void = {}
 }
 
-/// The mic's touch, in UIKit, on a view that outlives the composer's swap.
+/// The mic's touch, in UIKit, on the window, so it outlives the composer's swap.
 ///
 /// While a voice note is recorded the composer shows ONLY the recording bar: the text bar, its
 /// field, the camera and the mic are not in the view tree (Enrique, build 83: the old bar sat on
 /// top of the recording bar and its buttons couldn't be pressed). The finger that started the
 /// note is still down on the mic that was just removed, and a SwiftUI gesture dies with its view.
-/// This transparent host sits over the composer, takes touches only inside `micRect` (the mic's
-/// last frame), and keeps tracking that finger through the swap, so swipe up to lock and slide
-/// left to cancel keep working.
 ///
-/// It is torn down the moment the note locks or the finger lifts: `micRect` goes to zero, the
-/// recognizer is disabled, and `point(inside:)` refuses every touch, so the recording bar's
-/// plain buttons (Delete, Pause, Resume, Send) are never shadowed by it.
+/// This host's own view never takes a hit, so it cannot cover the text field or the recording
+/// buttons. Its recognizer lives on the window and accepts a new touch only when that touch
+/// begins inside `micRect` (the mic's last frame, in window coordinates). A tap still reaches
+/// the mic button. A hold keeps being tracked after the button is removed, until the note locks,
+/// and then the recognizer is disabled so Delete, Pause, Resume and Send are never claimed.
 struct VoiceMicTouchHost: UIViewRepresentable {
-    /// The mic's frame in this view's coordinate space; `.zero` when there is nothing to press.
+    /// The mic's frame in window coordinates; `.zero` when there is nothing to press.
     var micRect: CGRect
     var isEnabled: Bool
     var context: () -> VoiceMicPressContext
@@ -50,9 +49,21 @@ struct VoiceMicTouchHost: UIViewRepresentable {
         let recognizer = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handle(_:)))
         recognizer.minimumPressDuration = 0
         recognizer.allowableMovement = .greatestFiniteMagnitude
-        recognizer.cancelsTouchesInView = true
-        view.addGestureRecognizer(recognizer)
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.delegate = context.coordinator
         view.recognizer = recognizer
+        view.onWindow = { window in
+            guard let window else {
+                recognizer.view?.removeGestureRecognizer(recognizer)
+                return
+            }
+            if recognizer.view !== window {
+                recognizer.view?.removeGestureRecognizer(recognizer)
+                window.addGestureRecognizer(recognizer)
+            }
+        }
         return view
     }
 
@@ -60,30 +71,58 @@ struct VoiceMicTouchHost: UIViewRepresentable {
         let coordinator = coordinatorContext.coordinator
         coordinator.contextProvider = context
         coordinator.handlers = handlers
-        let live = isEnabled && !micRect.isEmpty
-        view.micRect = live ? micRect : .zero
+        let live = isEnabled && !micRect.isEmpty && !micRect.isNull
+        coordinator.micRect = live ? micRect : .zero
+        view.micRect = coordinator.micRect
         if let recognizer = view.recognizer, recognizer.isEnabled != live { recognizer.isEnabled = live }
+    }
+
+    static func dismantleUIView(_ view: HostView, coordinator: Coordinator) {
+        if let recognizer = view.recognizer {
+            recognizer.view?.removeGestureRecognizer(recognizer)
+            view.recognizer = nil
+        }
+        coordinator.micRect = .zero
     }
 
     final class HostView: UIView {
         var micRect: CGRect = .zero
         weak var recognizer: UILongPressGestureRecognizer?
+        var onWindow: ((UIWindow?) -> Void)?
 
-        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-            guard recognizer?.isEnabled == true, !micRect.isEmpty else { return false }
-            return micRect.contains(point)
+        /// Never in the hit chain. The composer, its field and the recording buttons stay on top.
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { false }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onWindow?(window)
+        }
+
+        /// A new touch is the mic's only when it begins inside `micRect` and the recognizer is on.
+        func acceptsTouch(at pointInWindow: CGPoint) -> Bool {
+            guard recognizer?.isEnabled == true, !micRect.isEmpty, !micRect.isNull else { return false }
+            return micRect.contains(pointInWindow)
         }
     }
 
     @MainActor
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var contextProvider: () -> VoiceMicPressContext = {
             VoiceMicPressContext(tapRecords: true, isLocked: false, noteInProgress: false, isDisabled: true)
         }
         var handlers = VoiceMicPressHandlers()
+        var micRect: CGRect = .zero
         private var tracker = ComposerVoiceNoteGesture.Tracker()
         private var startLocation: CGPoint = .zero
         private var holdWorkItem: DispatchWorkItem?
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard gestureRecognizer.isEnabled, !micRect.isEmpty else { return false }
+            return micRect.contains(touch.location(in: nil))
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
         @objc func handle(_ recognizer: UILongPressGestureRecognizer) {
             switch recognizer.state {

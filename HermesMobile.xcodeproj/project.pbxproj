@@ -604,6 +604,8 @@
 		2C2099675761BCDE29536BA2 /* CallLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5099445758FC386999C4A641 /* CallLogStore.swift */; };
 		762A0408D4EF7D307456FBCC /* CallsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121CCC40E57CCDB82BE91102 /* CallsView.swift */; };
 		CE8DF23DE7AC528467C6F1CB /* JarvisVoiceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */; };
+		3E91B7C04A2F58D6E0B14C88 /* JarvisAuraVisualizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F3C1A90B2D64E77A1C05F42 /* JarvisAuraVisualizer.swift */; };
+		9C7E4B21D0A6538F2E1B7C44 /* JarvisAuraMotionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A2D8E15C4B9073F1A6E2D50 /* JarvisAuraMotionTests.swift */; };
 		807BE0556A96F96E5B501113 /* CommandCenterModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D70CEE7647331DB00DD54C5B /* CommandCenterModel.swift */; };
 		FF54B93938CF425E621DFA13 /* CommandCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67852DFC290332239D9B3F60 /* CommandCenterView.swift */; };
 		6EB28747EC370C7B07248FEB /* RichBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E557B5E3E8A5C135BAA89C7 /* RichBlocks.swift */; };
@@ -1267,6 +1269,8 @@
 		5099445758FC386999C4A641 /* CallLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallLogStore.swift; sourceTree = "<group>"; };
 		121CCC40E57CCDB82BE91102 /* CallsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallsView.swift; sourceTree = "<group>"; };
 		81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisVoiceScreen.swift; sourceTree = "<group>"; };
+		8F3C1A90B2D64E77A1C05F42 /* JarvisAuraVisualizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisAuraVisualizer.swift; sourceTree = "<group>"; };
+		6A2D8E15C4B9073F1A6E2D50 /* JarvisAuraMotionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisAuraMotionTests.swift; sourceTree = "<group>"; };
 		D70CEE7647331DB00DD54C5B /* CommandCenterModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterModel.swift; sourceTree = "<group>"; };
 		67852DFC290332239D9B3F60 /* CommandCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterView.swift; sourceTree = "<group>"; };
 		9E557B5E3E8A5C135BAA89C7 /* RichBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichBlocks.swift; sourceTree = "<group>"; };
@@ -1601,6 +1605,7 @@
 				559000000000000000000016 /* PushPreviewTests.swift */,
 				C0DE88500000000000000004 /* AppLockTests.swift */,
 				4DC76449C3FF82F8B42045A5 /* JarvisBotRoutingTests.swift */,
+				6A2D8E15C4B9073F1A6E2D50 /* JarvisAuraMotionTests.swift */,
 				1A2B3C4D5E6F700000000340 /* AppIntentNewChatTests.swift */,
 				1A2B3C4D5E6F700000000344 /* AppIntentNewChatInProfileTests.swift */,
 				A4790000000000000000F006 /* PushRegistrationTests.swift */,
@@ -2203,6 +2208,7 @@
 			isa = PBXGroup;
 			children = (
 				81D3017773C6ACBE0508328D /* JarvisVoiceScreen.swift */,
+				8F3C1A90B2D64E77A1C05F42 /* JarvisAuraVisualizer.swift */,
 				121CCC40E57CCDB82BE91102 /* CallsView.swift */,
 				5099445758FC386999C4A641 /* CallLogStore.swift */,
 				505D71E8E8F417F68FF621F8 /* CallManager.swift */,
@@ -2488,6 +2494,7 @@
 				FF54B93938CF425E621DFA13 /* CommandCenterView.swift in Sources */,
 				807BE0556A96F96E5B501113 /* CommandCenterModel.swift in Sources */,
 				CE8DF23DE7AC528467C6F1CB /* JarvisVoiceScreen.swift in Sources */,
+				3E91B7C04A2F58D6E0B14C88 /* JarvisAuraVisualizer.swift in Sources */,
 				762A0408D4EF7D307456FBCC /* CallsView.swift in Sources */,
 				2C2099675761BCDE29536BA2 /* CallLogStore.swift in Sources */,
 				ABBBCBD884874768A27C79D1 /* CallManager.swift in Sources */,
@@ -3066,6 +3073,7 @@
 				559000000000000000000006 /* PushPreviewTests.swift in Sources */,
 				C0DE88500000000000000003 /* AppLockTests.swift in Sources */,
 				71FBEF75786248D4E1C80061 /* JarvisBotRoutingTests.swift in Sources */,
+				9C7E4B21D0A6538F2E1B7C44 /* JarvisAuraMotionTests.swift in Sources */,
 				1A2B3C4D5E6F700000000341 /* AppIntentNewChatTests.swift in Sources */,
 				1A2B3C4D5E6F700000000345 /* AppIntentNewChatInProfileTests.swift in Sources */,
 			);

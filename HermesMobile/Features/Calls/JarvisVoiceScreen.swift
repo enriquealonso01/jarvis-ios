@@ -83,8 +83,8 @@ struct JarvisVoiceScreen: View {
                 .accessibilityIdentifier("voice.closeButton")
             }
             Spacer(minLength: 12)
-            OrbitalCoreView(state: muted ? .idle : phase.orbital, isStatic: !phase.isLive || muted)
-                .frame(width: 220, height: 220)
+            JarvisAuraView(phase: muted ? .ready : phase, volume: muted ? 0 : manager.remoteAudioLevel)
+                .frame(width: 260, height: 260)
                 .opacity(muted ? 0.55 : 1)
                 .accessibilityIdentifier("voice.orbital")
             Text(verbatim: title)

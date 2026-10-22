@@ -9,6 +9,12 @@ final class JarvisBotRoutingTests: XCTestCase {
         JarvisBotRoute(profile: profile, confidence: confidence, reason: nil, title: title)
     }
 
+    func testRoutingAsksOnlyTheJarvisHost() {
+        XCTAssertTrue(JarvisBotRouting.asksTheBox(at: JarvisServer.productionAddress))
+        XCTAssertFalse(JarvisBotRouting.asksTheBox(at: URL(string: "http://127.0.0.1:9199")!),
+                       "Maestro's local Hermes has no bridge; the first message must not wait on one")
+    }
+
     func testOnlyTheGeneralProfilesNewChatsAreRouted() {
         XCTAssertTrue(JarvisBotRouting.routes(profile: "default"))
         XCTAssertFalse(JarvisBotRouting.routes(profile: "ios"), "A chat opened in a Bot stays there")
