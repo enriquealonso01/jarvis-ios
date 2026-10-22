@@ -1,8 +1,9 @@
 appId: com.enriquecodes.jarvis
 # WhatsApp-style voice notes (requirement 12). The CI simulator has no microphone, so the QA
-# lane turns on the Debug-only fake microphone (JarvisFakeMicrophone); sending and the
-# transcript are checked on the phone. Covers: a tap leaves the note recording, locked; Pause;
-# Resume into the same note; Delete; hold and swipe up locks; hold and slide left cancels.
+# lane turns on the Debug-only fake microphone (JarvisFakeMicrophone). Covers: a tap leaves
+# the note recording, locked; Pause; Resume into the same note; Delete; hold and swipe up
+# locks; hold and slide left cancels; Send and the transcript. Slide-left runs inside the
+# shared flow, before Send, so the transcript sheet is not covering the mic.
 name: 06 voice note pause continue and delete
 ---
 - launchApp:
@@ -37,12 +38,3 @@ name: 06 voice note pause continue and delete
     file: lib/voice-note-controls.yaml
     env:
       PREFIX: "06"
-# Press, hold and slide left: cancelled, nothing left behind.
-- swipe:
-    from:
-      text: Voice input
-    direction: LEFT
-    duration: 1500
-- assertNotVisible: Delete voice note
-- assertVisible: Camera
-- takeScreenshot: 06-slide-left-cancelled

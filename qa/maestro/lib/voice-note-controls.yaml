@@ -58,6 +58,16 @@ appId: com.enriquecodes.jarvis
 - extendedWaitUntil:
     visible: Camera
     timeout: 8000
+# 5b. Slide left cancels. This has to happen BEFORE Send: sending opens the transcript
+#     sheet and the agent replies, and neither leaves the mic tappable.
+- swipe:
+    from:
+      text: Voice input
+    direction: LEFT
+    duration: 1500
+- assertNotVisible: Delete voice note
+- assertVisible: Camera
+- takeScreenshot: ${PREFIX}-slide-left-cancelled
 # 6. Record again and Send. The note is already past a couple of seconds by the time the
 #    tap command returns (Maestro's tap is slow), so waiting for the exact label "0:02"
 #    misses it. Delete being back means the note is locked and long enough to send.
@@ -71,11 +81,19 @@ appId: com.enriquecodes.jarvis
     visible: Waiting to send…|Transcript
     timeout: 15000
 - takeScreenshot: ${PREFIX}-sent
-# 7. The transcript arrives afterwards; the Transcript button opens it.
+# 7. The transcript arrives afterwards. Tap the button by id: a label tap races the
+#    agent's approval card (the stub answers every send) and Maestro treats that card
+#    appearing as a successful tap. Retry until the sheet actually shows the text.
 - extendedWaitUntil:
     visible: Transcript
     timeout: 30000
-- tapOn:
-    text: Transcript
-- assertVisible: Fake transcript for QA.
+- retry:
+    maxRetries: 3
+    commands:
+      - tapOn:
+          id: voiceNote.transcriptButton
+      - extendedWaitUntil:
+          visible: Fake transcript for QA.
+          timeout: 8000
 - takeScreenshot: ${PREFIX}-transcript
+- tapOn: Done

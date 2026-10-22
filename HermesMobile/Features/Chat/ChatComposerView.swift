@@ -1712,6 +1712,9 @@ struct MessageComposerView: View {
         // Released while the microphone prompt was still up: the note starts hands-free
         // instead of vanishing.
         if voiceNoteRecorder.isRequestingPermission { lockVoiceNote(); return }
+        // The field was focused when the note started. Sending puts the bubble in the
+        // transcript; bringing the keyboard back would cover it (and the transcript sheet).
+        isFocused = false
         guard let note = voiceNoteRecorder.finish() else {
             if voiceNoteRecorder.errorMessage == nil {
                 voiceNoteRecorder.hint(String(localized: "Hold the mic to record, or tap it to record hands-free."))
