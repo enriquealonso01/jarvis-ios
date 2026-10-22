@@ -58,11 +58,13 @@ appId: com.enriquecodes.jarvis
 - extendedWaitUntil:
     visible: Camera
     timeout: 8000
-# 6. Record again and Send: the audio bubble is in the chat at once.
+# 6. Record again and Send. The note is already past a couple of seconds by the time the
+#    tap command returns (Maestro's tap is slow), so waiting for the exact label "0:02"
+#    misses it. Delete being back means the note is locked and long enough to send.
 - tapOn:
     text: Voice input
 - extendedWaitUntil:
-    visible: 0:02
+    visible: Delete voice note
     timeout: 15000
 - tapOn: Send voice note
 - extendedWaitUntil:
