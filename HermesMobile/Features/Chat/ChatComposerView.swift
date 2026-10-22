@@ -627,14 +627,19 @@ struct MessageComposerView: View {
                 .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsFileAutocomplete)
 
                 VStack(spacing: 0) {
+                    // Invisible under the recording UI (the bar's glass would show the text
+                    // field through it, Maestro run 39788589264), but still there: the held
+                    // mic's gesture runs on underneath.
                     composerSurface
                         .padding(.horizontal)
+                        .opacity(isRecordingVoiceNote ? 0 : 1)
 
                     if isExpanded {
                         toolbarRow
                             .padding(.horizontal)
                             .padding(.top, 8)
                             .frame(maxWidth: .infinity)
+                            .opacity(isRecordingVoiceNote ? 0 : 1)
                             // Solid chat background behind the controls: the card
                             // above is glass on purpose, but transcript text
                             // scrolling under the row made the pills unreadable.
