@@ -1,0 +1,99 @@
+appId: com.enriquecodes.jarvis
+# The recording bar's controls. Called by flows 06 (keyboard closed) and 09 (keyboard open)
+# with PREFIX for the screenshot names. Starts on a chat whose input bar is empty (camera + mic).
+# Taps use the control's label. Hit-testing, which failed on the phone when the old bar sat on
+# top (build 83), is the Debug probe: window.hitTest at each control's center, and CI fails if
+# the text field or the touch host is what it finds.
+---
+- assertVisible: Camera
+# 1. A quick tap: the note starts and stays recording, locked. The text bar is GONE: no camera,
+#    no field, no placeholder (one container swap, not hidden under the recording bar).
+- tapOn:
+    text: Voice input
+- tapOn:
+    text: Allow
+    optional: true
+- extendedWaitUntil:
+    visible: Delete voice note
+    timeout: 15000
+- assertNotVisible: Camera
+- assertNotVisible: Ask anything.*
+- assertVisible: Pause
+- takeScreenshot: ${PREFIX}-locked
+# 2. Pause by its label. The Debug hit-test probe (window.hitTest at the control's
+#    center) is what fails the run if something still sits on top of the button.
+- tapOn: Pause
+- extendedWaitUntil:
+    visible: Resume
+    timeout: 8000
+- assertVisible: Paused
+- takeScreenshot: ${PREFIX}-paused
+# 3. Resume: Pause is back.
+- tapOn:
+    text: Resume
+- extendedWaitUntil:
+    visible: Pause
+    timeout: 8000
+- takeScreenshot: ${PREFIX}-resumed
+# 4. Delete: the normal bar returns.
+- tapOn: Delete voice note
+- extendedWaitUntil:
+    visible: Camera
+    timeout: 8000
+- assertNotVisible: Delete voice note
+- assertVisible: Ask anything.*
+- takeScreenshot: ${PREFIX}-deleted
+# 5. Press, hold and swipe up: locked, so lifting the finger doesn't send.
+- swipe:
+    from:
+      text: Voice input
+    direction: UP
+    duration: 1500
+- extendedWaitUntil:
+    visible: Delete voice note
+    timeout: 10000
+- assertVisible: Pause
+- takeScreenshot: ${PREFIX}-swipe-up-locked
+- tapOn: Delete voice note
+- extendedWaitUntil:
+    visible: Camera
+    timeout: 8000
+# 5b. Slide left cancels. This has to happen BEFORE Send: sending opens the transcript
+#     sheet and the agent replies, and neither leaves the mic tappable.
+- swipe:
+    from:
+      text: Voice input
+    direction: LEFT
+    duration: 1500
+- assertNotVisible: Delete voice note
+- assertVisible: Camera
+- takeScreenshot: ${PREFIX}-slide-left-cancelled
+# 6. Record again and Send. The note is already past a couple of seconds by the time the
+#    tap command returns (Maestro's tap is slow), so waiting for the exact label "0:02"
+#    misses it. Delete being back means the note is locked and long enough to send.
+- tapOn:
+    text: Voice input
+- extendedWaitUntil:
+    visible: Delete voice note
+    timeout: 15000
+- tapOn: Send voice note
+- extendedWaitUntil:
+    visible: Waiting to send…|Transcript
+    timeout: 15000
+- takeScreenshot: ${PREFIX}-sent
+# 7. The transcript arrives afterwards. Tap the button by id: a label tap races the
+#    agent's approval card (the stub answers every send) and Maestro treats that card
+#    appearing as a successful tap. Retry until the sheet actually shows the text.
+- extendedWaitUntil:
+    visible: Transcript
+    timeout: 30000
+- retry:
+    maxRetries: 3
+    commands:
+      - tapOn:
+          id: voiceNote.transcriptButton
+      - extendedWaitUntil:
+          visible: Fake transcript for QA.
+          timeout: 8000
+- takeScreenshot: ${PREFIX}-transcript
+- tapOn: Done

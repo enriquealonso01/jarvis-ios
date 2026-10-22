@@ -74,6 +74,10 @@ struct HermesSessionChat: Hashable, Identifiable {
     var lineageRoot: String? = nil
     /// New Chat with Voice opened it on a Hermes server (#1180): its composer starts dictation.
     var autoStartsVoiceInput = false
+    /// Bot routing (`JarvisBotRouting`): the message a general chat was typed with, which this
+    /// chat sends as soon as it attaches, after `openingNotice` ("Opened in iOS Builder").
+    var firstPrompt: String? = nil
+    var openingNotice: String? = nil
 
     /// What the chat lets the user do (#1145): a bot's Bot Chat keeps Bot Chat's rules.
     var policy: HermesChatPolicy { HermesChatPolicy(target: target, botChatRoot: botChatRoot) }

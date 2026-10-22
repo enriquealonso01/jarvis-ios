@@ -25,6 +25,9 @@ final class CallManager: NSObject, ObservableObject {
     /// "state", "transcript", "metrics" messages) — surfaced on the Calls tab.
     @Published var sessionInfo: String = ""
     @Published var lastTranscript: String?
+    /// How loud JARVIS is right now, 0...1, from the inbound WebRTC audio. The voice screen's
+    /// Aura field breathes with it while JARVIS is speaking.
+    @Published var remoteAudioLevel: Double = 0
     /// Current speaker pick (mirrors WebRTCClient.speakerEnabled) so the UI
     /// toggle reflects route-change re-assertions too.
     @Published var isSpeakerOn: Bool = false
@@ -315,6 +318,10 @@ final class CallManager: NSObject, ObservableObject {
             nonisolated(unsafe) let boxedWhy = why
             Task { @MainActor in self?.handleConnectionFailure(boxedWhy) }
         }
+        client.onRemoteAudioLevel = { [weak self] level in
+            let value = Double(level)
+            Task { @MainActor in self?.remoteAudioLevel = value }
+        }
         webRTC = client
         // Re-apply the live call's native-screen mute/hold to this fresh
         // client's mic track (state can flip while media is still connecting).
@@ -329,6 +336,7 @@ final class CallManager: NSObject, ObservableObject {
         } catch {
             client.hangup()
             webRTC = nil
+            remoteAudioLevel = 0
             throw error
         }
         callState = "active"
@@ -350,6 +358,7 @@ final class CallManager: NSObject, ObservableObject {
         if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date(), reason: .failed) }
         webRTC?.hangup()
         webRTC = nil
+        remoteAudioLevel = 0
         // Same post-end redelivery memory for the failure path.
         if let p = pendingAnswerPayload { recentlyEndedCallIDs[p.callID] = Date() }
         pendingAnswerPayload = nil
@@ -429,6 +438,7 @@ final class CallManager: NSObject, ObservableObject {
         if let uuid = activeCallUUID { provider?.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded) }
         webRTC?.hangup()
         webRTC = nil
+        remoteAudioLevel = 0
         // Remember this call_id so a late APNs re-delivery can't ring again.
         if let p = pendingAnswerPayload { recentlyEndedCallIDs[p.callID] = Date() }
         pendingAnswerPayload = nil

@@ -336,6 +336,8 @@ struct MessageComposerView: View {
 
     @State private var deferredUploadFocusPhase: DeferredUploadFocusPhase = .none
     @State private var showMediaPicker = false
+    /// The mic's frame in window coordinates, kept while the composer shows the recording bar.
+    @State private var micFrame: CGRect = .zero
     /// The camera button opened the picker: it starts on the camera, past the menu.
     @State private var mediaPickerOpensCamera = false
     @State private var presentFilesAfterMediaPickerDismisses = false
@@ -626,51 +628,56 @@ struct MessageComposerView: View {
                 .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsSlashAutocomplete)
                 .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsFileAutocomplete)
 
-                VStack(spacing: 0) {
-                    // Invisible under the recording UI (the bar's glass would show the text
-                    // field through it, Maestro run 39788589264), but still there: the held
-                    // mic's gesture runs on underneath.
-                    composerSurface
+                // JARVIS (requirement 12, Signal/WhatsApp): ONE container swap. While a voice note is
+                // held, locked or paused the composer area is the recording bar and nothing else:
+                // the text bar, its field, the camera and the mic are not in the view tree, not
+                // hidden by opacity or z-order and not layered under it (Enrique, build 83: the
+                // old bar sat on top of the recording bar, and iOS draws a glass effect above its
+                // siblings whatever their opacity). The finger still on the mic is tracked by
+                // `VoiceMicTouchHost`, which outlives the swap.
+                if isRecordingVoiceNote {
+                    voiceNoteSurface
                         .padding(.horizontal)
-                        .opacity(isRecordingVoiceNote ? 0 : 1)
+                } else {
+                    VStack(spacing: 0) {
+                        composerSurface
+                            .padding(.horizontal)
 
-                    if isExpanded {
-                        toolbarRow
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                            .frame(maxWidth: .infinity)
-                            .opacity(isRecordingVoiceNote ? 0 : 1)
-                            // Solid chat background behind the controls: the card
-                            // above is glass on purpose, but transcript text
-                            // scrolling under the row made the pills unreadable.
-                            // Bleeds up into the gap under the card and down past
-                            // the keyboard gap and the bottom safe area, so no strip
-                            // of transcript shows around the row.
-                            .background(
-                                Color(.systemBackground)
-                                    .padding(.top, -10)
-                                    .padding(.bottom, -12)
-                                    .ignoresSafeArea(edges: .bottom)
-                            )
-                            .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
+                        if isExpanded {
+                            toolbarRow
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                                .frame(maxWidth: .infinity)
+                                // Solid chat background behind the controls: the card
+                                // above is glass on purpose, but transcript text
+                                // scrolling under the row made the pills unreadable.
+                                // Bleeds up into the gap under the card and down past
+                                // the keyboard gap and the bottom safe area, so no strip
+                                // of transcript shows around the row.
+                                .background(
+                                    Color(.systemBackground)
+                                        .padding(.top, -10)
+                                        .padding(.bottom, -12)
+                                        .ignoresSafeArea(edges: .bottom)
+                                )
+                                .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
+                        }
                     }
                 }
-                // JARVIS (requirement 12, Signal/WhatsApp): while a voice note is in progress the
-                // whole input bar, text field included, is the recording UI. The mic the finger
-                // holds stays where it is underneath, so its gesture runs on; the surface draws
-                // the held mic in its place.
-                .overlay {
-                    if isRecordingVoiceNote {
-                        voiceNoteSurface
-                            .padding(.horizontal)
-                            .transition(.opacity)
-                    }
-                }
-                .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: isRecordingVoiceNote)
             }
             // Focus flips arrive from UIKit outside any withAnimation, so the
             // morph and the row's insertion take their animation from here.
             .animation(ChatMotion.composerChrome(reduceMotion: reduceMotion), value: isExpanded)
+        }
+        // The mic's touch (see `VoiceMicTouchHost`): transparent, over the composer, taking
+        // touches only inside the mic's last frame and only until the note locks.
+        .overlay {
+            VoiceMicTouchHost(
+                micRect: micTouchRect,
+                isEnabled: !voiceNoteRecorder.isLocked && !voiceNoteRecorder.isPaused,
+                context: { micPressContext },
+                handlers: micPressHandlers
+            )
         }
         .background(
             GeometryReader { proxy in
@@ -1112,24 +1119,53 @@ struct MessageComposerView: View {
             onPause: { voiceNoteRecorder.pause() },
             onResume: { voiceNoteRecorder.resume() }
         )
-        .modifier(ChatComposerSurfaceStyle(isExpanded: isExpanded))
     }
 
     private var voiceControlButton: some View {
         ComposerVoiceControlButton(
             isListening: voiceInput.isListening,
-            // JARVIS: a voice note can be recorded while a reply streams (it is queued on Send).
-            isDisabled: micTapRecordsVoiceNote && !voiceInput.isListening ? isVoiceNoteRecordingDisabled : isVoiceInputDisabled,
+            isDisabled: micIsDisabled,
             color: metaControlColor,
             isRecordingVoiceNote: voiceNoteRecorder.hasNoteInProgress,
             tapRecords: micTapRecordsVoiceNote && !voiceInput.isListening,
-            isLocked: voiceNoteRecorder.isLocked,
             onTap: toggleVoiceInput,
+            onVoiceOverRecord: {
+                startVoiceNoteRecording()
+                lockVoiceNote()
+            }
+        )
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { micFrame = $0 }
+        .onDisappear {
+            // The text bar leaves for the recording bar with the finger still down: keep the
+            // frame then. Any other disappearance (text typed, Send shown) clears it.
+            if !isRecordingVoiceNote { micFrame = .zero }
+        }
+    }
+
+    private var micIsDisabled: Bool {
+        micTapRecordsVoiceNote && !voiceInput.isListening ? isVoiceNoteRecordingDisabled : isVoiceInputDisabled
+    }
+
+    /// Where a touch counts as the mic's: its frame, but never once the note is locked or paused.
+    private var micTouchRect: CGRect {
+        voiceNoteRecorder.isLocked || voiceNoteRecorder.isPaused ? .zero : micFrame
+    }
+
+    private var micPressContext: VoiceMicPressContext {
+        VoiceMicPressContext(tapRecords: micTapRecordsVoiceNote && !voiceInput.isListening,
+                             isLocked: voiceNoteRecorder.isLocked,
+                             noteInProgress: voiceNoteRecorder.hasNoteInProgress,
+                             isDisabled: micIsDisabled)
+    }
+
+    private var micPressHandlers: VoiceMicPressHandlers {
+        VoiceMicPressHandlers(
             onPressBegan: startVoiceNoteRecording,
             onDrag: { voiceNoteDrag = $0 },
             onLock: lockVoiceNote,
             onCancel: cancelVoiceNote,
-            onRelease: sendVoiceNote
+            onRelease: sendVoiceNote,
+            onTap: toggleVoiceInput
         )
     }
 
@@ -1676,6 +1712,9 @@ struct MessageComposerView: View {
         // Released while the microphone prompt was still up: the note starts hands-free
         // instead of vanishing.
         if voiceNoteRecorder.isRequestingPermission { lockVoiceNote(); return }
+        // The field was focused when the note started. Sending puts the bubble in the
+        // transcript; bringing the keyboard back would cover it (and the transcript sheet).
+        isFocused = false
         guard let note = voiceNoteRecorder.finish() else {
             if voiceNoteRecorder.errorMessage == nil {
                 voiceNoteRecorder.hint(String(localized: "Hold the mic to record, or tap it to record hands-free."))

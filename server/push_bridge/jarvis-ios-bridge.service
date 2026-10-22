@@ -1,0 +1,15 @@
+[Unit]
+Description=JARVIS iOS push bridge
+After=network.target
+
+[Service]
+WorkingDirectory=/root/projects/jarvis-ios/server/push_bridge
+ExecStart=/opt/jarvis-ios-bridge/venv/bin/uvicorn main:app --host 127.0.0.1 --port 9160
+EnvironmentFile=-/opt/jarvis-ios-bridge/apns.env
+Environment=BRIDGE_STATE_DIR=/opt/jarvis-ios-bridge
+Environment=BRIDGE_SHARED_SECRET_FILE=/opt/jarvis-ios-bridge/shared_secret
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

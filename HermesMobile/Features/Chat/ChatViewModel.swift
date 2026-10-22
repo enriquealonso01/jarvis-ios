@@ -2868,6 +2868,10 @@ final class ChatViewModel {
         }
 
         if let hermesTurn {
+            if let routed = await routeFirstHermesPrompt(draft, on: hermesTurn) {
+                routedHermesChat = routed
+                return true
+            }
             return await submitHermesPrompt(draft, mode: .send, to: hermesTurn)
         }
 
@@ -2954,6 +2958,19 @@ final class ChatViewModel {
 
     /// Whether this chat runs a Hermes session rather than a webui one (#1010).
     var isHermesSession: Bool { hermesTurn != nil }
+
+    /// Bot routing (`JarvisBotRouting`): the Bot's chat a general chat's first message moved to,
+    /// which the view opens in this chat's place and then clears.
+    var routedHermesChat: HermesSessionChat?
+    @ObservationIgnored private var pendingFirstHermesPrompt: String?
+    @ObservationIgnored private var pendingHermesOpeningNotice: String?
+
+    /// A routed chat's first message (`HermesSessionChat.firstPrompt`), sent on its first attach.
+    func queueFirstHermesPrompt(_ text: String?, notice: String?) {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        pendingFirstHermesPrompt = text
+        pendingHermesOpeningNotice = notice
+    }
 
     /// A Hermes prompt is on its way, from its uploads to the host's answer.
     @ObservationIgnored private var isSubmittingHermesPrompt = false
@@ -3079,8 +3096,45 @@ final class ChatViewModel {
         let retriesHistory = hermes.hasHistoryFailure
         await hermes.activate()
         if retriesHistory { await hermes.retryHistoryIfFailed() }
+        await sendPendingFirstHermesPrompt(hermes)
         restoreQueuedVoiceNoteRows()
         await drainVoiceNoteOutbox()
+    }
+
+    /// Bot routing: a general chat's first message, with no files, asks the box which Bot should
+    /// own it. When one does, the chat that replaces this one carries and sends the message, so
+    /// nothing is sent here. Nil sends it here: a Bot's or a picked Profile's chat, a chat that
+    /// has started, files staged, or the box answering general, slowly, or not at all.
+    private func routeFirstHermesPrompt(_ draft: String, on hermes: HermesChatTurnCoordinator) async -> HermesSessionChat? {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profile = hermes.settings.profile
+        guard JarvisBotRouting.routes(profile: profile), hermes.isUnstarted, messages.isEmpty,
+              attachmentCoordinator.pendingAttachments.isEmpty, !text.isEmpty else { return nil }
+        isStartingChat = true
+        defer { isStartingChat = false }
+        let reply = await JarvisBotRouter.route(text, current: profile)
+        guard let reply, let destination = JarvisBotRouting.destination(reply, current: profile) else { return nil }
+        var chat = HermesSessionChat(server: hermes.engine.server, connection: hermes.engine.connection,
+                                     target: .new(profile: destination))
+        chat.firstPrompt = text
+        chat.openingNotice = JarvisBotRouting.notice(for: reply, profile: destination)
+        return chat
+    }
+
+    /// A routed chat's first message goes out on its first successful attach, after its notice;
+    /// a failed attach keeps it for the next one and says why nothing was sent.
+    private func sendPendingFirstHermesPrompt(_ hermes: HermesChatTurnCoordinator) async {
+        guard let text = pendingFirstHermesPrompt else { return }
+        guard hermes.engine.connectionState == .connected else {
+            sendErrorMessage = String(localized: "Reconnect to the server to send a message.")
+            return
+        }
+        pendingFirstHermesPrompt = nil
+        if let notice = pendingHermesOpeningNotice {
+            pendingHermesOpeningNotice = nil
+            appendLocalNoticeMessage(notice)
+        }
+        _ = await submitHermesPrompt(text, mode: .send, to: hermes)
     }
 
     /// Sends one prompt to the Hermes session in `mode`, once (#1010). A Send shows the
@@ -3263,7 +3317,7 @@ final class ChatViewModel {
         if hermesTurn != nil {
             // JARVIS: offline-first. The bubble and the clip are in the chat at once; the
             // transcript and the text-only prompt follow while connected (`drainVoiceNoteOutbox`).
-            if let transcriber { voiceNoteTranscriber = transcriber }
+            if voiceNoteTranscriber == nil, let transcriber { voiceNoteTranscriber = transcriber }
             enqueueVoiceNote(audioData: audioData, filename: filename)
             await drainVoiceNoteOutbox()
             return true
