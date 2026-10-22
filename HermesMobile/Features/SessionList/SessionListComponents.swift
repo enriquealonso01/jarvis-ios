@@ -855,7 +855,8 @@ struct SessionInteractiveRow: View {
                 attentionState: viewModel.attentionState(for: session),
                 searchExcerpt: viewModel.searchExcerpt(for: session, searchText: searchText),
                 labelsArchived: true,
-                profileTag: viewModel.hermesShowsAllProfiles ? session.profile : nil
+                profileTag: viewModel.hermesShowsAllProfiles ? session.profile : nil,
+                profileLook: viewModel.hermesShowsAllProfiles ? session.profile.flatMap { viewModel.hermesBotLooks[$0] } : nil
             )
         }
         .buttonStyle(.plain)
