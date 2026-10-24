@@ -289,10 +289,9 @@ import XCTest
         XCTAssertFalse(wire.methods.contains("prompt.submit"))
     }
 
-    /// A session shows its cached transcript while it connects, read-only but without the
-    /// offline banner or reconnect line, and holds Send without a word; the attach's first
-    /// newest read puts the host's rows in its place.
-    func testASessionShowsItsCachedTranscriptWhileItConnects() async throws {
+    /// A session opening keeps its transcript empty — the loading skeleton — until the
+    /// attach's first newest read puts the host's rows in their place.
+    func testASessionShowsTheLoadingSkeletonWhileItConnects() async throws {
         let context = try makeContext()
         let visit = makeChat(HermesOfflineWire(rows: [row(1, "user", "Hi"), row(2, "assistant", "Hello.")]))
         await visit.model.loadMessages(modelContext: context)
@@ -302,31 +301,22 @@ import XCTest
         wire.connectGate = connected
         let chat = makeChat(wire)
         let load = Task { await chat.model.loadMessages(modelContext: context) }
-        await waitUntil("the cached transcript shows") { !chat.model.messages.isEmpty }
+        await waitUntil("the attach starts") { chat.model.isLoading }
 
-        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello."])
-        XCTAssertTrue(chat.model.isViewingCachedData)
-        XCTAssertTrue(chat.model.isCachedCopyProvisional)
-        XCTAssertFalse(chat.model.showsOfflineCache)
-        XCTAssertFalse(chat.model.isLoading)
-        XCTAssertNil(ChatView.composerReadOnlyMessage(for: SessionSummary(profile: "default"),
-                                                      isViewingCachedData: chat.model.showsOfflineCache))
-        let sent = await chat.model.sendMessage("Too soon")
-        XCTAssertFalse(sent)
-        XCTAssertNil(chat.model.sendErrorMessage)
+        XCTAssertTrue(chat.model.messages.isEmpty)
+        XCTAssertFalse(chat.model.isViewingCachedData)
 
         connected.open()
         await load.value
 
         XCTAssertFalse(chat.model.isViewingCachedData)
-        XCTAssertFalse(chat.model.isCachedCopyProvisional)
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello.", "Sent from Desktop"])
         XCTAssertFalse(wire.methods.contains("prompt.submit"))
     }
 
-    /// `ChatView` asks for the cached transcript before its appearance completes, ahead of the
-    /// attach, which its first load then starts.
-    func testASessionShowsItsCachedTranscriptBeforeItsAppearanceCompletes() async throws {
+    /// `ChatView` asks for its first load before its appearance completes; a Hermes chat
+    /// keeps the skeleton until the attach's rows arrive.
+    func testASessionKeepsTheSkeletonBeforeItsAppearanceCompletes() async throws {
         let context = try makeContext()
         let visit = makeChat(HermesOfflineWire(rows: [row(1, "user", "Hi"), row(2, "assistant", "Hello.")]))
         await visit.model.loadMessages(modelContext: context)
@@ -335,8 +325,7 @@ import XCTest
         let chat = makeChat(wire)
         chat.model.prepareInitialMessageLoad(modelContext: context)
 
-        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello."])
-        XCTAssertTrue(chat.model.isCachedCopyProvisional)
+        XCTAssertTrue(chat.model.messages.isEmpty)
         XCTAssertEqual(wire.methods, [])
 
         await chat.model.loadMessages(modelContext: context, usesInitialPrefetch: true)
@@ -524,9 +513,9 @@ import XCTest
 
     /// A Bot Chat's transcript is cached under its canonical root, which a compaction that moved
     /// its stored key leaves in place, and never joins the Sessions list's cache. The next open
-    /// shows it, read-only, before the attach, and the first newest read puts the host's rows in
-    /// its place.
-    func testABotChatShowsItsCachedTranscriptBeforeTheAttach() async throws {
+    /// keeps the loading skeleton until the attach's first newest read puts the host's rows in
+    /// their place.
+    func testABotChatKeepsTheLoadingSkeletonUntilTheAttachReads() async throws {
         let context = try makeContext()
         let visit = makeChat(HermesOfflineWire(rows: [row(1, "user", "Hi"), row(2, "assistant", "Hello.")]),
                              target: .canonicalChat(profile: "default"))
@@ -540,18 +529,15 @@ import XCTest
         wire.connectGate = connected
         let chat = makeChat(wire, target: .canonicalChat(profile: "default"))
         let load = Task { await chat.model.loadMessages(modelContext: context) }
-        await waitUntil("the cached transcript shows") { !chat.model.messages.isEmpty }
+        await waitUntil("the attach starts") { chat.model.isLoading }
 
-        XCTAssertTrue(chat.model.isViewingCachedData)
-        XCTAssertFalse(chat.model.showsOfflineCache, "no offline banner while it connects")
-        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello."])
-        XCTAssertEqual(wire.methods, [])
+        XCTAssertTrue(chat.model.messages.isEmpty)
+        XCTAssertFalse(chat.model.isViewingCachedData)
 
         connected.open()
         await load.value
 
         XCTAssertFalse(chat.model.isViewingCachedData)
-        XCTAssertFalse(chat.model.isCachedCopyProvisional)
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello.", "Sent from Desktop"])
     }
 
@@ -585,7 +571,6 @@ import XCTest
 
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi"])
         XCTAssertTrue(chat.model.showsOfflineCache)
-        XCTAssertFalse(chat.model.isCachedCopyProvisional)
     }
 
     /// A Bot Chat whose attach connected before the cache could show, but whose history read
@@ -604,7 +589,6 @@ import XCTest
 
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi"])
         XCTAssertTrue(chat.model.showsOfflineCache)
-        XCTAssertFalse(chat.model.isCachedCopyProvisional)
     }
 
     /// Two servers never share a Bot Chat's cache, even for the same connection and Profile: an
@@ -679,7 +663,7 @@ import XCTest
         wire.connectGate = connected
         let chat = makeChat(wire, target: .canonicalChat(profile: "default"))
         let load = Task { await chat.model.loadMessages(modelContext: context) }
-        await waitUntil("the cached transcript shows") { !chat.model.messages.isEmpty }
+        await waitUntil("the attach starts") { chat.model.isLoading }
         connected.open()
         await load.value
 
