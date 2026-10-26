@@ -533,10 +533,10 @@ struct ChatView: View {
             ),
             // A Hermes prompt whose answer was lost holds Send until the chat reattaches (#508), and
             // a request card's answer holds it while out, so Steer and Queue send no competing
-            // Continue (#1141). So does a cached transcript shown while the chat connects.
+            // Continue (#1141). So does the chat's offline presentation.
             isSending: viewModel.isStartingChat || viewModel.isSendingVoiceNote || viewModel.isHermesSubmissionUncertain
                 || viewModel.isUndoingExchange || viewModel.hermesRequests?.answeringRequestID != nil
-                || viewModel.isCachedCopyProvisional,
+                || viewModel.showsOfflineCache,
             isCompressingSession: viewModel.isCompressingSession,
             isWaitingForStream: viewModel.activeStreamID != nil,
             isCancellingStream: viewModel.isCancellingStream,

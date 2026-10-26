@@ -3746,7 +3746,7 @@ final class ChatViewModelSendTests: XCTestCase {
     }
 
     @MainActor
-    func testLoadMessagesRendersCachedMessagesBeforeNetworkReconcile() async throws {
+    func testLoadMessagesShowsSkeletonInsteadOfCachedTranscriptWhileReloading() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         try CacheStore.cacheMessages(
@@ -3794,18 +3794,17 @@ final class ChatViewModelSendTests: XCTestCase {
         }
         defer { releaseSessionResponse.signal() }
 
-        // While the network reload is still in flight, the cached transcript is
-        // already on screen (no skeleton, since messages is non-empty) and the
-        // offline indicator stays off because this is the success-expected window.
+        // While the network reload is still in flight the transcript stays empty, so
+        // the loading skeleton shows instead of a cached copy.
         await fulfillment(of: [sessionRequestStarted], timeout: 2)
-        XCTAssertEqual(viewModel.messages.compactMap(\.content), ["Cached question", "Cached answer"])
+        XCTAssertTrue(viewModel.messages.isEmpty)
         XCTAssertTrue(viewModel.isLoading)
         XCTAssertFalse(viewModel.isViewingCachedData)
 
         releaseSessionResponse.signal()
         await loadTask.value
 
-        // After the reload completes it reconciles in place to the fresh server content.
+        // After the reload completes the fresh server content replaces the skeleton.
         XCTAssertEqual(viewModel.messages.compactMap(\.content), ["Fresh question", "Fresh answer"])
         XCTAssertFalse(viewModel.isViewingCachedData)
         XCTAssertNil(viewModel.errorMessage)
@@ -3839,9 +3838,10 @@ final class ChatViewModelSendTests: XCTestCase {
 
         viewModel.prepareInitialMessageLoad(modelContext: context)
 
-        // The request goes out during the push transition while the cache paints.
+        // The request goes out during the push transition; the transcript stays
+        // empty so the loading skeleton shows instead of a cached copy.
         await fulfillment(of: [sessionRequestStarted], timeout: 2)
-        XCTAssertEqual(viewModel.messages.compactMap(\.content), ["Cached question", "Cached answer"])
+        XCTAssertTrue(viewModel.messages.isEmpty)
         XCTAssertTrue(viewModel.isLoading)
         XCTAssertFalse(viewModel.isViewingCachedData)
 
@@ -3954,7 +3954,7 @@ final class ChatViewModelSendTests: XCTestCase {
     }
 
     @MainActor
-    func testPrepareInitialMessageLoadBoundsLargeCachedTranscriptToNewestPage() async throws {
+    func testPrepareInitialMessageLoadLeavesTheTranscriptEmptyUntilTheLoadAnswers() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         let cachedMessages = (0..<75).map { index in
@@ -3978,14 +3978,14 @@ final class ChatViewModelSendTests: XCTestCase {
 
         viewModel.prepareInitialMessageLoad(modelContext: context)
 
-        XCTAssertEqual(viewModel.messages.count, 50)
-        XCTAssertEqual(viewModel.messages.first?.content, "Cached message 25")
-        XCTAssertEqual(viewModel.messages.last?.content, "Cached message 74")
+        XCTAssertTrue(viewModel.messages.isEmpty)
         XCTAssertTrue(viewModel.isLoading)
         XCTAssertFalse(viewModel.isViewingCachedData)
 
         // Settle the transcript request prepare sent so it cannot outlive this test.
         await viewModel.loadMessages(modelContext: context, usesInitialPrefetch: true)
+
+        XCTAssertEqual(viewModel.messages.compactMap(\.content), ["Fresh answer"])
     }
 
     private static func initialLoadSessionJSON(content: String, activeStreamID: String? = nil) -> String {
@@ -4004,7 +4004,7 @@ final class ChatViewModelSendTests: XCTestCase {
     }
 
     @MainActor
-    func testCacheFirstReconcileBumpsScrollTokenForSmoothSettle() async throws {
+    func testLoadOverCacheDoesNotBumpTheRelayoutScrollToken() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         try CacheStore.cacheMessages(
@@ -4046,13 +4046,13 @@ final class ChatViewModelSendTests: XCTestCase {
         XCTAssertEqual(viewModel.transcriptRelayoutScrollToken, 0)
         await viewModel.loadMessages(modelContext: context)
 
-        // The cache-first reconcile fired exactly once so the view can snap back to the
-        // bottom as the taller server transcript replaces the lighter cached render.
-        XCTAssertEqual(viewModel.transcriptRelayoutScrollToken, 1)
+        // No cached placeholder rendered, so no cache-first reconcile fires: the
+        // transcript arrives once, from the skeleton.
+        XCTAssertEqual(viewModel.transcriptRelayoutScrollToken, 0)
     }
 
     @MainActor
-    func testCacheFirstRevertPreservesOptimisticSendOnNonCacheableError() async throws {
+    func testFailedReloadPreservesOptimisticSendOnNonCacheableError() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         try CacheStore.cacheMessages(
@@ -4092,10 +4092,10 @@ final class ChatViewModelSendTests: XCTestCase {
         }
         defer { releaseSessionResponse.signal() }
 
-        // The reload renders the cache then suspends on /api/session. Kick off a send
-        // *without* awaiting it (its optimistic user message is appended synchronously
-        // before the network call) so the transcript is mutated while the reload is
-        // still in flight.
+        // The reload suspends on /api/session. Kick off a send *without* awaiting
+        // it (its optimistic user message is appended synchronously before the
+        // network call) so the transcript is mutated while the reload is still
+        // in flight.
         await fulfillment(of: [sessionRequestStarted], timeout: 2)
         let sendTask = Task { @MainActor in
             await viewModel.sendMessage("In-flight question", modelContext: context)
@@ -4103,8 +4103,8 @@ final class ChatViewModelSendTests: XCTestCase {
         await waitUntil("the send showed") { viewModel.messages.compactMap(\.content).contains("In-flight question") }
         XCTAssertTrue(viewModel.messages.compactMap(\.content).contains("In-flight question"))
 
-        // Now let the reload fail with a non-cacheable error: the cache-first revert
-        // must NOT wipe the optimistic send made during the load window (#289, Codex P2).
+        // Now let the reload fail with a non-cacheable error: it must NOT wipe the
+        // optimistic send made during the load window.
         releaseSessionResponse.signal()
         await loadTask.value
         _ = await sendTask.value
