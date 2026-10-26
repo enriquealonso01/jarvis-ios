@@ -254,6 +254,12 @@ private enum InlineDelimiter: CaseIterable {
             guard matches("$", in: characters, at: index, protected: protected) else { return false }
             if index > 0, characters[index - 1] == "$" { return false }
             if index + 1 < characters.count, characters[index + 1] == "$" { return false }
+            // A lone `$` opens inline math only when a non-space follows it
+            // (Pandoc's rule), and never when a digit follows it: `$29` is a
+            // price, not a formula opener. This is what keeps two money
+            // amounts in one message from pairing into a single garbled span.
+            guard index + 1 < characters.count, !characters[index + 1].isWhitespace else { return false }
+            if characters[index + 1].isNumber { return false }
             return !MarkdownMathProtection.isEscaped(characters, at: index)
         case .parens:
             return matches(#"\("#, in: characters, at: index, protected: protected)
@@ -267,6 +273,12 @@ private enum InlineDelimiter: CaseIterable {
             guard matches("$", in: characters, at: index, protected: protected) else { return false }
             if index > 0, characters[index - 1] == "$" { return false }
             if index + 1 < characters.count, characters[index + 1] == "$" { return false }
+            // Pandoc's currency guards: a closing `$` needs a non-space to its
+            // left and must not be followed by a digit. Without them, prose
+            // like "~$29 spent, … CPM of $18" pairs the two amounts and the
+            // whole span renders as one garbled formula.
+            guard index > 0, !characters[index - 1].isWhitespace else { return false }
+            if index + 1 < characters.count, characters[index + 1].isNumber { return false }
             return !MarkdownMathProtection.isEscaped(characters, at: index)
         case .parens:
             return matches(#"\)"#, in: characters, at: index, protected: protected)

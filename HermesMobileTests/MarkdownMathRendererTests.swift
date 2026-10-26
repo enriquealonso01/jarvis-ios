@@ -42,6 +42,32 @@ final class MarkdownMathRendererTests: XCTestCase {
         }
     }
 
+    func testInlineDollarsInCurrencyProseNeverPairAsMath() {
+        // Shape of the real transcript that rendered as one garbled formula:
+        // two money amounts in one message, no math anywhere.
+        let inputs = [
+            "First ~3 hours: ~$29 spent, 359 impressions, 32 clicks, CTR 8.9% (cre",
+            "Early read on the broad relaunch, sir — 68/100. CPM of $18, spend $75.",
+            "It costs $5 here and $7 there.",
+            "Spend was $1,234 and revenue $5,678.",
+            "I have $ but you owe me $."
+        ]
+
+        for input in inputs {
+            XCTAssertEqual(MarkdownMathFormatter.replacingInlineMath(in: input), input)
+        }
+    }
+
+    func testRealMathStillRendersInsideCurrencyProse() {
+        let input = "Spend $29 so far and ROI is $x_2$ when it settles."
+
+        let output = MarkdownMathFormatter.inlineMathImages(in: input)
+
+        XCTAssertTrue(output.contains("$29"))
+        XCTAssertTrue(output.contains("hermex-math://"))
+        XCTAssertTrue(output.contains("$x_2$".replacingOccurrences(of: "$", with: "")) || output.contains("x_2"))
+    }
+
     func testProductionLayoutsRecognizeAssignmentsForStreamingAndFinalizedMarkdown() {
         let input = #"Result: **$E=[4,-2]$** and `$O=[6,-2]$` stays code."#
 
