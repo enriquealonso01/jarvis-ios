@@ -65,7 +65,8 @@ final class MarkdownMathRendererTests: XCTestCase {
 
         XCTAssertTrue(output.contains("$29"))
         XCTAssertTrue(output.contains("hermex-math://"))
-        XCTAssertTrue(output.contains("$x_2$".replacingOccurrences(of: "$", with: "")) || output.contains("x_2"))
+        // The math span itself is replaced by the image; the currency is not.
+        XCTAssertFalse(output.contains("$x_2$"))
     }
 
     func testProductionLayoutsRecognizeAssignmentsForStreamingAndFinalizedMarkdown() {
