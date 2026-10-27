@@ -5,6 +5,8 @@ import UIKit
 final class ResponseSelectionInput: UIView, UITextInput, UITextInteractionDelegate {
     /// Nil where there is no composer to quote into; the menu then omits Ask Hermex.
     var onAskHermex: ((String) -> Void)?
+    /// Nil where there is no composer to comment into; the menu then omits Reply to JARVIS.
+    var onReplyToJarvis: ((String) -> Void)?
     let leaves = NSHashTable<ResponseSelectionLeafView>.weakObjects()
     var leafOrder: [UUID] = []
     let selectionInteraction = UITextInteraction(for: .nonEditable)
@@ -253,6 +255,7 @@ final class ResponseSelectionInput: UIView, UITextInput, UITextInteractionDelega
         if action == #selector(copy(_:)) { return selectedTextRange?.isEmpty == false }
         if action == #selector(selectAll(_:)) { return hasText }
         if action == #selector(askHermex(_:)) { return onAskHermex != nil && selectedTextRange?.isEmpty == false }
+        if action == #selector(replyToJarvis(_:)) { return onReplyToJarvis != nil && selectedTextRange?.isEmpty == false }
         return false
     }
 
@@ -260,12 +263,17 @@ final class ResponseSelectionInput: UIView, UITextInput, UITextInteractionDelega
         super.buildMenu(with: builder)
         guard builder.system == .context else { return }
 
+        let reply = UICommand(
+            title: String(localized: "Reply to JARVIS"),
+            image: UIImage(systemName: "text.bubble"),
+            action: #selector(replyToJarvis(_:))
+        )
         let ask = UICommand(
             title: String(localized: "Ask JARVIS"),
             image: UIImage(systemName: "quote.opening"),
             action: #selector(askHermex(_:))
         )
-        builder.replaceChildren(ofMenu: .standardEdit) { $0 + [ask] }
+        builder.replaceChildren(ofMenu: .standardEdit) { $0 + [reply, ask] }
     }
 
     override func copy(_ sender: Any?) {
@@ -282,6 +290,13 @@ final class ResponseSelectionInput: UIView, UITextInput, UITextInteractionDelega
         self.selectedTextRange = nil
         resignFirstResponder()
         onAskHermex?(text)
+    }
+
+    @objc func replyToJarvis(_ sender: Any?) {
+        guard let selectedTextRange, let text = text(in: selectedTextRange), !text.isEmpty else { return }
+        self.selectedTextRange = nil
+        resignFirstResponder()
+        onReplyToJarvis?(text)
     }
 
     func replace(_ range: UITextRange, withText text: String) {}

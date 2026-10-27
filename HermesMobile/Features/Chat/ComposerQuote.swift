@@ -8,15 +8,20 @@ import Foundation
 struct ComposerQuote: Identifiable, Equatable, Sendable {
     let id: UUID
     let text: String
+    /// The user's comment on the selected passage ("Reply to JARVIS"). Nil for
+    /// passages quoted without a comment.
+    let comment: String?
 
-    init(id: UUID = UUID(), text: String) {
+    init(id: UUID = UUID(), text: String, comment: String? = nil) {
         self.id = id
         self.text = text
+        self.comment = comment
     }
 
     /// A single-line label for the chip. The full passage remains in `text`.
     var preview: String {
-        let collapsed = text
+        let source = (comment?.isEmpty == false ? comment : text) ?? text
+        let collapsed = source
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
         guard collapsed.count > 72 else { return collapsed }
@@ -41,10 +46,14 @@ struct ComposerDraftContent: Equatable, Sendable {
 enum ComposerQuoteMessageFormatter {
     static func message(text: String, quotes: [ComposerQuote]) -> String {
         let quotedPassages = quotes.map { quote in
-            quote.text
+            let passage = quote.text
                 .components(separatedBy: "\n")
                 .map { $0.isEmpty ? ">" : "> \($0)" }
                 .joined(separator: "\n")
+            guard let comment = quote.comment?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !comment.isEmpty
+            else { return passage }
+            return passage + "\n\n" + comment
         }
 
         return (quotedPassages + (text.isEmpty ? [] : [text]))
