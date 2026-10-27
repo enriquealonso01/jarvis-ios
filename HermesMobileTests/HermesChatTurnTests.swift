@@ -691,8 +691,8 @@ import SwiftUI
     func testARebuildAfterMidTurnSavesShowsTheReplyOnce() async {
         await assertRebuild(after: event(5, "message.delta", ["text": .string("lost the middle")]),
                             reply: "On it, sir. Found the file. Launching transcription.",
-                            savedRows: [userRow("Hi"), assistantRow("On it, sir.", id: 2)],
                             held: [event(9, "message.delta", ["text": .string(".")])],
+                            savedRows: [userRow("Hi"), assistantRow("On it, sir.", id: 2)],
                             contents: ["Hi", "On it, sir.", "Found the file. Launching transcription."])
     }
 
@@ -701,8 +701,8 @@ import SwiftUI
     func testARebuildTheHostFullySavedShowsNoLiveReply() async {
         await assertRebuild(after: event(5, "message.delta", ["text": .string("lost the middle")]),
                             reply: "On it, sir.",
-                            savedRows: [userRow("Hi"), assistantRow("On it, sir.", id: 2)],
                             held: [event(9, "message.delta", ["text": .string(".")])],
+                            savedRows: [userRow("Hi"), assistantRow("On it, sir.", id: 2)],
                             contents: ["Hi", "On it, sir."],
                             afterDelta: ["Hi", "On it, sir.", " Done"])
     }
