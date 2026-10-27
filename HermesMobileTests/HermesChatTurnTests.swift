@@ -698,9 +698,9 @@ import SwiftUI
     /// alone, and a later delta opens the live row again rather than repeating them.
     func testARebuildTheHostFullySavedShowsNoLiveReply() async {
         await assertRebuild(after: event(5, "message.delta", ["text": .string("lost the middle")]),
-                            savedRows: [userRow("Hi"), assistantRow("Hello there, friend", id: 2)],
                             held: [event(7, "message.delta", ["text": .string(", fri")]),
                                    event(8, "message.delta", ["text": .string("end")])],
+                            savedRows: [userRow("Hi"), assistantRow("Hello there, friend", id: 2)],
                             contents: ["Hi", "Hello there, friend"],
                             afterDelta: ["Hi", "Hello there, friend", " Done"])
     }
