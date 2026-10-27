@@ -24,6 +24,8 @@ struct SessionRowView: View {
     var labelsArchived = false
     /// The Profile the row belongs to, tagged on a Hermes list of every Profile's sessions (#709).
     var profileTag: String?
+    /// The Bot that Profile is, when it is one: its face and title replace the bare name.
+    var profileLook: HermesBotLook? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -289,7 +291,7 @@ struct SessionRowView: View {
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 4) {
                     if let profileTag {
-                        SessionProfileTag(profile: profileTag)
+                        SessionProfileTag(profile: profileTag, look: profileLook)
                     }
 
                     if !visibleStateBadges.isEmpty {
@@ -310,7 +312,7 @@ struct SessionRowView: View {
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 if let profileTag {
-                    SessionProfileTag(profile: profileTag)
+                    SessionProfileTag(profile: profileTag, look: profileLook)
                 }
 
                 if !visibleStateBadges.isEmpty {
@@ -421,7 +423,7 @@ struct SessionRowView: View {
         }
 
         if let profileTag {
-            parts.append(String(localized: "Profile: \(profileTag)"))
+            parts.append(String(localized: "Profile: \(profileLook?.title ?? profileTag)"))
         }
 
         parts.append(contentsOf: Self.accessibilityStateLabels(
@@ -550,13 +552,35 @@ private struct SessionSourceBadge: View {
     }
 }
 
-/// A row's Profile on a list of every Profile's sessions (#709). A Profile name is the user's own
-/// text, never a catalog key.
+/// A Bot's title and drawn face (`profile.yaml` `ui_meta["hermes-bots"]`, the look Bot Mode
+/// stores) for a session row in a merged list, read from a `profiles.list` row. Nil for a
+/// Profile that is not a Bot, whose row shows its bare name.
+struct HermesBotLook: Equatable {
+    let title: String
+    let appearance: BotProfileAppearance
+
+    init?(profileRow row: BotJSON) {
+        guard let name = row["name"].text, !name.isEmpty,
+              case .object(let look) = row["ui_meta"]["hermes-bots"], !look.isEmpty else { return nil }
+        let appearance = BotProfileAppearance(look: look, fallbackTitle: name)
+        title = appearance.title
+        self.appearance = appearance
+    }
+}
+
+/// A row's Profile on a list of every Profile's sessions (#709), or its Bot's face and title. A
+/// Profile name is the user's own text, never a catalog key.
 private struct SessionProfileTag: View {
     let profile: String
+    var look: HermesBotLook? = nil
 
     var body: some View {
-        Text(verbatim: profile)
+        HStack(spacing: 4) {
+            if let look {
+                BotAvatarMarkView(name: profile, appearance: look.appearance, size: 14)
+            }
+            Text(verbatim: look?.title ?? profile)
+        }
             .font(AppFont.caption2(weight: .semibold))
             .foregroundStyle(.secondary)
             .lineLimit(1)

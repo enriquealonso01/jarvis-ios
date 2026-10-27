@@ -490,6 +490,7 @@ struct ChatView: View {
         )
         model.hermesBotChatRoot = hermesSession?.botChatRoot
         model.hermesLineageRoot = hermesSession?.lineageRoot
+        model.queueFirstHermesPrompt(hermesSession?.firstPrompt, notice: hermesSession?.openingNotice)
         _viewModel = State(initialValue: model)
         _gitAvailabilityViewModel = State(initialValue: GitWorkspaceAvailabilityViewModel(
             session: session,
@@ -997,6 +998,12 @@ struct ChatView: View {
             }
             .onChange(of: viewModel.activeStreamID) {
                 handleActiveStreamChange()
+            }
+            // Bot routing: the Bot's chat takes this new general chat's place, as `/clear`'s does.
+            .onChange(of: viewModel.routedHermesChat) { _, chat in
+                guard let chat else { return }
+                viewModel.routedHermesChat = nil
+                if let onReplaceHermesSession { onReplaceHermesSession(chat) } else { pushedHermesSession = chat }
             }
             .onChange(of: viewModel.transcriptRelayoutScrollToken) {
                 // Open a brief snap window so the cache-first reconcile re-pin (and any
