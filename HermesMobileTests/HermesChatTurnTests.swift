@@ -690,8 +690,8 @@ import SwiftUI
     /// saved rows don't hold; the next delta continues it.
     func testARebuildAfterMidTurnSavesShowsTheReplyOnce() async {
         await assertRebuild(after: event(5, "message.delta", ["text": .string("lost the middle")]),
-                            savedRows: [userRow("Hi"), assistantRow("Hello there", id: 2)],
-                            contents: ["Hi", "Hello there", "friend."])
+                            savedRows: [userRow("Hi"), assistantRow("Hello there,", id: 2)],
+                            contents: ["Hi", "Hello there,", "friend."])
     }
 
     /// The same when the host saved the whole reply so far: the rebuild shows the settled rows
