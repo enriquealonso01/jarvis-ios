@@ -8059,12 +8059,28 @@ extension ChatViewModel: HermesChatTurnDelegate {
     func hermesTurnDidComplete(reply: String) {
         flushPendingStreamingContent()
         let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shown = streamingAssistantMessageID.flatMap { id in messages.first { $0.messageId == id }?.content } ?? ""
-        guard !text.isEmpty, !shown.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix(text) else { return }
-        // A reply the deltas never carried, such as the answer after a tool call: it joins
-        // the turn's row the way an interim reply does.
-        appendInterimAssistant(InterimAssistantStreamEvent(text: text, alreadyStreamed: false))
+        guard !text.isEmpty else { return }
+        // A rebuild can trim the live row to the words the turn's saved rows don't hold, or
+        // drop it once they hold them all, so what the chat shows is only a tail of the reply:
+        // the streaming row's suffix check alone would call the whole reply new and append it
+        // a second time. Only the words the turn's settled assistant rows and its live row
+        // don't already show join the row, the way an interim reply does.
+        let remainder = Self.interimRemainder(text, alreadyShown: settledHermesReplyText())
+        guard !remainder.isEmpty else { return }
+        appendInterimAssistant(InterimAssistantStreamEvent(text: remainder, alreadyStreamed: false))
         flushPendingStreamingContent()
+    }
+
+    /// The words the transcript shows for the turn that just ended: the assistant rows after
+    /// the last prompt, live row included, joined as the streaming row holds them. Empty when
+    /// the transcript holds no prompt, so a chat with none never counts text as shown.
+    private func settledHermesReplyText() -> String {
+        guard let boundary = messages.lastIndex(where: HermesTranscriptProjection.isTurnBoundary) else { return "" }
+        return messages[(boundary + 1)...]
+            .filter { $0.role == "assistant" }
+            .compactMap(\.content)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
     }
 
     func hermesReplaceTranscript(_ transcript: HermesChatTranscript) {

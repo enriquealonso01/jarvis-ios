@@ -1271,7 +1271,11 @@ struct HermesChatTranscript: Equatable {
 
     /// The transcript from the settled history plus the snapshot's in-flight turn: the prompt
     /// until the host saves it, and the reply so far, which the next deltas continue. Held
-    /// deltas that reply already holds are dropped when the engine releases them.
+    /// deltas that reply already holds are dropped when the engine releases them. The reply's
+    /// live row keeps only what the turn's saved rows don't show: the host saves a running
+    /// turn's replies as it goes, so its settled rows and the whole in-flight reply can carry
+    /// the same words, which read twice beside each other; one rebuild replaces the row the
+    /// last one built instead of stacking a fresh one beside it.
     private func rebuild(from snapshot: BotJSON, running: Bool) {
         needsRebuild = false
         let root = engine.storedKey ?? ""
@@ -1283,12 +1287,30 @@ struct HermesChatTranscript: Equatable {
             if !Self.holdsPrompt(prompt, in: transcript.messages, startedAt: startedAt) { transcript.live.append(prompt) }
         }
         if let text = inflight["assistant"].text, !text.isEmpty {
-            let row = ChatMessage(role: "assistant", content: text, timestamp: nil, messageId: "\(root)/live-\(UUID().uuidString)")
-            if running { transcript.streamingReply = row } else { transcript.live.append(row) }
+            let shown = Self.settledReply(in: transcript.messages, startedAt: startedAt)
+            let remainder = ChatViewModel.interimRemainder(text, alreadyShown: shown)
             deltasInRebuild = Self.heldDeltas(heldFrames, after: engine.sequence, alreadyIn: text, following: replayedReply)
+            if !remainder.isEmpty {
+                let row = ChatMessage(role: "assistant", content: remainder, timestamp: nil, messageId: "\(root)/live-assistant")
+                if running { transcript.streamingReply = row } else { transcript.live.append(row) }
+            }
         }
         transcript.title = snapshot["info"]["title"].text.flatMap { $0.isEmpty ? nil : $0 }
         delegate?.hermesReplaceTranscript(transcript)
+    }
+
+    /// The settled reply text of the turn that began at `startedAt`: the assistant rows after
+    /// its saved prompt, joined as the live row shows them. Empty when the rows hold no prompt
+    /// dated at or after that turn began, so a prompt the host has not saved yet never borrows
+    /// the turn before it.
+    private static func settledReply(in messages: [ChatMessage], startedAt: Double?) -> String {
+        guard let boundary = messages.lastIndex(where: HermesTranscriptProjection.isTurnBoundary) else { return "" }
+        if let startedAt, let stamp = messages[boundary].timestamp, stamp < startedAt { return "" }
+        return messages[(boundary + 1)...]
+            .filter { $0.role == "assistant" }
+            .compactMap(\.content)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
     }
 
     // MARK: History

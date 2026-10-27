@@ -7,6 +7,11 @@ Security sections per release.
 
 ## [Unreleased]
 
+### Fixed
+- A Hermes chat's reply never shows twice after a mid-turn reconnect: the rebuilt
+  live row keeps only the words the turn's saved rows don't already hold, and a
+  completed turn's reply counts its already-shown words too.
+
 ## [2.0.0] - Unreleased
 
 Hermex now talks to Hermes directly ([#713]). Add a Hermes host as a server and
