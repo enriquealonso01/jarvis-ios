@@ -690,21 +690,19 @@ import SwiftUI
     /// saved rows don't hold; the next delta continues it.
     func testARebuildAfterMidTurnSavesShowsTheReplyOnce() async {
         await assertRebuild(after: event(5, "message.delta", ["text": .string("lost the middle")]),
-                            reply: "On it, sir. Found the file. Launching transcription.",
-                            held: [event(9, "message.delta", ["text": .string(".")])],
-                            savedRows: [userRow("Hi"), assistantRow("On it, sir.", id: 2)],
-                            contents: ["Hi", "On it, sir.", "Found the file. Launching transcription."])
+                            savedRows: [userRow("Hi"), assistantRow("Hello there", id: 2)],
+                            contents: ["Hi", "Hello there", "friend."])
     }
 
     /// The same when the host saved the whole reply so far: the rebuild shows the settled rows
     /// alone, and a later delta opens the live row again rather than repeating them.
     func testARebuildTheHostFullySavedShowsNoLiveReply() async {
         await assertRebuild(after: event(5, "message.delta", ["text": .string("lost the middle")]),
-                            reply: "On it, sir.",
-                            held: [event(9, "message.delta", ["text": .string(".")])],
-                            savedRows: [userRow("Hi"), assistantRow("On it, sir.", id: 2)],
-                            contents: ["Hi", "On it, sir."],
-                            afterDelta: ["Hi", "On it, sir.", " Done"])
+                            savedRows: [userRow("Hi"), assistantRow("Hello there, friend", id: 2)],
+                            held: [event(7, "message.delta", ["text": .string(", fri")]),
+                                   event(8, "message.delta", ["text": .string("end")])],
+                            contents: ["Hi", "Hello there, friend"],
+                            afterDelta: ["Hi", "Hello there, friend", " Done"])
     }
 
     /// A turn the host saved mid-flight, rebuilt, then completed: the completion's whole-turn
