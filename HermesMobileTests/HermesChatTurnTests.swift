@@ -1296,7 +1296,7 @@ import SwiftUI
     /// reads `shows`, and a live delta appends as it is.
     private func assertRebuild(after frame: BotJSON, replayed: [BotJSON] = [], reply: String = "Hello there, friend",
                                held: [BotJSON]? = nil, shows: String = "Hello there, friend.",
-                               savedRows: [BotJSON] = [userRow("Hi")], contents: [String]? = nil,
+                               savedRows: [BotJSON]? = nil, contents: [String]? = nil,
                                afterDelta: [String]? = nil,
                                file: StaticString = #filePath, line: UInt = #line) async {
         let chat = await openChat()
@@ -1308,7 +1308,7 @@ import SwiftUI
         let held = held ?? [event(7, "message.delta", ["text": .string(", fri")]),
                             event(8, "message.delta", ["text": .string("end")]),
                             event(9, "message.delta", ["text": .string(".")])]
-        serveHistory(savedRows)
+        serveHistory(savedRows ?? [userRow("Hi")])
         let snapshot = resume(running: true, inflight: ["user": .string("Hi"), "assistant": .string(reply)])
         chat.host.next("session.events.since", .init(result: BotFixtureWire.replay(latest: 6, events: replayed)))
         chat.host.next("session.resume", .init(result: snapshot))
