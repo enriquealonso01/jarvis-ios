@@ -514,7 +514,10 @@ enum JarvisAuraShader {
             // use bloom effect
             bloom = bloom / (bloom + 2e4);
             color = (-pp + bloom * 3.0 * uBloom) * 1.2;
-            color += (randFibo(fragCoord).x - 0.5) / 255.0;
+            // The one deviation from the GLSL: the 1/255 dither is applied only where there is light.
+            // On the web the canvas sits on a surface that hides it; here the premultiplied noise
+            // drew a faint lighter square around the aura on the dark screen.
+            color += (randFibo(fragCoord).x - 0.5) / 255.0 * clamp(length(pp) * 40.0, 0.0, 1.0);
             color = Tonemap(color);
             alpha = luma(color) * uMix;
             color = color * uMix;
