@@ -1,9 +1,11 @@
 appId: com.enriquecodes.jarvis
 # The recording bar's controls. Called by flows 06 (keyboard closed) and 09 (keyboard open)
 # with PREFIX for the screenshot names. Starts on a chat whose input bar is empty (camera + mic).
-# Taps use the control's label. Hit-testing, which failed on the phone when the old bar sat on
-# top (build 83), is the Debug probe: window.hitTest at each control's center, and CI fails if
-# the text field or the touch host is what it finds.
+# Pause, Delete and Send are tapped by REAL COORDINATES (percent of the screen, read off the
+# recording bar: Delete 12.4%, Pause 74.6%, Send 87.6% across, 92.5% down), not by label, so a tap
+# only works if nothing is on top of the button (hit-testing is what failed on the phone in build
+# 83). Resume has no fixed spot (it sits beside Send), so it is tapped by its label, whose centre
+# is a coordinate tap too. The Debug probe (window.hitTest at each control centre) backs it up.
 ---
 - assertVisible: Camera
 # 1. A quick tap: the note starts and stays recording, locked. The text bar is GONE: no camera,
@@ -22,7 +24,8 @@ appId: com.enriquecodes.jarvis
 - takeScreenshot: ${PREFIX}-locked
 # 2. Pause by its label. The Debug hit-test probe (window.hitTest at the control's
 #    center) is what fails the run if something still sits on top of the button.
-- tapOn: Pause
+- tapOn:
+    point: 74.6%,92.5%
 - extendedWaitUntil:
     visible: Resume
     timeout: 8000
@@ -36,7 +39,8 @@ appId: com.enriquecodes.jarvis
     timeout: 8000
 - takeScreenshot: ${PREFIX}-resumed
 # 4. Delete: the normal bar returns.
-- tapOn: Delete voice note
+- tapOn:
+    point: 12.4%,92.5%
 - extendedWaitUntil:
     visible: Camera
     timeout: 8000
@@ -54,7 +58,8 @@ appId: com.enriquecodes.jarvis
     timeout: 10000
 - assertVisible: Pause
 - takeScreenshot: ${PREFIX}-swipe-up-locked
-- tapOn: Delete voice note
+- tapOn:
+    point: 12.4%,92.5%
 - extendedWaitUntil:
     visible: Camera
     timeout: 8000
@@ -76,7 +81,8 @@ appId: com.enriquecodes.jarvis
 - extendedWaitUntil:
     visible: Delete voice note
     timeout: 15000
-- tapOn: Send voice note
+- tapOn:
+    point: 87.6%,92.5%
 - extendedWaitUntil:
     visible: Waiting to send…|Transcript
     timeout: 15000

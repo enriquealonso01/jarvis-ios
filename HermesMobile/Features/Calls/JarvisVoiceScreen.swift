@@ -57,11 +57,44 @@ struct JarvisVoiceScreen: View {
     @ObservedObject private var manager = CallManager.shared
     @Environment(\.dismiss) private var dismiss
 
+    #if DEBUG
+    /// Debug-only Aura demo (Maestro screenshots, Reduce Motion check): each tap of the demo
+    /// button shows the next state with a synthetic voice level, and the call is ignored.
+    @State private var demoStep = 0
+    @State private var demoVolume = 0.0
+    private let demoTicker = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+    private static let demoPhases: [JarvisVoicePhase] = [.connecting, .listening, .thinking, .speaking, .speaking]
+    #endif
+
     private var phase: JarvisVoicePhase {
-        JarvisVoicePhase.from(callState: manager.callState, hasActiveCall: manager.activeCallUUID != nil)
+        #if DEBUG
+        if demoStep > 0 { return Self.demoPhases[demoStep - 1] }
+        #endif
+        return JarvisVoicePhase.from(callState: manager.callState, hasActiveCall: manager.activeCallUUID != nil)
     }
 
-    private var muted: Bool { manager.isMuted && phase.isLive }
+    /// Reduce Motion preview: the demo's last step draws the still frame.
+    private var forcesStillAura: Bool {
+        #if DEBUG
+        return demoStep == Self.demoPhases.count
+        #else
+        return false
+        #endif
+    }
+
+    private var auraVolume: Double {
+        #if DEBUG
+        if demoStep > 0 { return demoVolume }
+        #endif
+        return manager.remoteAudioLevel
+    }
+
+    private var muted: Bool {
+        #if DEBUG
+        if demoStep > 0 { return false }
+        #endif
+        return manager.isMuted && phase.isLive
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,9 +115,20 @@ struct JarvisVoiceScreen: View {
                 .accessibilityLabel(phase.isLive ? "Back to the app, the call continues" : "Close voice")
                 .accessibilityIdentifier("voice.closeButton")
             }
+            #if DEBUG
+            Button {
+                demoStep = (demoStep + 1) % (Self.demoPhases.count + 1)
+            } label: {
+                Text(verbatim: demoStep == 0 ? "Aura demo" : "Aura demo \(demoStep) of \(Self.demoPhases.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(JarvisBrand.jarvisCyan)
+                    .frame(minHeight: 44)
+            }
+            .accessibilityIdentifier("voice.auraDemo")
+            #endif
             Spacer(minLength: 12)
-            JarvisAuraView(phase: muted ? .ready : phase, volume: muted ? 0 : manager.remoteAudioLevel)
-                .frame(width: 260, height: 260)
+            JarvisAuraView(phase: muted ? .ready : phase, volume: muted ? 0 : auraVolume,
+                           isStatic: forcesStillAura)
                 .opacity(muted ? 0.55 : 1)
                 .accessibilityIdentifier("voice.orbital")
             Text(verbatim: title)
@@ -108,6 +152,12 @@ struct JarvisVoiceScreen: View {
         .preferredColorScheme(.dark)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("voice.screen")
+        #if DEBUG
+        .onReceive(demoTicker) { _ in
+            // A speaking-like level for the demo: bursts of syllables.
+            demoVolume = demoStep == 0 ? 0 : 0.5 + 0.45 * sin(Date().timeIntervalSinceReferenceDate * 7)
+        }
+        #endif
     }
 
     private var title: String {

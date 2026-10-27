@@ -23,6 +23,14 @@ struct SettingsAboutPage: View {
                     Text("Built on Hermex by Uzair Ansar, used under the MIT License.")
                 }
                 .accessibilityIdentifier("about.hermexAttribution")
+                Link(destination: URL(string: "https://github.com/livekit/components-js")!) {
+                    Text(verbatim: "The voice screen's Aura visualizer is a port of LiveKit Agents UI (Copyright LiveKit, Inc.), used under the Apache License 2.0.")
+                }
+                .accessibilityIdentifier("about.livekitAttribution")
+                Link(destination: URL(string: "https://www.apache.org/licenses/LICENSE-2.0")!) {
+                    Text(verbatim: "Apache License 2.0")
+                }
+                .accessibilityIdentifier("about.apacheLicense")
             } header: {
                 Text("Credits")
             }

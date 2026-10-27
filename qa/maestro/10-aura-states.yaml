@@ -1,0 +1,55 @@
+appId: com.enriquecodes.jarvis
+# The Aura voice visual (LiveKit's AgentAudioVisualizerAura, ported to Metal). CI has no voice
+# gateway, so the Debug-only "Aura demo" button on the voice screen steps through connecting,
+# listening, thinking, speaking and the Reduce Motion still frame, and each state is screenshotted.
+name: 10 aura states on the voice screen
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn: Calls
+- extendedWaitUntil:
+    visible:
+      id: calls.talk
+    timeout: 10000
+- tapOn:
+    id: calls.talk
+- tapOn:
+    text: Allow
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: voice.screen
+    timeout: 15000
+- tapOn:
+    id: voice.auraDemo
+- assertVisible: Connecting.*
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 10-aura-connecting
+- tapOn:
+    id: voice.auraDemo
+- assertVisible: Listening
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 10-aura-listening
+- tapOn:
+    id: voice.auraDemo
+- assertVisible: Thinking.*
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 10-aura-thinking
+- tapOn:
+    id: voice.auraDemo
+- assertVisible: Speaking
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 10-aura-speaking
+# The last step is the Reduce Motion still frame (static, dimmed).
+- tapOn:
+    id: voice.auraDemo
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 10-aura-reduce-motion-still
