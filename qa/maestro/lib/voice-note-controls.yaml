@@ -2,7 +2,7 @@ appId: com.enriquecodes.jarvis
 # The recording bar's controls. Called by flows 06 (keyboard closed) and 09 (keyboard open)
 # with PREFIX for the screenshot names. Starts on a chat whose input bar is empty (camera + mic).
 # Pause, Delete and Send are tapped by REAL COORDINATES (percent of the screen, read off the
-# recording bar: Delete 12.4%, Pause 74.6%, Send 87.6% across, 92.5% down), not by label, so a tap
+# recording bar: Delete 12%, Pause 75%, Send 88% across, 92% down; Maestro takes whole percents), not by label, so a tap
 # only works if nothing is on top of the button (hit-testing is what failed on the phone in build
 # 83). Resume has no fixed spot (it sits beside Send), so it is tapped by its label, whose centre
 # is a coordinate tap too. The Debug probe (window.hitTest at each control centre) backs it up.
@@ -25,7 +25,7 @@ appId: com.enriquecodes.jarvis
 # 2. Pause by its label. The Debug hit-test probe (window.hitTest at the control's
 #    center) is what fails the run if something still sits on top of the button.
 - tapOn:
-    point: 74.6%,92.5%
+    point: 75%,92%
 - extendedWaitUntil:
     visible: Resume
     timeout: 8000
@@ -40,7 +40,7 @@ appId: com.enriquecodes.jarvis
 - takeScreenshot: ${PREFIX}-resumed
 # 4. Delete: the normal bar returns.
 - tapOn:
-    point: 12.4%,92.5%
+    point: 12%,92%
 - extendedWaitUntil:
     visible: Camera
     timeout: 8000
@@ -59,7 +59,7 @@ appId: com.enriquecodes.jarvis
 - assertVisible: Pause
 - takeScreenshot: ${PREFIX}-swipe-up-locked
 - tapOn:
-    point: 12.4%,92.5%
+    point: 12%,92%
 - extendedWaitUntil:
     visible: Camera
     timeout: 8000
@@ -82,7 +82,7 @@ appId: com.enriquecodes.jarvis
     visible: Delete voice note
     timeout: 15000
 - tapOn:
-    point: 87.6%,92.5%
+    point: 88%,92%
 - extendedWaitUntil:
     visible: Waiting to send…|Transcript
     timeout: 15000
