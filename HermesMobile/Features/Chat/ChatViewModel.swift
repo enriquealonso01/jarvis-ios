@@ -256,15 +256,9 @@ final class ChatViewModel {
     private(set) var isUndoingExchange = false
     private(set) var isCompressingSession = false
     private(set) var isCancellingStream = false
-    private(set) var isViewingCachedData = false {
-        didSet { if !isViewingCachedData { isCachedCopyProvisional = false } }
-    }
-    /// A Hermes chat's cached transcript shows because the host has yet to answer this open, not
-    /// because it can't be reached: still read-only, with Send held, but without the offline
-    /// banner. Only while `isViewingCachedData`.
-    private(set) var isCachedCopyProvisional = false
+    private(set) var isViewingCachedData = false
     /// The chat shows its offline presentation: the banner and the composer's reconnect line.
-    var showsOfflineCache: Bool { isViewingCachedData && !isCachedCopyProvisional }
+    var showsOfflineCache: Bool { isViewingCachedData }
     var activeStreamID: String? { turn.activeStreamID }
     var successfulResponseCompletion: ChatStreamCoordinator.SuccessfulResponseCompletion? {
         turn.successfulResponseCompletion
@@ -299,17 +293,10 @@ final class ChatViewModel {
     private(set) var displayTitle: String
     private(set) var listeningMessageID: String?
     private(set) var streamingScrollTrigger = 0
-    /// Bumped when a cache-first cold open (#289) finishes reconciling the network
-    /// transcript over the instantly-rendered cached one. The richer server content
-    /// (tool-call / reasoning cards, content parts) is taller than the lighter cached
-    /// render, so the view re-pins to the bottom on this token *without* animation —
-    /// otherwise the height growth produces a visible scroll jump.
     /// Bumped whenever something re-lays out the transcript under the reader
-    /// without adding a message: the server transcript replacing the lighter
-    /// cache-first render, or the skill catalog turning sent `/slug` text into
+    /// without adding a message — the skill catalog turning sent `/slug` text into
     /// chips. A reader who was pinned to the bottom is put back there.
     private(set) var transcriptRelayoutScrollToken = 0
-    private var hasPrimedInitialCachedMessages = false
     /// The transcript request `prepareInitialMessageLoad` sends while the push
     /// transition runs, so the round trip overlaps the animation (#678). Only the
     /// initial `loadMessages` may use it, and only while the active stream is the
@@ -1829,8 +1816,6 @@ final class ChatViewModel {
     func loadMessages(modelContext: ModelContext? = nil, usesInitialPrefetch: Bool = false) async {
         if let hermesTurn {
             if let modelContext { hermesCache = modelContext }
-            // For an open that skipped `prepareInitialMessageLoad`.
-            showCachedHermesTranscriptBeforeAttach(hermesTurn)
             await loadHermesSession(hermesTurn)
             return
         }
@@ -1850,26 +1835,10 @@ final class ChatViewModel {
         lastError = nil
         defer { isLoading = false }
 
-        // Cache-first render (#289): capture the pre-reload window *before* painting
-        // any cached transcript, so the network reconcile below replaces it cleanly
-        // (no merge, no duplication). Then, on a cold open with a populated cache,
-        // render the cached messages immediately so the loading skeleton never shows.
+        // The transcript window this reload replaces, captured before the network
+        // reconcile below (no merge, no duplication).
         let previousMessages = messages
         let previousMessagesOffset = messagesOffset
-        let usesPrimedInitialCache = hasPrimedInitialCachedMessages && !previousMessages.isEmpty
-        hasPrimedInitialCachedMessages = false
-        let cacheFirstPlaceholder: [ChatMessage]
-        if previousMessages.isEmpty, let modelContext {
-            cacheFirstPlaceholder = renderCachedMessagesBeforeReload(
-                sessionID: sessionID,
-                modelContext: modelContext
-            )
-        } else if usesPrimedInitialCache {
-            cacheFirstPlaceholder = previousMessages
-        } else {
-            cacheFirstPlaceholder = []
-        }
-        let renderedCacheFirst = !cacheFirstPlaceholder.isEmpty
 
         do {
             let response: SessionResponse
@@ -1920,11 +1889,6 @@ final class ChatViewModel {
                 previousMessages: previousMessages,
                 previousMessagesOffset: previousMessagesOffset
             )
-            if renderedCacheFirst {
-                // The taller server transcript has now replaced the lighter cache-first
-                // render; signal the view to re-pin to the bottom without a visible jump.
-                transcriptRelayoutScrollToken += 1
-            }
             latestServerLoadHadAssistantResponseAfterLatestUser = Self.hasAssistantResponseAfterLatestUser(
                 in: messages
             )
@@ -2008,36 +1972,15 @@ final class ChatViewModel {
                             usedCacheFallback: true
                         )
                     } else {
-                        if renderedCacheFirst {
-                            revertCacheFirstPlaceholder(
-                                cacheFirstPlaceholder,
-                                to: previousMessages,
-                                previousMessagesOffset: previousMessagesOffset
-                            )
-                        }
                         isViewingCachedData = false
                         errorMessage = error.localizedDescription
                     }
                 } catch {
-                    if renderedCacheFirst {
-                        revertCacheFirstPlaceholder(
-                            cacheFirstPlaceholder,
-                            to: previousMessages,
-                            previousMessagesOffset: previousMessagesOffset
-                        )
-                    }
                     cacheErrorMessage = error.localizedDescription
                     isViewingCachedData = false
                     errorMessage = lastError?.localizedDescription
                 }
             } else {
-                if renderedCacheFirst {
-                    revertCacheFirstPlaceholder(
-                        cacheFirstPlaceholder,
-                        to: previousMessages,
-                        previousMessagesOffset: previousMessagesOffset
-                    )
-                }
                 isViewingCachedData = false
                 errorMessage = error.localizedDescription
             }
@@ -2048,12 +1991,12 @@ final class ChatViewModel {
     /// sends its transcript request. `ChatView` applies the response only after
     /// its navigation appearance completes (`loadMessages(usesInitialPrefetch:)`),
     /// so rendering a richer transcript cannot stall the system push animation,
-    /// while the round trip overlaps it. A Hermes chat shows its cached transcript here instead,
-    /// and attaches from `loadMessages`.
+    /// while the round trip overlaps it. A Hermes chat attaches from
+    /// `loadMessages`, which also takes its offline cache.
     func prepareInitialMessageLoad(modelContext: ModelContext) {
         if let hermesTurn {
             hermesCache = modelContext
-            return showCachedHermesTranscriptBeforeAttach(hermesTurn)
+            return
         }
         guard let sessionID else { return }
 
@@ -2068,13 +2011,6 @@ final class ChatViewModel {
         }
 
         isLoading = true
-        guard messages.isEmpty else { return }
-
-        let cachedMessages = renderCachedMessagesBeforeReload(
-            sessionID: sessionID,
-            modelContext: modelContext
-        )
-        hasPrimedInitialCachedMessages = !cachedMessages.isEmpty
     }
 
     /// Clears the stored initial prefetch and returns its task when this load may
@@ -2115,65 +2051,6 @@ final class ChatViewModel {
             // tool-heavy session opens populated. "Load earlier" keeps the raw cap.
             expandRenderable: true
         )
-    }
-
-    /// Cache-first render (#289): on a cold session open, paint the cached transcript
-    /// immediately so the loading skeleton never appears, then let the in-flight
-    /// `loadMessages` network reload reconcile silently in place. Keeps
-    /// `isViewingCachedData` off because this is the success-expected window, not an
-    /// offline failure — the offline indicator stays tied to a real network error.
-    /// Returns the cached messages it rendered (empty if nothing was cached), so the
-    /// caller can revert the placeholder if the reload surfaces an error instead of
-    /// content — but only while the transcript is still that exact placeholder.
-    private func renderCachedMessagesBeforeReload(
-        sessionID: String,
-        modelContext: ModelContext
-    ) -> [ChatMessage] {
-        let signpost = performanceSignposter.beginInterval("Transcript Apply")
-        defer {
-            performanceSignposter.endInterval("Transcript Apply", signpost, "messages=\(self.messages.count, privacy: .public)")
-        }
-
-        let cachedMessages: [ChatMessage]
-        do {
-            cachedMessages = try CacheStore.cachedMessages(
-                serverURL: server,
-                sessionID: sessionID,
-                in: modelContext,
-                limit: Self.messagePageLimit
-            )
-        } catch {
-            // A cache read failure must not block the normal network load; fall back
-            // to the existing skeleton-until-network behavior.
-            return []
-        }
-
-        guard !cachedMessages.isEmpty else { return [] }
-
-        messages = cachedMessages
-        transcriptRevision &+= 1
-        messagesOffset = 0
-        hasOlderMessages = false
-        isViewingCachedData = false
-        return cachedMessages
-    }
-
-    /// Undo a cache-first placeholder (#289) when the reload fails without adopting
-    /// the offline cache, so the existing error UI (empty transcript + message) shows
-    /// instead of a stale cached transcript masquerading as live.
-    private func revertCacheFirstPlaceholder(
-        _ placeholder: [ChatMessage],
-        to previousMessages: [ChatMessage],
-        previousMessagesOffset: Int
-    ) {
-        // Only undo the cache-first paint if nothing mutated the transcript since the
-        // prime (e.g. an optimistic send during the load window) — otherwise we'd wipe
-        // in-flight local content while its send/stream is still running.
-        guard messages == placeholder else { return }
-        messages = previousMessages
-        transcriptRevision &+= 1
-        messagesOffset = previousMessagesOffset
-        hasOlderMessages = previousMessagesOffset > 0
     }
 
     @discardableResult
@@ -2857,8 +2734,7 @@ final class ChatViewModel {
 
     func sendMessage(_ draft: String, modelContext: ModelContext? = nil) async -> Bool {
         guard !isViewingCachedData else {
-            // A cached copy shown while the chat connects holds the draft without a word.
-            if !isCachedCopyProvisional { sendErrorMessage = String(localized: "Reconnect to the server to send a message.") }
+            sendErrorMessage = String(localized: "Reconnect to the server to send a message.")
             return false
         }
 
@@ -8198,8 +8074,8 @@ extension ChatViewModel: HermesChatTurnDelegate {
         // then: the rebuild holds the running turn the frames it releases next continue, and
         // the failure, reported after them, shows the cache again where it would offline.
         if isViewingCachedData {
-            let isBotChat = if case .canonicalChat = hermesTurn?.engine.target { true } else { false }
-            guard transcript.newestCoverage != nil || isCachedCopyProvisional && !isBotChat else { return }
+            // A Bot Chat whose history read failed keeps its cached copy until a read succeeds.
+            guard transcript.newestCoverage != nil else { return }
             isViewingCachedData = false
         }
         resetPendingStreamingContentBuffers()
@@ -8246,12 +8122,17 @@ extension ChatViewModel: HermesChatTurnDelegate {
     }
 
     func hermesHistoryDidFail(_ error: Error, message: String) {
-        guard !showCachedHermesTranscript(after: error) else { return }
+        if showCachedHermesTranscript(after: error) { return }
+        // A Bot Chat keeps its cached copy as the offline state whatever failed (#1144),
+        // and says why only with nothing cached to show.
+        if case .canonicalChat = hermesTurn?.engine.target, showCachedHermesTranscript() { return }
         errorMessage = message
     }
 
     func hermesAttachDidFail(_ error: Error) {
-        showCachedHermesTranscript(after: error)
+        if !showCachedHermesTranscript(after: error), case .canonicalChat = hermesTurn?.engine.target {
+            _ = showCachedHermesTranscript()
+        }
     }
 
     /// The attach found the chat's root, before its reads: the chat writes to the cache under
@@ -8279,52 +8160,20 @@ extension ChatViewModel: HermesChatTurnDelegate {
     }
 
     /// A chat whose host can't be reached, to attach or to read its history, shows its cached
-    /// transcript as the offline state, as a webui chat does offline: the copy shown while it
-    /// connected, else, with nothing on screen, one read now. The engine keeps reattaching, and
-    /// the host's transcript replaces it once a read succeeds, as the chat's retry's does.
+    /// transcript as the offline state, as a webui chat does offline. The engine keeps
+    /// reattaching, and the host's transcript replaces it once a read succeeds, as the chat's
+    /// retry's does.
     /// Returns whether it shows the cached copy as the failure's answer.
     @discardableResult
     private func showCachedHermesTranscript(after error: Error) -> Bool {
-        let usesCache = CacheFallbackPolicy.shouldUseCache(for: error)
-        guard isCachedCopyProvisional else { return usesCache && showCachedHermesTranscript(provisional: false) }
-        isCachedCopyProvisional = false
-        // A Bot Chat keeps the copy it shows before every attach (#1144), whatever failed. A
-        // session's stays only where a failure shows the cache; otherwise it goes, so the chat
-        // says why with nothing on screen.
-        if case .canonicalChat = hermesTurn?.engine.target { return false }
-        guard !usesCache else { return true }
-        messages = []
-        transcriptRevision &+= 1
-        isViewingCachedData = false
-        return false
-    }
-
-    /// A chat opening shows its cached transcript at once, read-only, provisionally until the
-    /// attach's first newest read puts the host's rows in its place (#1144). Not once attached,
-    /// when the host's rows, even none, are the transcript, unless that read failed: a Bot Chat
-    /// then keeps its copy as the offline state. An attach that already failed, as one
-    /// `ChatView` starts as it appears can, has had its answer: a Bot Chat's copy shows as the
-    /// offline state, and a session's only as that failure showed it.
-    private func showCachedHermesTranscriptBeforeAttach(_ hermes: HermesChatTurnCoordinator) {
-        let engine = hermes.engine
-        let isBotChat = if case .canonicalChat = engine.target { true } else { false }
-        if engine.connectionState == .connected {
-            if isBotChat && hermes.hasHistoryFailure { showCachedHermesTranscript(provisional: false) }
-            return
-        }
-        guard hermes.needsSignIn || engine.isActive && engine.connectionState == .disconnected else {
-            showCachedHermesTranscript(provisional: true)
-            return
-        }
-        if isBotChat { showCachedHermesTranscript(provisional: false) }
+        CacheFallbackPolicy.shouldUseCache(for: error) && showCachedHermesTranscript()
     }
 
     /// With nothing on screen, shows the newest page of the chat's cached transcript, read-only
     /// (`isViewingCachedData`), with no tool, reasoning or compaction cards, until a newest
-    /// read replaces it: `provisional` while the host has yet to answer, else as the offline
-    /// state. Returns whether it shows the cached copy.
+    /// read replaces it. Returns whether it shows the cached copy.
     @discardableResult
-    private func showCachedHermesTranscript(provisional: Bool) -> Bool {
+    private func showCachedHermesTranscript() -> Bool {
         guard messages.isEmpty, let scope = hermesCacheScope() else { return false }
         var cached: [ChatMessage] = []
         do {
@@ -8342,7 +8191,6 @@ extension ChatViewModel: HermesChatTurnDelegate {
         transcriptRevision &+= 1
         hasOlderMessages = false
         isViewingCachedData = true
-        isCachedCopyProvisional = provisional
         errorMessage = nil
         setCompletedToolCallGroups([])
         completedReasoningGroups = []
