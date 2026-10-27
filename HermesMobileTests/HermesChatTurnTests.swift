@@ -684,6 +684,50 @@ import SwiftUI
                             shows: "Hello there. ha ha ha")
     }
 
+    /// JARVIS (Enrique, a long turn with tools): after the host saved the turn's first replies
+    /// mid-turn, a reconnect rebuild drew the snapshot's whole in-flight reply again beside
+    /// them, so every acknowledgement showed twice. The rebuilt live row keeps only what the
+    /// saved rows don't hold; the next delta continues it.
+    func testARebuildAfterMidTurnSavesShowsTheReplyOnce() async {
+        await assertRebuild(after: event(5, "message.delta", ["text": .string("lost the middle")]),
+                            savedRows: [userRow("Hi"), assistantRow("Hello there,", id: 2)],
+                            contents: ["Hi", "Hello there,", "friend."])
+    }
+
+    /// The same when the host saved the whole reply so far: the rebuild shows the settled rows
+    /// alone, and a later delta opens the live row again rather than repeating them.
+    func testARebuildTheHostFullySavedShowsNoLiveReply() async {
+        await assertRebuild(after: event(5, "message.delta", ["text": .string("lost the middle")]),
+                            held: [event(7, "message.delta", ["text": .string(", fri")]),
+                                   event(8, "message.delta", ["text": .string("end")])],
+                            savedRows: [userRow("Hi"), assistantRow("Hello there, friend", id: 2)],
+                            contents: ["Hi", "Hello there, friend"],
+                            afterDelta: ["Hi", "Hello there, friend", " Done"])
+    }
+
+    /// A turn the host saved mid-flight, rebuilt, then completed: the completion's whole-turn
+    /// reply text counts only its unseen words against the saved rows and the trimmed live
+    /// row, so the final answer never repeats the acknowledgements.
+    func testACompletedTurnAfterAMidTurnRebuildNeverRepeatsItsReply() async {
+        let chat = await openChat()
+        serveHistory([userRow("Hi"), assistantRow("On it, sir.", id: 2)])
+        let snapshot = resume(running: true, inflight: ["user": .string("Hi"),
+                                                        "assistant": .string("On it, sir. All done now.")])
+        chat.host.next("session.events.since", .init(result: BotFixtureWire.replay(latest: 6, events: [])))
+        chat.host.next("session.resume", .init(result: snapshot))
+        chat.host.next("session.resume", .init(result: snapshot))
+        chat.receive(event(1, "message.start"))
+        chat.receive(event(5, "message.delta", ["text": .string("lost the middle")]))
+        await waitUntil("rebuilt") { chat.turn.engine.connectionState == .connected }
+        chat.model.flushPendingStreamingContent()
+        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "On it, sir.", "All done now."])
+
+        chat.receive(event(7, "message.complete", ["status": .string("complete"), "text": .string("On it, sir. All done now.")]))
+        chat.receive(event(8, "session.info", ["running": .bool(false)]))
+        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "On it, sir.", "All done now."],
+                       "the saved words never repeat")
+    }
+
     // MARK: Reclaim
 
     /// The host reaps the idle chat's runtime and says so (#1122): the chat reattaches once,
@@ -1250,6 +1294,8 @@ import SwiftUI
     /// reads `shows`, and a live delta appends as it is.
     private func assertRebuild(after frame: BotJSON, replayed: [BotJSON] = [], reply: String = "Hello there, friend",
                                held: [BotJSON]? = nil, shows: String = "Hello there, friend.",
+                               savedRows: [BotJSON]? = nil, contents: [String]? = nil,
+                               afterDelta: [String]? = nil,
                                file: StaticString = #filePath, line: UInt = #line) async {
         let chat = await openChat()
         chat.receive(event(1, "message.start"))
@@ -1260,7 +1306,7 @@ import SwiftUI
         let held = held ?? [event(7, "message.delta", ["text": .string(", fri")]),
                             event(8, "message.delta", ["text": .string("end")]),
                             event(9, "message.delta", ["text": .string(".")])]
-        serveHistory([userRow("Hi")])
+        serveHistory(savedRows ?? [userRow("Hi")])
         let snapshot = resume(running: true, inflight: ["user": .string("Hi"), "assistant": .string(reply)])
         chat.host.next("session.events.since", .init(result: BotFixtureWire.replay(latest: 6, events: replayed)))
         chat.host.next("session.resume", .init(result: snapshot))
@@ -1273,12 +1319,14 @@ import SwiftUI
                        file: file, line: line)
         XCTAssertEqual(HermesHostFixture.count("/api/sessions/tip/messages"), 2, "the gap re-read the newest page",
                        file: file, line: line)
-        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", shows], file: file, line: line)
+        let expected = contents ?? ["Hi", shows]
+        XCTAssertEqual(chat.model.messages.map { $0.content ?? "" }, expected, file: file, line: line)
 
         let next = (held.compactMap { $0["seq"].integer }.max() ?? 6) + 1
         chat.receive(event(next, "message.delta", ["text": .string(" Done")]))
         chat.model.flushPendingStreamingContent()
-        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", shows + " Done"], file: file, line: line)
+        let grown = afterDelta ?? (Array(expected.dropLast()) + [(expected.last ?? "") + " Done"])
+        XCTAssertEqual(chat.model.messages.map { $0.content ?? "" }, grown, file: file, line: line)
         XCTAssertNotNil(chat.model.activeStreamID, file: file, line: line)
     }
 
