@@ -1845,7 +1845,7 @@ struct ReplyQuoteDraft: Identifiable, Equatable {
 
 /// Small sheet: the selected passage plus a comment field. Attaching adds the
 /// pair as one quote chip in the composer; several can stack before sending.
-private struct ReplyQuoteDraftSheet: View {
+struct ReplyQuoteDraftSheet: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var commentFocused: Bool
 
