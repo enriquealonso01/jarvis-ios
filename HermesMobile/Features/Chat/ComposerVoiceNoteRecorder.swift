@@ -35,15 +35,21 @@ enum VoiceNoteMicrophonePermission: Equatable {
 
 #if DEBUG
 /// Maestro's simulator has no microphone. With the `JarvisFakeMicrophone` default set (the QA
-/// lane writes it), Debug builds record a silent stand-in so the voice-note bar's states can be
-/// checked end to end. Never in Release builds.
+/// lane writes it), Debug builds record a 440 Hz tone, as real AAC, for as long as the note ran,
+/// so the voice-note bar's states, the silence guard and Send can be checked end to end. With
+/// `JarvisFakeTranscriber` set, a note's transcription answers a fixed line after a moment
+/// instead of asking the host. Never in Release builds.
 enum QAFakeMicrophone {
     static var isOn: Bool { UserDefaults.standard.bool(forKey: "JarvisFakeMicrophone") }
+    static var fakesTranscription: Bool { UserDefaults.standard.bool(forKey: "JarvisFakeTranscriber") }
+    static let transcript = "Fake transcript for QA."
 
     final class Recorder: VoiceNoteAudioRecording {
         let url: URL
         private var started: Date?
         private var recorded: TimeInterval = 0
+        private var written: TimeInterval = 0
+        private var file: AVAudioFile?
         var isMeteringEnabled = false
 
         init(url: URL) { self.url = url }
@@ -55,18 +61,43 @@ enum QAFakeMicrophone {
 
         func record() -> Bool {
             if started == nil { started = Date() }
-            if !FileManager.default.fileExists(atPath: url.path) { try? Data(repeating: 0, count: 2048).write(to: url) }
             return true
         }
 
         func pause() {
             recorded = currentTime
             started = nil
+            appendTone(upTo: recorded)
         }
 
-        func stop() { pause() }
+        func stop() {
+            pause()
+            file = nil
+        }
+
         func updateMeters() {}
         func averagePower(forChannel channelNumber: Int) -> Float { Float.random(in: -40 ... -5) }
+
+        /// Writes the tone for the stretch since the last write, into the one file.
+        private func appendTone(upTo time: TimeInterval) {
+            let span = time - written
+            guard span > 0.01 else { return }
+            do {
+                if file == nil { file = try AVAudioFile(forWriting: url, settings: ComposerVoiceNoteRecorder.recordingSettings) }
+                guard let file else { return }
+                let format = file.processingFormat
+                let frames = AVAudioFrameCount(format.sampleRate * span)
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+                      let channel = buffer.floatChannelData?[0] else { return }
+                buffer.frameLength = frames
+                let offset = Int(format.sampleRate * written)
+                for index in 0..<Int(frames) {
+                    channel[index] = 0.4 * sin(2 * .pi * 440 * Float(index + offset) / Float(format.sampleRate))
+                }
+                try file.write(from: buffer)
+                written = time
+            } catch {}
+        }
     }
 }
 #endif

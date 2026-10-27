@@ -18,16 +18,12 @@ struct ComposerVoiceStatusView: View {
     }
 }
 
-/// The composer mic, WhatsApp-style (JARVIS requirement 12):
-/// - press and hold: a voice note records at once;
-/// - while holding, swipe up to lock it (hands-free; releasing no longer sends), or slide left
-///   to cancel it;
-/// - release without locking: send;
-/// - a quick tap leaves the note recording, locked, with Pause, Delete and Send in the bar.
-/// With "Tap Mic for Voice Note" off, a quick tap toggles dictation as in Hermex and a hold
-/// past `holdActivationDelay` records. One `DragGesture(minimumDistance: 0)` feeds
-/// `ComposerVoiceNoteGesture.Tracker`, which decides; a touch the system takes away (a call,
-/// the app switcher, the lock screen) ends as `.cancelled`, so no press is ever left armed.
+/// The composer mic (JARVIS requirement 12, Signal/WhatsApp): press and hold records at once,
+/// swipe up while holding locks, slide left cancels, release sends, a quick tap records locked.
+///
+/// This view is only the mic's face and its VoiceOver actions. The touch itself is
+/// `VoiceMicTouchHost` over the composer, because a SwiftUI gesture on this view would die the
+/// moment the composer swaps to the recording bar, with the finger still down.
 struct ComposerVoiceControlButton: View {
     let isListening: Bool
     let isDisabled: Bool
@@ -36,50 +32,30 @@ struct ComposerVoiceControlButton: View {
     var supportsVoiceNotes = true
     /// A tap records a locked note (true) or toggles dictation (false).
     var tapRecords = true
-    /// The note in progress is locked: a release does nothing.
-    var isLocked = false
     /// Dictation (tap with `tapRecords` off) and VoiceOver's default action.
     let onTap: () -> Void
-    /// Touch-down (or the hold delay): start an unlocked note.
-    let onPressBegan: () -> Void
-    /// The finger's offset while holding a note, `.zero` when it lifts.
-    var onDrag: (CGSize) -> Void = { _ in }
-    let onLock: () -> Void
-    let onCancel: () -> Void
-    /// An unlocked hold was released: send.
-    let onRelease: () -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var tracker = ComposerVoiceNoteGesture.Tracker()
-    @GestureState private var isTouching = false
-    @State private var holdWorkItem: DispatchWorkItem?
+    /// VoiceOver: start a locked note.
+    let onVoiceOverRecord: () -> Void
 
     @ViewBuilder var body: some View {
         if supportsVoiceNotes {
-            label
-                .gesture(pressGesture)
-                .onChange(of: isTouching) { _, touching in
-                    guard !touching else { return }
-                    // The gesture ended without `onEnded`: the system took the touch. Checked a
-                    // tick later, once a normal end has settled the tracker.
-                    DispatchQueue.main.async {
-                        guard tracker.isPressing else { return }
-                        cancelHold()
-                        run(apply(.cancelled))
-                    }
-                }
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction {
-                    // VoiceOver synthesizes an activation rather than a real touch, so the
-                    // gesture never fires: start a locked note (or dictate).
-                    guard !isDisabled, !isRecordingVoiceNote else { return }
-                    if tapRecords { onPressBegan(); onLock() } else { onTap() }
-                }
-                .accessibilityAction(named: Text("Record voice note")) {
-                    onPressBegan()
-                    onLock()
-                }
-                .accessibilityIdentifier("composer.mic")
+            // A real button, so a tap (and Maestro, and VoiceOver) starts a locked note even
+            // when the window gesture that tracks a hold is not the view under the finger.
+            // The hold itself is VoiceMicTouchHost: this button leaves the tree the moment
+            // recording starts, and a SwiftUI gesture would die with it.
+            Button {
+                guard !isDisabled, !isRecordingVoiceNote else { return }
+                if tapRecords { onVoiceOverRecord() } else { onTap() }
+            } label: {
+                label
+            }
+            .buttonStyle(.plain)
+            .disabled(isDisabled)
+            .accessibilityAction(named: Text("Record voice note")) {
+                guard !isDisabled, !isRecordingVoiceNote else { return }
+                onVoiceOverRecord()
+            }
+            .accessibilityIdentifier("composer.mic")
         } else {
             Button {
                 onTap()
@@ -112,51 +88,6 @@ struct ComposerVoiceControlButton: View {
             isRecordingVoiceNote: isRecordingVoiceNote
         ))
     }
-
-    private var pressGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .updating($isTouching) { _, state, _ in state = true }
-            .onChanged { value in
-                if !tracker.isPressing {
-                    run(apply(.touchDown(Date())))
-                    if tracker.awaitsHoldDelay { scheduleHold() }
-                }
-                run(apply(.moved(value.translation)))
-            }
-            .onEnded { _ in
-                cancelHold()
-                run(apply(.released(Date())))
-            }
-    }
-
-    private func apply(_ event: ComposerVoiceNoteGesture.Event) -> [ComposerVoiceNoteGesture.Effect] {
-        tracker.apply(event, tapRecords: tapRecords, isLocked: isLocked, noteInProgress: isRecordingVoiceNote,
-                      isDisabled: isDisabled)
-    }
-
-    private func run(_ effects: [ComposerVoiceNoteGesture.Effect]) {
-        for effect in effects {
-            switch effect {
-            case .begin: onPressBegan()
-            case .drag(let translation): onDrag(translation)
-            case .lock: onLock()
-            case .cancel: onCancel()
-            case .send: onRelease()
-            case .tap: onTap()
-            }
-        }
-    }
-
-    private func scheduleHold() {
-        let item = DispatchWorkItem { run(apply(.holdDelayElapsed)) }
-        holdWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + ComposerVoiceNoteGesture.holdActivationDelay, execute: item)
-    }
-
-    private func cancelHold() {
-        holdWorkItem?.cancel()
-        holdWorkItem = nil
-    }
 }
 
 enum ComposerVoiceControlAccessibility {
@@ -187,12 +118,15 @@ struct VoiceNoteWaveformView: View {
     }
 }
 
-/// The input bar while a voice note is in progress (Signal/WhatsApp): it takes the bar's whole
-/// surface, text field included.
-/// - Holding (unlocked): red dot, timer, live waveform, "Slide to cancel", and the lock hint
-///   above the mic the finger holds (drawn here, large, in the mic's slot).
+/// The recording bar: while a voice note is held, locked or paused the composer area is THIS and
+/// nothing else (`if recording { VoiceNoteRecordingSurface } else { text bar }`), with an opaque
+/// background and no glass: iOS draws a glass effect above its siblings, which is how the old bar
+/// ended up on top of the recording controls on Enrique's phone (build 83).
+/// - Holding (unlocked): red dot, timer, live waveform, "Slide to cancel", and the lock above the
+///   mic the finger is still on (drawn here; the touch is `VoiceMicTouchHost`'s).
 /// - Locked: Delete, timer, lock, waveform, Pause, Send.
 /// - Paused: Delete, timer, "Paused", waveform, Resume, Send.
+/// Every control is a plain Button, at least 44 pt, with a rectangular hit shape.
 /// Nothing is sent or transcribed until Send, or the release of an unlocked hold.
 struct VoiceNoteRecordingSurface: View {
     let elapsed: TimeInterval
@@ -211,6 +145,14 @@ struct VoiceNoteRecordingSurface: View {
     let onResume: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    #if DEBUG
+    @State private var probe = VoiceNoteHitTestProbe()
+    #endif
+
+    static let minimumTarget: CGFloat = 44
+    static let barHeight: CGFloat = 64
+    static let cornerRadius: CGFloat = 32
 
     var body: some View {
         Group {
@@ -220,9 +162,22 @@ struct VoiceNoteRecordingSurface: View {
                 holdingBar
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: Self.barHeight)
+        // Opaque, no glass, over the whole bar: nothing behind it can be seen or pressed.
+        .background(
+            RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                .strokeBorder(Color(.separator), lineWidth: 0.5)
+        )
+        .compositingGroup()
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.28 : 0.12), radius: 14, y: 6)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("voiceNote.surface")
     }
 
     private var timer: some View {
@@ -250,7 +205,8 @@ struct VoiceNoteRecordingSurface: View {
         .accessibilityIdentifier("voiceNote.holdBar")
     }
 
-    /// The mic under the finger, grown, with the lock it swipes toward.
+    /// The mic under the finger, grown, with the lock it swipes toward. Drawn only: the touch is
+    /// `VoiceMicTouchHost`'s, so this takes none.
     private var heldMic: some View {
         VStack(spacing: 2) {
             Image(systemName: lockProgress >= 1 ? "lock.fill" : "lock.open")
@@ -276,12 +232,11 @@ struct VoiceNoteRecordingSurface: View {
     }
 
     private var lockedBar: some View {
-        HStack(spacing: 10) {
-            Button(action: onDelete) {
-                Image(systemName: "trash").frame(width: 40, height: 40)
+        HStack(spacing: 8) {
+            control(id: "voiceNote.delete", label: "Delete voice note", action: onDelete) {
+                Image(systemName: "trash")
+                    .frame(width: Self.minimumTarget, height: Self.minimumTarget)
             }
-            .accessibilityLabel(Text("Delete voice note"))
-            .accessibilityIdentifier("voiceNote.delete")
 
             Circle()
                 .fill(isPaused ? Color.secondary : Color.red)
@@ -293,37 +248,93 @@ struct VoiceNoteRecordingSurface: View {
                 Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
                     .accessibilityLabel(Text("Locked"))
             }
-            VoiceNoteWaveformView(levels: levels, color: isPaused ? .secondary : .red, barCount: 12)
+            VoiceNoteWaveformView(levels: levels, color: isPaused ? .secondary : .red, barCount: isPaused ? 8 : 12)
+                .layoutPriority(-1)
 
             Spacer(minLength: 4)
 
             if isPaused {
-                Button(action: onResume) {
+                control(id: "voiceNote.resume", label: "Resume", action: onResume) {
                     Label("Resume", systemImage: "mic.fill").font(.callout.weight(.semibold))
-                        .frame(minHeight: 40)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 6)
+                        .frame(minHeight: Self.minimumTarget)
                 }
-                .accessibilityIdentifier("voiceNote.resume")
             } else {
-                Button(action: onPause) {
-                    Image(systemName: "pause.fill").frame(width: 40, height: 40)
+                control(id: "voiceNote.pause", label: "Pause", action: onPause) {
+                    Image(systemName: "pause.fill")
+                        .frame(width: Self.minimumTarget, height: Self.minimumTarget)
                 }
-                .accessibilityLabel(Text("Pause"))
-                .accessibilityIdentifier("voiceNote.pause")
             }
 
-            Button(action: onSend) {
+            control(id: "voiceNote.send", label: "Send voice note", action: onSend) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.title)
-                    .frame(width: 44, height: 44)
+                    .frame(width: Self.minimumTarget, height: Self.minimumTarget)
             }
-            .accessibilityLabel(Text("Send voice note"))
-            .accessibilityIdentifier("voiceNote.send")
         }
-        .buttonStyle(.plain)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("voiceNote.bar")
     }
+
+    /// One plain Button: its label at least 44 pt each way, a rectangular hit shape, no gesture
+    /// beside it.
+    private func control<Content: View>(id: String, label: LocalizedStringKey, action: @escaping () -> Void,
+                                        @ViewBuilder content: () -> Content) -> some View {
+        Button(action: action) {
+            content()
+                .frame(minWidth: Self.minimumTarget, minHeight: Self.minimumTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(label))
+        .accessibilityIdentifier(id)
+        #if DEBUG
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { probe.record(id, frame: $0) }
+        .task(id: id) { await probe.run() }
+        #endif
+    }
 }
+
+#if DEBUG
+/// Debug-only hit-test probe: a moment after a control appears, asks UIKit what is under the
+/// center of each recording control (`window.hitTest`) and logs it, so CI can fail if the old
+/// text bar, the touch host or anything else sits on top of a control.
+@MainActor
+final class VoiceNoteHitTestProbe {
+    private var frames: [String: CGRect] = [:]
+    private var scheduled = false
+
+    func record(_ id: String, frame: CGRect) {
+        frames[id] = frame
+    }
+
+    func run() async {
+        guard !scheduled else { return }
+        scheduled = true
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        scheduled = false
+        guard let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows).first(where: \.isKeyWindow) else { return }
+        for (id, frame) in frames.sorted(by: { $0.key < $1.key }) where frame.width >= 1 {
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            let hit = window.hitTest(center, with: nil)
+            var chain: [String] = []
+            var view: UIView? = hit
+            while let current = view, chain.count < 10 {
+                chain.append(String(describing: type(of: current)))
+                view = current.superview
+            }
+            let blocked = chain.contains { $0.contains("TextView") || $0.contains("HostView") || $0.contains("TouchHost") }
+            JarvisClientLog.trace(String(format: "probe: %@ center=(%.0f,%.0f) size=%.0fx%.0f hit=%@ blocked=%@ chain=%@",
+                                         id, center.x, center.y, frame.width, frame.height,
+                                         hit.map { String(describing: type(of: $0)) } ?? "nil",
+                                         blocked ? "true" : "false", chain.joined(separator: " < ")))
+        }
+    }
+}
+#endif
 
 /// The voice note's haptics: start, lock, send, cancel, and a refused start.
 @MainActor

@@ -1,0 +1,105 @@
+appId: com.enriquecodes.jarvis
+# The recording bar's controls. Called by flows 06 (keyboard closed) and 09 (keyboard open)
+# with PREFIX for the screenshot names. Starts on a chat whose input bar is empty (camera + mic).
+# Pause, Delete and Send are tapped by REAL COORDINATES (percent of the screen, read off the
+# recording bar: Delete 12%, Pause 75%, Send 88% across, 92% down; Maestro takes whole percents), not by label, so a tap
+# only works if nothing is on top of the button (hit-testing is what failed on the phone in build
+# 83). Resume has no fixed spot (it sits beside Send), so it is tapped by its label, whose centre
+# is a coordinate tap too. The Debug probe (window.hitTest at each control centre) backs it up.
+---
+- assertVisible: Camera
+# 1. A quick tap: the note starts and stays recording, locked. The text bar is GONE: no camera,
+#    no field, no placeholder (one container swap, not hidden under the recording bar).
+- tapOn:
+    text: Voice input
+- tapOn:
+    text: Allow
+    optional: true
+- extendedWaitUntil:
+    visible: Delete voice note
+    timeout: 15000
+- assertNotVisible: Camera
+- assertNotVisible: Ask anything.*
+- assertVisible: Pause
+- takeScreenshot: ${PREFIX}-locked
+# 2. Pause by its label. The Debug hit-test probe (window.hitTest at the control's
+#    center) is what fails the run if something still sits on top of the button.
+- tapOn:
+    point: 75%,92%
+- extendedWaitUntil:
+    visible: Resume
+    timeout: 8000
+- assertVisible: Paused
+- takeScreenshot: ${PREFIX}-paused
+# 3. Resume: Pause is back.
+- tapOn:
+    text: Resume
+- extendedWaitUntil:
+    visible: Pause
+    timeout: 8000
+- takeScreenshot: ${PREFIX}-resumed
+# 4. Delete: the normal bar returns.
+- tapOn:
+    point: 12%,92%
+- extendedWaitUntil:
+    visible: Camera
+    timeout: 8000
+- assertNotVisible: Delete voice note
+- assertVisible: Ask anything.*
+- takeScreenshot: ${PREFIX}-deleted
+# 5. Press, hold and swipe up: locked, so lifting the finger doesn't send.
+- swipe:
+    from:
+      text: Voice input
+    direction: UP
+    duration: 1500
+- extendedWaitUntil:
+    visible: Delete voice note
+    timeout: 10000
+- assertVisible: Pause
+- takeScreenshot: ${PREFIX}-swipe-up-locked
+- tapOn:
+    point: 12%,92%
+- extendedWaitUntil:
+    visible: Camera
+    timeout: 8000
+# 5b. Slide left cancels. This has to happen BEFORE Send: sending opens the transcript
+#     sheet and the agent replies, and neither leaves the mic tappable.
+- swipe:
+    from:
+      text: Voice input
+    direction: LEFT
+    duration: 1500
+- assertNotVisible: Delete voice note
+- assertVisible: Camera
+- takeScreenshot: ${PREFIX}-slide-left-cancelled
+# 6. Record again and Send. The note is already past a couple of seconds by the time the
+#    tap command returns (Maestro's tap is slow), so waiting for the exact label "0:02"
+#    misses it. Delete being back means the note is locked and long enough to send.
+- tapOn:
+    text: Voice input
+- extendedWaitUntil:
+    visible: Delete voice note
+    timeout: 15000
+- tapOn:
+    point: 88%,92%
+- extendedWaitUntil:
+    visible: Waiting to send…|Transcript
+    timeout: 15000
+- takeScreenshot: ${PREFIX}-sent
+# 7. The transcript arrives afterwards. Tap the button by id: a label tap races the
+#    agent's approval card (the stub answers every send) and Maestro treats that card
+#    appearing as a successful tap. Retry until the sheet actually shows the text.
+- extendedWaitUntil:
+    visible: Transcript
+    timeout: 30000
+- retry:
+    maxRetries: 3
+    commands:
+      - tapOn:
+          id: voiceNote.transcriptButton
+      - extendedWaitUntil:
+          visible: Fake transcript for QA.
+          timeout: 8000
+- takeScreenshot: ${PREFIX}-transcript
+- tapOn: Done
