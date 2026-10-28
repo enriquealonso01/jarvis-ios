@@ -343,6 +343,8 @@ struct ChatView: View {
     /// A chat pushed on top of this one: a new fork, or this fork's parent.
     @State private var pushedSession: SessionSummary?
     @State private var isShowingPDFExport = false
+    /// A passage picked with Reply to JARVIS, waiting for the user's comment.
+    @State private var replyQuoteDraft: ReplyQuoteDraft?
     /// A new Hermes chat in another Profile, pushed on top so Back returns here (#1015).
     @State private var pushedHermesSession: HermesSessionChat?
     /// The Sessions list `/sessions` or `/resume` pushed when no list is under this chat (#1053).
@@ -2097,6 +2099,7 @@ struct ChatView: View {
                 presentTranscriptMediaPreview(reference)
             },
             onAskHermex: addSelectedPassageToDraft,
+            onReplyToJarvis: beginReplyToSelection,
             onToggleListening: { context in
                 viewModel.toggleListening(to: context)
             },
@@ -2141,6 +2144,11 @@ struct ChatView: View {
         .environment(\.chatWorkspaceRoot, session.workspace)
         .sheet(isPresented: $isShowingPDFExport) {
             ChatPDFExportSheet(title: viewModel.displayTitle, entries: ChatPDFExport.entries(from: viewModel.messages))
+        }
+        .sheet(item: $replyQuoteDraft) { draft in
+            ReplyQuoteDraftSheet(passage: draft.passage) { comment in
+                attachReplyQuote(passage: draft.passage, comment: comment)
+            }
         }
         .environment(\.richReply, RichReplyAction { text in
             Task {
@@ -3194,6 +3202,21 @@ struct ChatView: View {
     private func addSelectedPassageToDraft(_ passage: String) {
         guard !passage.isEmpty else { return }
         persistedQuotesBinding.wrappedValue = draftQuotes + [ComposerQuote(text: passage)]
+        requestComposerFocusIfPossible()
+    }
+
+    /// Reply to JARVIS: the user selected a passage and typed a comment on it.
+    /// The pair attaches as one quote chip; the comment rides along until send.
+    private func beginReplyToSelection(_ passage: String) {
+        guard !passage.isEmpty else { return }
+        replyQuoteDraft = ReplyQuoteDraft(passage: passage)
+    }
+
+    private func attachReplyQuote(passage: String, comment: String) {
+        let trimmed = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        persistedQuotesBinding.wrappedValue = draftQuotes + [
+            ComposerQuote(text: passage, comment: trimmed.isEmpty ? nil : trimmed)
+        ]
         requestComposerFocusIfPossible()
     }
 

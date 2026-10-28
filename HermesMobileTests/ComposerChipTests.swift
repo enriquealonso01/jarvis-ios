@@ -335,6 +335,30 @@ final class ComposerQuoteTests: XCTestCase {
             "> Keep trailing space "
         )
     }
+
+    func testFormatterPlacesTheCommentAfterItsQuotedPassage() {
+        XCTAssertEqual(
+            ComposerQuoteMessageFormatter.message(
+                text: "",
+                quotes: [ComposerQuote(text: "Passage one", comment: "  Fix this line  ")]
+            ),
+            "> Passage one\n\nFix this line"
+        )
+    }
+
+    func testFormatterKeepsCommentedAndPlainQuotesInOrder() {
+        XCTAssertEqual(
+            ComposerQuoteMessageFormatter.message(
+                text: "Overall?",
+                quotes: [
+                    ComposerQuote(text: "Alpha", comment: "Cut this"),
+                    ComposerQuote(text: "Beta"),
+                    ComposerQuote(text: "Gamma", comment: "   ")
+                ]
+            ),
+            "> Alpha\n\nCut this\n\n> Beta\n\n> Gamma\n\nOverall?"
+        )
+    }
 }
 
 @MainActor

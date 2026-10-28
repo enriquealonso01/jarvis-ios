@@ -119,11 +119,19 @@ private struct ComposerQuoteDetailView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                Text(verbatim: quote.text)
-                    .font(AppFont.body())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+                VStack(alignment: .leading, spacing: 12) {
+                    if let comment = quote.comment, !comment.isEmpty {
+                        Text(verbatim: comment)
+                            .font(AppFont.body())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text(verbatim: quote.text)
+                        .font(AppFont.body())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding()
             }
             .navigationTitle("Quoted passage")
             .navigationBarTitleDisplayMode(.inline)
@@ -1824,5 +1832,74 @@ struct MessageComposerView: View {
         let nsError = error as NSError
         return nsError.domain == NSCocoaErrorDomain
             && nsError.code == CocoaError.Code.userCancelled.rawValue
+    }
+}
+
+// MARK: - Reply to JARVIS
+
+/// A selected passage awaiting the user's comment in the Reply to JARVIS sheet.
+struct ReplyQuoteDraft: Identifiable, Equatable {
+    let id = UUID()
+    let passage: String
+}
+
+/// Small sheet: the selected passage plus a comment field. Attaching adds the
+/// pair as one quote chip in the composer; several can stack before sending.
+struct ReplyQuoteDraftSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var commentFocused: Bool
+
+    let passage: String
+    let onAttach: (String) -> Void
+
+    @State private var comment = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    ScrollView {
+                        Text(verbatim: passage)
+                            .font(AppFont.body())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                    }
+                    .frame(maxHeight: 220, alignment: .topLeading)
+                    .accessibilityLabel(Text("Quoted passage"))
+                } header: {
+                    Text("Selected text")
+                }
+                Section {
+                    TextField("Your comment", text: $comment, axis: .vertical)
+                        .lineLimit(1...5)
+                        .focused($commentFocused)
+                        .onSubmit(attach)
+                        .accessibilityIdentifier("replyToJarvis.comment")
+                } header: {
+                    Text("Reply to JARVIS")
+                } footer: {
+                    Text("Attaches to your next message with the quoted passage.")
+                }
+            }
+            .navigationTitle("Reply to JARVIS")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Attach", action: attach)
+                        .accessibilityIdentifier("replyToJarvis.attach")
+                }
+            }
+            .onAppear { commentFocused = true }
+        }
+    }
+
+    private func attach() {
+        dismiss()
+        onAttach(comment)
     }
 }

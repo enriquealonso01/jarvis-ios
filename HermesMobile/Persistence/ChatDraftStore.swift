@@ -284,10 +284,12 @@ actor ChatDraftFilePersistence: ChatDraftPersisting {
     private struct QuoteRecord: Codable {
         let id: String?
         let text: String?
+        let comment: String?
 
         init(_ quote: ComposerQuote) {
             id = quote.id.uuidString
             text = quote.text
+            comment = quote.comment
         }
 
         var quote: ComposerQuote? {
@@ -299,7 +301,8 @@ actor ChatDraftFilePersistence: ChatDraftPersisting {
             else {
                 return nil
             }
-            return ComposerQuote(id: id, text: text)
+            let trimmedComment = comment?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ComposerQuote(id: id, text: text, comment: (trimmedComment?.isEmpty == false) ? trimmedComment : nil)
         }
     }
 

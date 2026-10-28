@@ -37,6 +37,7 @@ struct MessageBubbleView: View {
     let isStreaming: Bool
     let liveTokensPerSecond: Double?
     let onAskHermex: (String) -> Void
+    let onReplyToJarvis: (String) -> Void
     /// Long-press actions, attached to the message content only so the empty
     /// gutter beside a user bubble does not open its menu.
     let contextMenuActions: [ChatMessageActionItem]
@@ -54,6 +55,7 @@ struct MessageBubbleView: View {
         isStreaming: Bool = false,
         liveTokensPerSecond: Double? = nil,
         onAskHermex: @escaping (String) -> Void = { _ in },
+        onReplyToJarvis: @escaping (String) -> Void = { _ in },
         contextMenuActions: [ChatMessageActionItem] = [],
         textOnly: Bool = false
     ) {
@@ -70,6 +72,7 @@ struct MessageBubbleView: View {
         self.isStreaming = isStreaming
         self.liveTokensPerSecond = liveTokensPerSecond
         self.onAskHermex = onAskHermex
+        self.onReplyToJarvis = onReplyToJarvis
         self.contextMenuActions = contextMenuActions
     }
 
@@ -256,7 +259,7 @@ struct MessageBubbleView: View {
             if isStreaming {
                 assistantContent(segments: segments)
             } else {
-                ResponseTextSelection(identity: messageText, collectsGlyphs: responseIsVisible, onAskHermex: onAskHermex) {
+                ResponseTextSelection(identity: messageText, collectsGlyphs: responseIsVisible, onAskHermex: onAskHermex, onReplyToJarvis: onReplyToJarvis) {
                     assistantContent(segments: segments)
                 }
                 .onGeometryChange(for: Bool.self) { geometry in

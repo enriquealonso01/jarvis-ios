@@ -8,6 +8,7 @@ struct ResponseTextSelection<Content: View>: UIViewControllerRepresentable {
     // Metadata stays registered when glyph rendering is deferred offscreen.
     var collectsGlyphs = true
     var onAskHermex: ((String) -> Void)?
+    var onReplyToJarvis: ((String) -> Void)?
     @ViewBuilder let content: () -> Content
     @Environment(\.self) private var environment
     /// The hosted content's height. The content can grow after its first layout
@@ -24,6 +25,7 @@ struct ResponseTextSelection<Content: View>: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: ResponseSelectionController, context: Context) {
         controller.scope.collectsGlyphs = collectsGlyphs
         controller.input.onAskHermex = onAskHermex
+        controller.input.onReplyToJarvis = onReplyToJarvis
         if controller.identity != identity {
             controller.input.selectedTextRange = nil
             controller.identity = identity

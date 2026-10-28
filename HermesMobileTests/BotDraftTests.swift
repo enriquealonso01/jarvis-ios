@@ -62,6 +62,25 @@ import XCTest
         XCTAssertTrue(restored[.bot(server: one, connectionID: id, profile: "same")]?.botSubmissionUncertain == true)
     }
 
+    /// Reply to JARVIS: a quote's comment survives the draft roundtrip, and an
+    /// older drafts.json without comments still decodes.
+    func testQuoteCommentsSurviveTheDraftRoundTrip() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = ChatDraftFilePersistence(directoryURL: directory)
+        let drafts = ChatDraftStore(persistence: persistence, debounceDuration: .seconds(60))
+        let key = ChatDraftKey.session(server: one, sessionID: "quotes")
+        let commented = ComposerQuote(text: "Passage", comment: "Fix this")
+        let plain = ComposerQuote(text: "Other passage")
+
+        drafts.setQuotes([commented, plain], for: key)
+        try await drafts.flush()
+        let restored = await persistence.load()
+        XCTAssertEqual(restored[key]?.quotes, [commented, plain])
+        XCTAssertEqual(restored[key]?.quotes.first?.comment, "Fix this")
+        XCTAssertNil(restored[key]?.quotes.last?.comment)
+    }
+
     func testConnectionKeychainScopesAndRemoval() throws {
         let keychain = InMemoryKeychainStore()
         let store = BotConnectionStore(keychain: keychain)
