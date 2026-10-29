@@ -189,6 +189,11 @@ struct HermesSessionListView: View {
             // has named one (or on a list of every Profile) the default Profile signs downloads.
             JarvisFilesView(server: entry.server, connection: entry.connection, profile: profile ?? "default")
         }
+        .navigationDestination(isPresented: $covers.showingDocuments) {
+            // Documents are files in the host user's folder too, signed as Files signs them.
+            JarvisDocumentsView(place: JarvisDocuments.Place(server: entry.server, connection: entry.connection,
+                                                             profile: profile ?? "default"))
+        }
         .navigationDestination(isPresented: $covers.showingArchived) {
             if let profile {
                 ArchivedSessionsView(server: entry.server, hermes: .saved(entry.connection, server: entry.server, profile: profile))
@@ -337,7 +342,7 @@ struct HermesSessionListView: View {
         return SidebarSectionVisibility(
             bots: false, tasks: isHome && showsTasks, skills: isHome && showsSkills,
             memory: isHome && showsMemory, insights: isHome && showsInsights, activeProfile: false,
-            projects: !viewModel.hermesShowsAllProfiles, calls: isHome, files: isHome
+            projects: !viewModel.hermesShowsAllProfiles, calls: isHome, files: isHome, documents: isHome
         )
     }
 
@@ -347,6 +352,7 @@ struct HermesSessionListView: View {
         let server = entry.server, connection = entry.connection
         if destination == .calls { covers.showingCalls = true; return }
         if destination == .files { covers.showingFiles = true; return }
+        if destination == .documents { covers.showingDocuments = true; return }
         guard let profile else { return }
         switch destination {
         case .tasks:
@@ -927,6 +933,7 @@ struct HermesSessionListCovers {
     var showingArchived = false
     var showingCalls = false
     var showingFiles = false
+    var showingDocuments = false
     var creatingProject: HermesProjectCreation?
     var renamingProject: ProjectSummary?
     var deletingProject: ProjectSummary?
@@ -942,7 +949,7 @@ struct HermesSessionListCovers {
 
     /// A screen this list pushed covers it, so the socket stays closed until it returns.
     var isCoveredByScreen: Bool {
-        showingArchived || showingCalls || showingFiles || tasks != nil || skills != nil || memory != nil || insights != nil
+        showingArchived || showingCalls || showingFiles || showingDocuments || tasks != nil || skills != nil || memory != nil || insights != nil
     }
 
     /// Counts the links that brought the rows forward, so work started before one (an export)

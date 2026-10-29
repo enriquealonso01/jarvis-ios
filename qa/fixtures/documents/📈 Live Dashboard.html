@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Live Dashboard</title>
+</head>
+<body>
+<div class="page-icon">📈</div>
+<h1>Live Dashboard</h1>
+<p class="subtitle">QA fixture. The numbers come from <code>data/qa-live.json</code>, which the QA lane rewrites every two seconds, the way a JARVIS cron job keeps a dashboard current.</p>
+
+<div class="callout info"><span class="icon">💡</span><div>Nothing on this page is typed by hand: <code>Jarvis.live</code> draws it again whenever the data file changes.</div></div>
+
+<p id="ticks" class="updated">Live updates: 0</p>
+
+<div class="kpis">
+  <div class="kpi"><div class="label">Revenue</div><div class="value" id="revenue">–</div><div class="delta up" id="growth"></div></div>
+  <div class="kpi"><div class="label">Orders</div><div class="value" id="orders">–</div></div>
+  <div class="kpi"><div class="label">Conversion</div><div class="value" id="conversion">–</div></div>
+</div>
+
+<h2>Revenue this week</h2>
+<div id="trend"></div>
+
+<h2>By channel</h2>
+<div id="channels"></div>
+
+<h2>Top products</h2>
+<div id="products"></div>
+
+<h2>Pipeline</h2>
+<div class="board">
+  <div class="column"><h4>To do</h4><div class="card">Restock bestsellers <span class="tag orange">Ops</span></div></div>
+  <div class="column"><h4>Doing</h4><div class="card">Instagram reel batch <span class="tag purple">Content</span></div></div>
+  <div class="column"><h4>Done</h4><div class="card">Supplier call <span class="tag green">Done</span></div></div>
+</div>
+
+<details>
+  <summary>How this page works</summary>
+  <p>JARVIS wrote this file to <code>~/JARVIS-Files/documents/</code>. The app adds its Notion-like styles and the <code>Jarvis</code> helpers; the page itself is plain HTML.</p>
+</details>
+
+<script>
+  var renders = 0;
+  Jarvis.live("data/qa-live.json", function (d) {
+    renders += 1;
+    document.getElementById("ticks").textContent = "Live updates: " + renders;
+    document.getElementById("revenue").textContent = Jarvis.format.currency(d.revenue);
+    document.getElementById("growth").textContent = "▲ " + Jarvis.format.percent(d.growth);
+    document.getElementById("orders").textContent = Jarvis.format.number(d.orders);
+    document.getElementById("conversion").textContent = Jarvis.format.percent(d.conversion);
+    Jarvis.chart("#trend", { kind: "area", format: "currency", points: d.trend });
+    Jarvis.chart("#channels", { kind: "donut", format: "currency", points: d.channels });
+    Jarvis.table("#products", {
+      columns: ["Product", "Sold", "Status"],
+      rows: d.products.map(function (p) { return [p.name, p.sold, p.status]; })
+    });
+  }, 2);
+</script>
+</body>
+</html>
