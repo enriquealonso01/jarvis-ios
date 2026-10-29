@@ -49,6 +49,10 @@ struct ChatTranscriptView: View {
     let showsThinkingAndToolCards: Bool
     /// Start date for the "Working for" tail row; nil hides the row.
     let workingRowStartedAt: Date?
+    /// True while the first prompt of a new chat is being routed by the box's
+    /// classifier (`/bridge/route`). Shows a "Choosing the right JARVIS" row so
+    /// the up-to-10s classification wait is never a frozen empty transcript.
+    let isRoutingFirstPrompt: Bool
     /// The note a Hermes session's withdrawn request leaves at the transcript's end (#1011).
     let requestWithdrawal: BotRequestWithdrawal?
     let showsScrollToBottomButton: Bool
@@ -424,6 +428,7 @@ struct ChatTranscriptView: View {
 
             transcriptLooseBlocks
             liveResponseBlocks
+            routingRow
             workingRow
             turnOutcome
             if let requestWithdrawal {
@@ -554,6 +559,15 @@ struct ChatTranscriptView: View {
                     .accessibilityHidden(hidesRunStatusAccessibility)
                     .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
             }
+        }
+    }
+
+    @ViewBuilder
+    private var routingRow: some View {
+        if isRoutingFirstPrompt && workingRowStartedAt == nil {
+            ChatRoutingRowView()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityHidden(hidesRunStatusAccessibility)
         }
     }
 

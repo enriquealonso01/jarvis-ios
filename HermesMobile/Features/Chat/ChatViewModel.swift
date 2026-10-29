@@ -240,6 +240,9 @@ final class ChatViewModel {
     private(set) var isLoading = false
     private(set) var isLoadingOlderMessages = false
     private(set) var isStartingChat = false
+    /// True only while the box's classifier routes a new chat's first prompt
+    /// (`/bridge/route`); drives the "Choosing the right JARVIS" transcript row.
+    private(set) var isRoutingFirstPrompt = false
     /// True while a recorded voice note is being transcribed, uploaded, and sent.
     /// Spans all three steps so the composer can show progress and disable input.
     private(set) var isSendingVoiceNote = false
@@ -2987,7 +2990,8 @@ final class ChatViewModel {
         guard JarvisBotRouting.routes(profile: profile), hermes.isUnstarted, messages.isEmpty,
               attachmentCoordinator.pendingAttachments.isEmpty, !text.isEmpty else { return nil }
         isStartingChat = true
-        defer { isStartingChat = false }
+        isRoutingFirstPrompt = true
+        defer { isStartingChat = false; isRoutingFirstPrompt = false }
         let reply = await JarvisBotRouter.route(text, current: profile)
         guard let reply, let destination = JarvisBotRouting.destination(reply, current: profile) else { return nil }
         var chat = HermesSessionChat(server: hermes.engine.server, connection: hermes.engine.connection,

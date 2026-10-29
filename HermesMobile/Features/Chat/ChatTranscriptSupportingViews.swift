@@ -928,6 +928,33 @@ struct ChatWorkingRowView: View {
     }
 }
 
+/// Transcript tail row shown while the box's classifier routes a new chat's
+/// first prompt (`/bridge/route`): the same three static dots as the working
+/// row, over "Choosing the right JARVIS" with no elapsed counter, since the
+/// wait is bounded by the route timeout rather than the run's duration.
+struct ChatRoutingRowView: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                ForEach([1.0, 0.8, 0.6], id: \.self) { opacity in
+                    Circle()
+                        .fill(.secondary)
+                        .opacity(opacity)
+                        .frame(width: 4, height: 4)
+                }
+            }
+
+            Text("Choosing the right JARVIS")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "JARVIS is choosing the right profile for your message"))
+        .padding(.leading, 4)
+        .padding(.vertical, 6)
+    }
+}
+
 struct BottomComposerMaterialFade: View {
     @Environment(\.colorScheme) private var colorScheme
 
