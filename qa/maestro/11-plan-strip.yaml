@@ -1,9 +1,12 @@
 appId: com.enriquecodes.jarvis
 # The plan strip between turns. scripts/local-hermes's stub model answers a prompt that mentions
 # a plan by writing a three-step plan with todo_list and stopping with two steps open, so the
-# strip (HermesPlanStrip, id chat.planStrip) stays pinned above the composer once the turn has
-# ended; "finish" completes every step, so the strip goes and the plan settles at the top of
-# that turn as the Plan row. Camera is back only once the composer is idle (no Stop).
+# strip (HermesPlanStrip) stays pinned above the composer once the turn has ended; "finish"
+# completes every step, so the strip goes and the plan settles at the top of that turn as the
+# Plan row. Camera is back only once the composer is idle (no Stop). The strip is matched by its
+# label, "Plan, 1 of 3, <step>": inside the chat its own identifier reads as the chat container's
+# (run 40944008943). Once every step is done the strip and the row would both read "Plan, 3 of 3",
+# so the settled state is one such label, not two.
 name: 11 plan strip stays pinned between turns
 ---
 - launchApp:
@@ -45,19 +48,15 @@ name: 11 plan strip stays pinned between turns
     timeout: 15000
 - assertNotVisible: Stop response
 - extendedWaitUntil:
-    visible:
-      id: chat.planStrip
+    visible: Plan, 1 of 3, Draft the replies
     timeout: 10000
-- assertVisible: Plan, 1 of 3.*
 - takeScreenshot: 11-plan-pinned-after-turn
 # 2. It still expands and collapses.
-- tapOn:
-    id: chat.planStrip
+- tapOn: Plan, 1 of 3, Draft the replies
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: 11-plan-expanded-after-turn
-- tapOn:
-    id: chat.planStrip
+- tapOn: Plan, 1 of 3, Draft the replies
 - waitForAnimationToEnd:
     timeout: 3000
 # 3. The next turn finishes every step: the strip goes and the Plan row settles in the transcript.
@@ -70,11 +69,13 @@ name: 11 plan strip stays pinned between turns
     visible: Every step is done.*
     timeout: 60000
 - extendedWaitUntil:
-    notVisible:
-      id: chat.planStrip
+    notVisible: Plan, 1 of 3, Draft the replies
     timeout: 10000
 - extendedWaitUntil:
     visible: Camera
     timeout: 15000
-- assertVisible: Plan, 3 of 3.*
+- assertVisible: Plan, 3 of 3
+- assertNotVisible:
+    text: Plan, 3 of 3
+    index: 1
 - takeScreenshot: 11-plan-settled
