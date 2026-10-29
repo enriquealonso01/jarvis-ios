@@ -977,7 +977,6 @@ struct HermesChatTranscript: Equatable {
         }
         activeStreamID = nil; activeRunStartedAt = nil
         turnStartedAt = nil; pendingEnding = nil; awaitingStart = false; stopRequested = false
-        activity.turnDidEnd()
         delegate?.streamCoordinatorStreamingAssistantMessageID = nil
         if ending == .completed { delegate?.streamCoordinatorDidCompleteCurrentResponse(needsTranscriptRefresh: false) }
         delegate?.streamCoordinatorFlushPinnedLocalNoticesToTranscript()

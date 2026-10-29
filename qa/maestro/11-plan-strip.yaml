@@ -1,0 +1,80 @@
+appId: com.enriquecodes.jarvis
+# The plan strip between turns. scripts/local-hermes's stub model answers a prompt that mentions
+# a plan by writing a three-step plan with todo_list and stopping with two steps open, so the
+# strip (HermesPlanStrip, id chat.planStrip) stays pinned above the composer once the turn has
+# ended; "finish" completes every step, so the strip goes and the plan settles at the top of
+# that turn as the Plan row. Camera is back only once the composer is idle (no Stop).
+name: 11 plan strip stays pinned between turns
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- retry:
+    maxRetries: 3
+    commands:
+      - waitForAnimationToEnd:
+          timeout: 5000
+      - tapOn: New Session
+      - tapOn:
+          text: General
+          optional: true
+      - extendedWaitUntil:
+          visible: Ask anything.*
+          timeout: 10000
+- tapOn: Ask anything.*
+- inputText: Plan the replies
+- tapOn:
+    text: Send
+    optional: true
+- extendedWaitUntil:
+    visible: Want a notification.*
+    timeout: 20000
+    optional: true
+- tapOn:
+    text: Not now
+    optional: true
+# 1. The turn ends with two steps open: the closing line is in and the composer is idle again,
+#    and the strip is still pinned above it, reading "1 of 3" and the step in progress.
+- extendedWaitUntil:
+    visible: Two steps are still open.*
+    timeout: 60000
+- extendedWaitUntil:
+    visible: Camera
+    timeout: 15000
+- assertNotVisible: Stop response
+- extendedWaitUntil:
+    visible:
+      id: chat.planStrip
+    timeout: 10000
+- assertVisible: Plan, 1 of 3.*
+- takeScreenshot: 11-plan-pinned-after-turn
+# 2. It still expands and collapses.
+- tapOn:
+    id: chat.planStrip
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 11-plan-expanded-after-turn
+- tapOn:
+    id: chat.planStrip
+- waitForAnimationToEnd:
+    timeout: 3000
+# 3. The next turn finishes every step: the strip goes and the Plan row settles in the transcript.
+- tapOn: Ask anything.*
+- inputText: Finish the plan
+- tapOn:
+    text: Send
+    optional: true
+- extendedWaitUntil:
+    visible: Every step is done.*
+    timeout: 60000
+- extendedWaitUntil:
+    notVisible:
+      id: chat.planStrip
+    timeout: 10000
+- extendedWaitUntil:
+    visible: Camera
+    timeout: 15000
+- assertVisible: Plan, 3 of 3.*
+- takeScreenshot: 11-plan-settled

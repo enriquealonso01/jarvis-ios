@@ -6,7 +6,9 @@ A deterministic Hermes host for the simulator and for
 touches a real host. Every turn goes: "Let me run a quick check.", then a
 `terminal` call for `python3 -c "print(1)"` that waits for manual approval, then
 "The command returned: <first line of the result>." Approving really runs that
-command on this Mac.
+command on this Mac. A prompt that mentions a plan instead writes a three-step
+plan with `todo_list` and stops with two steps open; one that says finish
+completes them all (the chat's plan strip between turns, Maestro flow 11).
 
 The first run clones the commit on line 1 of HERMES_AGENT_TESTED_SHA into
 ~/Library/Caches/hermex-local-hermes/<sha>/ and installs it with uv; later runs
@@ -52,17 +54,23 @@ INSTALL_ID = "4865726d65784c6f63616c486f737431"
 PUBLIC_URL = "http://hermex-local.invalid"
 MODEL = "hermex-stub"
 COMMAND = 'python3 -c "print(1)"'
+# The plan turns (flow 11): "plan ..." writes these with the first done and the second in
+# progress, so the turn ends with steps open; "finish ..." completes them all.
+PLAN_STEPS = ("Read the thread", "Draft the replies", "Send them")
 READY_TIMEOUT = 120
 # Loopback requests never go through a configured HTTP proxy.
 LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-def completion(text, tool_call_id=None):
-    """One non-streaming chat completion; a tool_call_id adds the terminal call."""
+def completion(text, tool_call_id=None, name="terminal", arguments=None):
+    """One non-streaming chat completion; a tool_call_id adds a call to `name`, the
+    terminal command by default."""
     message = {"role": "assistant", "content": text}
     if tool_call_id:
+        if arguments is None:
+            arguments = {"command": COMMAND}
         message["tool_calls"] = [{"id": tool_call_id, "type": "function", "function": {
-            "name": "terminal", "arguments": json.dumps({"command": COMMAND})}}]
+            "name": name, "arguments": json.dumps(arguments)}}]
     return {
         "id": "chatcmpl-" + MODEL, "object": "chat.completion", "created": 0, "model": MODEL,
         "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if tool_call_id else "stop"}],
@@ -87,11 +95,40 @@ def tool_summary(content):
     return first_line(content or "")
 
 
+def plan_todos(done):
+    """The plan as `todo_list` items: the first `done` steps completed, the next in progress."""
+    todos = []
+    for index, content in enumerate(PLAN_STEPS, start=1):
+        status = "completed" if index <= done else "in_progress" if index == done + 1 else "pending"
+        todos.append({"id": str(index), "content": content, "status": status})
+    return todos
+
+
+def plan_request(messages):
+    """"finish" when the newest user message says finish, "plan" when it mentions a plan,
+    else None. The whole turn follows that prompt, its closing text after the tool result too."""
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        text = str(content or "").lower()
+        return "finish" if "finish" in text else "plan" if "plan" in text else None
+    return None
+
+
+def tool_names(body):
+    return {tool.get("function", {}).get("name") for tool in body.get("tools") or [] if isinstance(tool, dict)}
+
+
 def stub_reply(body):
     """The scripted model: a pure function of one /v1/chat/completions request body.
 
     Returns (HTTP status, JSON body). Background calls (no tools) get a plain reply,
     a user message gets the terminal call, and a tool result gets the closing text.
+    A plan prompt gets the `todo_list` call instead, then a closing line that says
+    whether steps are still open.
     """
     if body.get("stream"):
         return 400, {"error": {"message": MODEL + " answers only non-streaming requests; set model.streaming: false"}}
@@ -99,6 +136,14 @@ def stub_reply(body):
     last = messages[-1] if messages and isinstance(messages[-1], dict) else {}
     if not body.get("tools"):
         return 200, completion("OK.")
+    plan = plan_request(messages) if "todo_list" in tool_names(body) else None
+    if plan and last.get("role") == "user":
+        finishing = plan == "finish"
+        return 200, completion("Let me %s the plan." % ("close" if finishing else "write down"),
+                               tool_call_id="call_%d" % len(messages), name="todo_list",
+                               arguments={"todos": plan_todos(len(PLAN_STEPS) if finishing else 1)})
+    if plan and last.get("role") == "tool":
+        return 200, completion("Every step is done." if plan == "finish" else "Two steps are still open; say finish when ready.")
     if last.get("role") == "user":
         # Unique per request within a conversation, and still a pure function of it.
         return 200, completion("Let me run a quick check.", tool_call_id="call_%d" % len(messages))
