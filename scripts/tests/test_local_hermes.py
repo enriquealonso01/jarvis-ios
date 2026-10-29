@@ -113,6 +113,7 @@ class HomeTests(unittest.TestCase):
         self.assertEqual(config["model"]["base_url"], "http://127.0.0.1:5123/v1")
         self.assertIs(config["model"]["streaming"], False)
         self.assertEqual(config["approvals"]["mode"], "manual")
+        self.assertEqual(config["tools"]["tool_search"]["enabled"], "off", "todo_list must not defer behind tool_search")
 
     def test_every_home_carries_the_same_install_id(self):
         first, second = self.make_home(), self.make_home()

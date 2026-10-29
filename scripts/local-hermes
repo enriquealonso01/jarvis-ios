@@ -122,6 +122,20 @@ def tool_names(body):
     return {tool.get("function", {}).get("name") for tool in body.get("tools") or [] if isinstance(tool, dict)}
 
 
+def describe(body):
+    """One line per request for the log: how many tools, whether todo_list is one, the roles
+    in order, and the newest user message's start. A CI run keeps it in local-hermes.log."""
+    messages = [m for m in body.get("messages") or [] if isinstance(m, dict)]
+    newest = next((m for m in reversed(messages) if m.get("role") == "user"), {})
+    content = newest.get("content")
+    if isinstance(content, list):
+        content = " | ".join("%s:%s" % (part.get("type", "?"), str(part.get("text", ""))[:60])
+                             for part in content if isinstance(part, dict))
+    return "tools=%d todo_list=%s roles=%s user=%r" % (
+        len(body.get("tools") or []), "todo_list" in tool_names(body), [m.get("role", "?") for m in messages],
+        str(content)[:100])
+
+
 def stub_reply(body):
     """The scripted model: a pure function of one /v1/chat/completions request body.
 
@@ -168,7 +182,9 @@ class StubHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         except ValueError:
             return self.send_json(400, {"error": {"message": "the request body is not JSON"}})
-        self.send_json(*stub_reply(body if isinstance(body, dict) else {}))
+        body = body if isinstance(body, dict) else {}
+        print("stub: " + describe(body), file=sys.stderr, flush=True)
+        self.send_json(*stub_reply(body))
 
     def send_json(self, status, body):
         data = json.dumps(body).encode()
@@ -196,6 +212,10 @@ def make_home(stub_port):
         # Otherwise the first command downloads the tirith scanner into the home and
         # leaves a background updater. The approval comes from Hermes's own detector.
         "security": {"tirith_enabled": False},
+        # The pinned release defers todo_list (with other event-triggered tools) behind its
+        # tool_search bridge by default, so the model never sees it directly; the scripted
+        # model calls it by name (flow 11), so every tool stays eager.
+        "tools": {"tool_search": {"enabled": "off"}},
     }
     (home / "config.yaml").write_text(json.dumps(config, indent=2) + "\n")
     (home / "install_id").write_text(INSTALL_ID + "\n")
