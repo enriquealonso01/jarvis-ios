@@ -120,6 +120,26 @@ enum HermesREST: Equatable, Sendable {
         screen; the same id updates it. For live numbers, write the data file (same fields plus \
         "updated" as ISO 8601) and keep it current, for example with a cron job; the app reads it \
         whenever it opens. Data files must be inside ~/JARVIS-Files.
+
+        When Enrique asks for a document, a page, a report or a dashboard to keep, write it as one \
+        HTML file in ~/JARVIS-Files/documents/ and tell him its title. The file name is the title in \
+        the app's Documents screen, and a leading emoji becomes its icon ("📈 Krendora Sales.html"); \
+        subfolders group documents, and a folder named data or assets, or starting with _, holds \
+        their files. The app opens a document full screen in a web view: any HTML, CSS and \
+        JavaScript works, and when you change the file it reloads on his screen. Plain HTML is \
+        already styled like Notion in light and dark mode, with these classes: page-icon, cover, \
+        muted, callout (info, success, warning, danger; an .icon child), columns, card, kpis holding \
+        kpi (.label, .value, .delta with up or down), tag (gray, brown, orange, yellow, green, blue, \
+        purple, pink, red), progress (a span with a width), board holding column holding card, todo \
+        (li.done) and updated. For live data keep the numbers in a JSON file beside it \
+        (data/<name>.json), keep that file current (a cron job or a script), and draw it with \
+        Jarvis.live("data/<name>.json", render, seconds), which calls render(data) whenever it \
+        changes; relative paths read ~/JARVIS-Files through the app. Jarvis.chart(element, {kind: \
+        line|area|bar|pie|donut, title, points: [{label, value}] or series: [{name, points}], format: \
+        number|percent|currency}) draws a chart, Jarvis.table(element, {columns, rows}) a table, \
+        Jarvis.h(tag, attributes, ...children) builds an element, Jarvis.json(path) reads a file and \
+        Jarvis.format has number, currency, percent and timeAgo. Public https APIs can be fetched \
+        directly. Never put secrets in a document.
         """
 
     /// The most rows `GET /api/sessions` lists in one page.
@@ -242,6 +262,12 @@ enum HermesREST: Equatable, Sendable {
     /// `{text, binary, truncated, byteSize, …}` for the file at a host path, its first 512 KiB
     /// (`truncated` past that); 404 `{detail}` when there is none.
     case fsReadText(path: String)
+    /// `{path, parent, entries: [{name, path, is_directory, size, mtime, mime_type}]}` for one folder
+    /// at a host path (`~` expands), not recursive, with credential entries hidden; 404 `{detail}`
+    /// when there is none. JARVIS's documents read their names and modified times from it
+    /// (`JarvisDocuments`). Read at the live 0.21.5 host: `hermes_cli/web_routers/files.py`
+    /// `list_managed_files`, `hermes_cli/web_server_files.py` `_managed_file_entry`.
+    case managedFiles(path: String)
     /// `{root}`: the repository folder holding a host path, or null outside one (#1114).
     case gitRoot(path: String)
     /// `null` outside a repository, else `{branch, detached, ahead, behind, staged, unstaged,
@@ -524,6 +550,8 @@ enum HermesREST: Equatable, Sendable {
             parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
             guard let url = parts.url else { throw BotFailure.invalidAddress }
             return Self.get(url)
+        case .managedFiles(let path):
+            return try Self.pathQuery(base, "api/files", [URLQueryItem(name: "path", value: path)])
         case .gitRoot(let path):
             return try Self.pathQuery(base, "api/fs/git-root", [URLQueryItem(name: "path", value: path)])
         case .gitStatus(let repository):

@@ -155,3 +155,9 @@ _Avoid_: chat target, session kind
 **Turn identity**:
 Which run a chat is following: a webui stream id, or for a Hermes session its stored key and the host's `turn_started_at`. A Hermes turn ends once `message.complete` and `session.info {running: false}` have both arrived.
 _Avoid_: stream id (for a Hermes turn), run id
+
+## Documents
+
+**Document**:
+A page, report or live dashboard JARVIS writes as an HTML file in `~/JARVIS-Files/documents` on the host. The Documents screen lists it by its file name (a leading emoji is its icon) and opens it full screen in a web view with the app's kit (`JarvisDocumentKit`), reloading it when JARVIS changes the file. JARVIS writes it with its own tools; the app only reads it.
+_Avoid_: page, note, file (Files from JARVIS lists every file)

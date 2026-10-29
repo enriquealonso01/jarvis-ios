@@ -143,6 +143,26 @@ jobs:
             --test-output-dir "$GITHUB_WORKSPACE/qa-out/maestro" \
             "$GITHUB_WORKSPACE/qa/maestro"
 
+      # Documents (flow 12) need files in ~/JARVIS-Files on the host, which flow 08 needs absent,
+      # so they run after the journeys: seed ~/JARVIS-Files/documents, keep the dashboard's data
+      # file and one document changing (qa/fixtures/documents/feed.sh), then drive the screen.
+      - name: Seed documents and run the Documents journey
+        id: documents
+        continue-on-error: true
+        run: |
+          bash qa/fixtures/documents/feed.sh "$HOME/JARVIS-Files/documents" 900 > qa-out/documents-feed.log 2>&1 &
+          FEED=$!
+          sleep 3
+          ls -la "$HOME/JARVIS-Files/documents" "$HOME/JARVIS-Files/documents/data"
+          cd qa-out
+          STATUS=0
+          maestro --device "${{ steps.env.outputs.udid }}" test \
+            --format junit --output "$GITHUB_WORKSPACE/qa-out/report-documents.xml" \
+            --test-output-dir "$GITHUB_WORKSPACE/qa-out/maestro-documents" \
+            "$GITHUB_WORKSPACE/qa/maestro/documents/12-documents.yaml" || STATUS=$?
+          kill "$FEED" 2>/dev/null || true
+          exit "$STATUS"
+
       - name: Collect evidence
         if: always()
         run: |
@@ -154,6 +174,7 @@ jobs:
           for f in $(ls -t ~/Library/Logs/DiagnosticReports/HermesMobile* 2>/dev/null | head -3); do cp "$f" qa-out/; done
           find qa-out -name "*.png" | sort
           echo "---- JUnit ----"; cat qa-out/report.xml || true
+          echo "---- JUnit (documents) ----"; cat qa-out/report-documents.xml || true
           # Stop the host, then keep its logs: local-hermes prints the kept home on exit.
           kill "$(cat /tmp/local-hermes.pid)" 2>/dev/null || true
           for i in $(seq 1 15); do grep -q "Kept the Hermes home at" qa-out/local-hermes.log && break; sleep 1; done
@@ -185,5 +206,5 @@ jobs:
           if-no-files-found: warn
 
       - name: Fail if any journey failed
-        if: steps.maestro.outcome == 'failure' || steps.probe.outcome == 'failure'
+        if: steps.maestro.outcome == 'failure' || steps.documents.outcome == 'failure' || steps.probe.outcome == 'failure'
         run: exit 1

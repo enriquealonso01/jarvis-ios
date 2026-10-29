@@ -1,0 +1,52 @@
+appId: com.enriquecodes.jarvis
+# Documents: the home row lists the HTML documents in ~/JARVIS-Files/documents on the host and
+# opens one full screen with the app's kit. The QA lane seeds them right before this flow
+# (qa/fixtures/documents/feed.sh), which is why it lives outside the journeys folder: flow 08
+# needs ~/JARVIS-Files absent. The dashboard's counter must move on its own (Jarvis.live), and the
+# notes must reload in place when their file changes.
+name: 12 documents
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn: Documents
+- extendedWaitUntil:
+    visible: "Live Dashboard.*"
+    timeout: 30000
+- assertVisible: "Meeting Notes.*"
+- takeScreenshot: 12-documents-list
+- tapOn: "Live Dashboard.*"
+- extendedWaitUntil:
+    visible: "Live updates: [1-9][0-9]*"
+    timeout: 30000
+- takeScreenshot: 12-dashboard
+- extendedWaitUntil:
+    visible: "Live updates: ([3-9]|[1-9][0-9]+)"
+    timeout: 30000
+- takeScreenshot: 12-dashboard-updated
+- scroll
+- takeScreenshot: 12-dashboard-charts
+# Maestro has no Back on iOS: start over for the second document.
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- tapOn: Documents
+- extendedWaitUntil:
+    visible: "Meeting Notes.*"
+    timeout: 30000
+- tapOn: "Meeting Notes.*"
+- extendedWaitUntil:
+    visible: "Revision [0-9]+"
+    timeout: 30000
+- takeScreenshot: 12-notes
+- copyTextFrom:
+    text: "Revision [0-9]+"
+- extendedWaitUntil:
+    notVisible: ${maestro.copiedText}
+    timeout: 30000
+- assertVisible: "Revision [0-9]+"
+- takeScreenshot: 12-notes-reloaded
