@@ -126,20 +126,28 @@ enum HermesREST: Equatable, Sendable {
         the app's Documents screen, and a leading emoji becomes its icon ("📈 Krendora Sales.html"); \
         subfolders group documents, and a folder named data or assets, or starting with _, holds \
         their files. The app opens a document full screen in a web view: any HTML, CSS and \
-        JavaScript works, and when you change the file it reloads on his screen. Plain HTML is \
-        already styled like Notion in light and dark mode, with these classes: page-icon, cover, \
-        muted, callout (info, success, warning, danger; an .icon child), columns, card, kpis holding \
-        kpi (.label, .value, .delta with up or down), tag (gray, brown, orange, yellow, green, blue, \
-        purple, pink, red), progress (a span with a width), board holding column holding card, todo \
-        (li.done) and updated. For live data keep the numbers in a JSON file beside it \
-        (data/<name>.json), keep that file current (a cron job or a script), and draw it with \
+        JavaScript works, and when you change the file it reloads on his screen. Every document \
+        already has these, offline, so never add tags for them: Tailwind CSS utility classes, with \
+        the theme colors bg-background, bg-card, bg-muted, text-foreground, text-muted-foreground, \
+        bg-primary, border-border and bg-chart-1 to 5; Basecoat, which is shadcn/ui in plain HTML: \
+        class="card" holding header (h2, p), section and footer, class="badge" or "btn" with \
+        data-variant="secondary|outline|destructive", class="alert" (an icon, h2, section), \
+        class="table", class="tabs" and class="progress"; Lucide icons as \
+        <i data-lucide="trending-up" class="size-4"></i>; and Chart.js. Make dashboards look like a \
+        polished shadcn/ui page: a header, a grid of KPI cards (grid grid-cols-2 gap-3) with an icon \
+        and a colored trend line each, then charts and tables in cards, and real numbers only. Draw a \
+        chart on a <canvas> inside a sized box (<div class="h-52">) with Jarvis.chart(canvas, {type: \
+        line|bar|doughnut|pie|radar, labelKey: "day", data: [{day, revenue, ...}], series: {revenue: \
+        {label, color: "var(--chart-2)", surface: "gradient", dataset: {fill: true, tension: 0.4}}}, \
+        legend: true, options}), Basecoat's chart on Chart.js; drawing it again replaces it. Put \
+        long-form writing in <article class="prose">. The page is padded and follows light and dark \
+        mode by itself. For live data keep the numbers in a JSON file beside it (data/<name>.json), \
+        keep that file current (a cron job or a script), and draw it with \
         Jarvis.live("data/<name>.json", render, seconds), which calls render(data) whenever it \
-        changes; relative paths read ~/JARVIS-Files through the app. Jarvis.chart(element, {kind: \
-        line|area|bar|pie|donut, title, points: [{label, value}] or series: [{name, points}], format: \
-        number|percent|currency}) draws a chart, Jarvis.table(element, {columns, rows}) a table, \
-        Jarvis.h(tag, attributes, ...children) builds an element, Jarvis.json(path) reads a file and \
-        Jarvis.format has number, currency, percent and timeAgo. Public https APIs can be fetched \
-        directly. Never put secrets in a document.
+        changes; relative paths read ~/JARVIS-Files through the app. Jarvis.json(path) reads a file \
+        once, Jarvis.icons() draws icons in markup you add later, Jarvis.h(tag, attributes, \
+        ...children) builds an element, and Jarvis.format has number, currency, percent and timeAgo. \
+        Public https APIs can be fetched directly. Never put secrets in a document.
         """
 
     /// The most rows `GET /api/sessions` lists in one page.

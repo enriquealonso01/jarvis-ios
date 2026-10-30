@@ -119,7 +119,7 @@ struct JarvisDocumentWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(context.coordinator.handler, forURLScheme: JarvisDocuments.scheme)
-        configuration.userContentController.addUserScript(JarvisDocumentKit.userScript())
+        for script in JarvisDocumentKit.userScripts { configuration.userContentController.addUserScript(script) }
         configuration.allowsInlineMediaPlayback = true
         configuration.dataDetectorTypes = [.link, .phoneNumber]
         let webView = WKWebView(frame: .zero, configuration: configuration)

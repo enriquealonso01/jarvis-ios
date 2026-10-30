@@ -5,56 +5,113 @@
 <title>Live Dashboard</title>
 </head>
 <body>
-<div class="page-icon">📈</div>
-<h1>Live Dashboard</h1>
-<p class="subtitle">QA fixture. The numbers come from <code>data/qa-live.json</code>, which the QA lane rewrites every two seconds, the way a JARVIS cron job keeps a dashboard current.</p>
+<!-- QA fixture, written the way JARVIS writes a dashboard: Tailwind classes, Basecoat components,
+     Lucide icons and Jarvis.chart, all of which the app adds to every document. The numbers come
+     from data/qa-live.json, which the QA lane rewrites every 2 s as a JARVIS cron job would. -->
+<header class="flex items-start justify-between gap-3 mb-4">
+  <div>
+    <p class="text-sm text-muted-foreground flex items-center gap-1.5"><i data-lucide="store" class="size-4"></i> Krendora · QA fixture</p>
+    <h1 class="text-2xl font-semibold tracking-tight">Live Dashboard</h1>
+    <p id="ticks" class="text-sm text-muted-foreground mt-0.5">Live updates: 0</p>
+  </div>
+  <span class="badge mt-1" data-variant="outline"><span class="size-2 rounded-full bg-emerald-500"></span>Live</span>
+</header>
 
-<div class="callout info"><span class="icon">💡</span><div>Nothing on this page is typed by hand: <code>Jarvis.live</code> draws it again whenever the data file changes.</div></div>
+<div class="space-y-4">
+  <section class="grid grid-cols-2 gap-3">
+    <div class="card gap-2 py-4"><section class="px-4 space-y-1">
+      <div class="flex items-center justify-between text-sm text-muted-foreground">Revenue <i data-lucide="dollar-sign" class="size-4"></i></div>
+      <div id="revenue" class="text-2xl font-semibold tabular-nums tracking-tight">–</div>
+      <div class="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><i data-lucide="trending-up" class="size-3.5"></i><span id="growth"></span><span class="text-muted-foreground">vs last week</span></div>
+    </section></div>
+    <div class="card gap-2 py-4"><section class="px-4 space-y-1">
+      <div class="flex items-center justify-between text-sm text-muted-foreground">Orders <i data-lucide="shopping-bag" class="size-4"></i></div>
+      <div id="orders" class="text-2xl font-semibold tabular-nums tracking-tight">–</div>
+      <div class="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><i data-lucide="trending-up" class="size-3.5"></i>+8.4%<span class="text-muted-foreground">vs last week</span></div>
+    </section></div>
+    <div class="card gap-2 py-4"><section class="px-4 space-y-1">
+      <div class="flex items-center justify-between text-sm text-muted-foreground">Conversion <i data-lucide="mouse-pointer-click" class="size-4"></i></div>
+      <div id="conversion" class="text-2xl font-semibold tabular-nums tracking-tight">–</div>
+      <div class="text-xs flex items-center gap-1 text-red-600 dark:text-red-400"><i data-lucide="trending-down" class="size-3.5"></i>−0.3 pt<span class="text-muted-foreground">vs last week</span></div>
+    </section></div>
+    <div class="card gap-2 py-4"><section class="px-4 space-y-1">
+      <div class="flex items-center justify-between text-sm text-muted-foreground">Avg. order <i data-lucide="receipt" class="size-4"></i></div>
+      <div id="aov" class="text-2xl font-semibold tabular-nums tracking-tight">–</div>
+      <div class="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><i data-lucide="trending-up" class="size-3.5"></i>+2.6%<span class="text-muted-foreground">vs last week</span></div>
+    </section></div>
+  </section>
 
-<p id="ticks" class="updated">Live updates: 0</p>
+  <div class="card">
+    <header><h2>Revenue</h2><p>This week against last week</p></header>
+    <section><div class="h-52"><canvas id="trend" aria-label="Revenue by day"></canvas></div></section>
+  </div>
 
-<div class="kpis">
-  <div class="kpi"><div class="label">Revenue</div><div class="value" id="revenue">–</div><div class="delta up" id="growth"></div></div>
-  <div class="kpi"><div class="label">Orders</div><div class="value" id="orders">–</div></div>
-  <div class="kpi"><div class="label">Conversion</div><div class="value" id="conversion">–</div></div>
+  <div class="card">
+    <header><h2>Revenue by channel</h2><p>This week</p></header>
+    <section class="flex items-center gap-4">
+      <div class="size-36 shrink-0"><canvas id="channels" aria-label="Revenue by channel"></canvas></div>
+      <ul id="channel-legend" class="flex-1 space-y-2 text-sm"></ul>
+    </section>
+  </div>
+
+  <div class="card">
+    <header><h2>Top products</h2><p>Units sold this week</p></header>
+    <section class="px-0 overflow-x-auto">
+      <table class="table">
+        <thead><tr><th class="pl-6">Product</th><th class="text-right">Sold</th><th class="pr-6">Stock</th></tr></thead>
+        <tbody id="products"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <div class="alert">
+    <i data-lucide="info"></i>
+    <h2>How this page works</h2>
+    <section>JARVIS wrote this file to ~/JARVIS-Files/documents. The app adds the styles, the charts and the icons; Jarvis.live draws it again whenever the data file changes.</section>
+  </div>
 </div>
-
-<h2>Revenue this week</h2>
-<div id="trend"></div>
-
-<h2>By channel</h2>
-<div id="channels"></div>
-
-<h2>Top products</h2>
-<div id="products"></div>
-
-<h2>Pipeline</h2>
-<div class="board">
-  <div class="column"><h4>To do</h4><div class="card">Restock bestsellers <span class="tag orange">Ops</span></div></div>
-  <div class="column"><h4>Doing</h4><div class="card">Instagram reel batch <span class="tag purple">Content</span></div></div>
-  <div class="column"><h4>Done</h4><div class="card">Supplier call <span class="tag green">Done</span></div></div>
-</div>
-
-<details>
-  <summary>How this page works</summary>
-  <p>JARVIS wrote this file to <code>~/JARVIS-Files/documents/</code>. The app adds its Notion-like styles and the <code>Jarvis</code> helpers; the page itself is plain HTML.</p>
-</details>
 
 <script>
   var renders = 0;
+  var stock = { "In stock": "secondary", "Low": "destructive", "Reordered": "outline" };
   Jarvis.live("data/qa-live.json", function (d) {
     renders += 1;
     document.getElementById("ticks").textContent = "Live updates: " + renders;
-    document.getElementById("revenue").textContent = Jarvis.format.currency(d.revenue);
-    document.getElementById("growth").textContent = "▲ " + Jarvis.format.percent(d.growth);
+    document.getElementById("revenue").textContent = Jarvis.format.currency(d.revenue, "USD").replace(/\.00$/, "");
+    document.getElementById("growth").textContent = "+" + Jarvis.format.percent(d.growth);
     document.getElementById("orders").textContent = Jarvis.format.number(d.orders);
     document.getElementById("conversion").textContent = Jarvis.format.percent(d.conversion);
-    Jarvis.chart("#trend", { kind: "area", format: "currency", points: d.trend });
-    Jarvis.chart("#channels", { kind: "donut", format: "currency", points: d.channels });
-    Jarvis.table("#products", {
-      columns: ["Product", "Sold", "Status"],
-      rows: d.products.map(function (p) { return [p.name, p.sold, p.status]; })
+    document.getElementById("aov").textContent = Jarvis.format.currency(d.revenue / d.orders);
+    Jarvis.chart("#trend", {
+      type: "line",
+      labelKey: "label",
+      data: d.trend,
+      series: {
+        value: { label: "This week", color: "var(--chart-2)", surface: "gradient", dataset: { fill: true, tension: 0.4, pointRadius: 0 } },
+        previous: { label: "Last week", color: "var(--chart-1)", dataset: { tension: 0.4, pointRadius: 0, borderDash: [4, 4] } }
+      },
+      legend: true,
+      options: { scales: { y: { ticks: { maxTicksLimit: 4, callback: function (v) { return Jarvis.format.currency(v, "USD", true); } } } } }
     });
+    Jarvis.chart("#channels", {
+      type: "doughnut",
+      labelKey: "label",
+      data: d.channels,
+      series: { value: { label: "Revenue", dataset: { borderWidth: 0, spacing: 2, borderRadius: 4 } } },
+      options: { cutout: "68%", plugins: { legend: { display: false } } }
+    });
+    var total = d.channels.reduce(function (sum, c) { return sum + c.value; }, 0);
+    document.getElementById("channel-legend").replaceChildren.apply(document.getElementById("channel-legend"), d.channels.map(function (c, i) {
+      return Jarvis.h("li", { class: "flex items-center gap-2" },
+        Jarvis.h("span", { class: "size-2.5 rounded-sm", style: { background: "var(--chart-" + (i + 1) + ")" } }), c.label,
+        Jarvis.h("span", { class: "ml-auto tabular-nums text-muted-foreground" }, Math.round(c.value / total * 100) + "%"));
+    }));
+    document.getElementById("products").replaceChildren.apply(document.getElementById("products"), d.products.map(function (p) {
+      return Jarvis.h("tr", null,
+        Jarvis.h("td", { class: "pl-6 font-medium" }, p.name),
+        Jarvis.h("td", { class: "text-right tabular-nums" }, p.sold),
+        Jarvis.h("td", { class: "pr-6" }, Jarvis.h("span", { class: "badge", "data-variant": stock[p.status] || "secondary" }, p.status)));
+    }));
   }, 2);
 </script>
 </body>

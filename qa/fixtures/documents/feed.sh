@@ -20,9 +20,10 @@ write_data() {
   cat > "$DOCS/data/.live.tmp" <<JSON
 {"tick": $i, "revenue": $((12400 + i * 37)), "growth": 0.$((10 + i % 9)), "orders": $((140 + i)),
  "conversion": 0.0$((31 + i % 7)),
- "trend": [{"label": "Mon", "value": 1620}, {"label": "Tue", "value": 1810}, {"label": "Wed", "value": 1540},
-           {"label": "Thu", "value": 2100}, {"label": "Fri", "value": 2380}, {"label": "Sat", "value": $((2600 + (i % 5) * 90))},
-           {"label": "Sun", "value": $((1900 + (i % 7) * 60))}],
+ "trend": [{"label": "Mon", "value": 1620, "previous": 1410}, {"label": "Tue", "value": 1810, "previous": 1580},
+           {"label": "Wed", "value": 1540, "previous": 1490}, {"label": "Thu", "value": 2100, "previous": 1720},
+           {"label": "Fri", "value": 2380, "previous": 2010}, {"label": "Sat", "value": $((2600 + (i % 5) * 90)), "previous": 2240},
+           {"label": "Sun", "value": $((1900 + (i % 7) * 60)), "previous": 1830}],
  "channels": [{"label": "Instagram", "value": $((5200 + i * 9))}, {"label": "TikTok", "value": 3100},
               {"label": "Email", "value": 1900}, {"label": "Direct", "value": 1200}],
  "products": [{"name": "Linen tote", "sold": $((41 + i % 4)), "status": "In stock"},
