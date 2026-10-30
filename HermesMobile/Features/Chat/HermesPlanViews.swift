@@ -71,10 +71,11 @@ struct HermesPlanItemList: View {
     }
 }
 
-/// A running plan pinned above a Hermes chat's composer (#1139, mock B): one glass line with
-/// "2 of 5", the current step and a chevron. Tap expands the list upward, instantly under
-/// Reduce Motion; long-press copies it. `onCollapsedHeightChange` reports the line's height,
-/// which is all the transcript makes room for: the open list rises over it.
+/// A plan with a step still open, pinned above a Hermes chat's composer through its turn and
+/// between turns (#1139, mock B): one glass line with "2 of 5", the current step and a chevron.
+/// Tap expands the list upward, instantly under Reduce Motion; long-press copies it.
+/// `onCollapsedHeightChange` reports the line's height, which is all the transcript makes room
+/// for: the open list rises over it.
 struct HermesPlanStrip: View {
     let plan: HermesPlan
     let onCollapsedHeightChange: (CGFloat) -> Void
@@ -144,6 +145,7 @@ struct HermesPlanStrip: View {
         )
         .accessibilityAction { toggle() }
         .accessibilityAction(named: Text("Copy")) { copy() }
+        .accessibilityIdentifier("chat.planStrip")
     }
 
     private var count: String { String(localized: "\(plan.completedCount) of \(plan.items.count)") }

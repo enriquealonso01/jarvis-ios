@@ -213,10 +213,11 @@ keeps one plan across turns, so a plan belongs to a turn only when that turn's `
 revised it, or a snapshot revised it while the chat followed that turn: still running, or ended
 while the chat was away with its prompt the only one the history saved since it began, which
 places the plan. A plan a snapshot restored otherwise (reopening the chat, a new runtime, another
-turn since) is held for revision order but not drawn. While its turn runs with a step open it pins
-above the composer (`HermesPlanStrip`: under the run-status pill, over the request card and `/btw`
-panel; hidden on the offline cache's copy); once every step is done or the turn ends it settles as
-`HermesPlanRowView` after that turn's prompt, by `persisted_turn.user_row_id` or, while the turn is
+turn since) is held for revision order but not drawn. While a step is open it pins above the
+composer (`HermesPlanStrip`: under the run-status pill, over the request card and `/btw` panel;
+hidden on the offline cache's copy), through its turn and between turns, so a task that spans
+turns keeps its plan in view; once every step is done it settles as `HermesPlanRowView` after the
+prompt of the turn that last revised it, by `persisted_turn.user_row_id` or, while that turn is
 the newest and the chat showed its prompt (its own send or a prompt it queued), the last prompt
 shown. A turn another client started shows no prompt here, so its plan settles only by its row.
 A saved row the transcript no longer holds hides the plan, and `/undo` drops the plan of the turn

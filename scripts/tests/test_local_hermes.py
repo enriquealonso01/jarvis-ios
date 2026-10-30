@@ -22,6 +22,7 @@ local = importlib.util.module_from_spec(spec)
 loader.exec_module(local)
 
 TOOLS = [{"type": "function", "function": {"name": "terminal", "parameters": {}}}]
+PLAN_TOOLS = TOOLS + [{"type": "function", "function": {"name": "todo_list", "parameters": {}}}]
 
 
 def tool_result(**fields):
@@ -64,6 +65,36 @@ class StubModelTests(unittest.TestCase):
              "content": tool_result(exit_code=-1, error="BLOCKED: the user denied it.\nDo not retry.", status="blocked")}]})
         self.assertEqual(choice["message"]["content"], "The command returned: BLOCKED: the user denied it.")
 
+    def test_a_plan_prompt_writes_a_plan_and_stops_with_steps_open(self):
+        choice = self.answer({"tools": PLAN_TOOLS, "messages": [{"role": "user", "content": "Plan the replies"}]})
+        self.assertEqual(choice["finish_reason"], "tool_calls")
+        calls = choice["message"]["tool_calls"]
+        self.assertEqual([c["function"]["name"] for c in calls], ["todo_list"])
+        todos = json.loads(calls[0]["function"]["arguments"])["todos"]
+        self.assertEqual([t["content"] for t in todos], list(local.PLAN_STEPS))
+        self.assertEqual([t["status"] for t in todos], ["completed", "in_progress", "pending"])
+        closing = self.answer({"tools": PLAN_TOOLS, "messages": [
+            {"role": "user", "content": "Plan the replies"},
+            {"role": "tool", "tool_call_id": "call_1", "content": json.dumps({"todos": todos, "revision": 1})}]})
+        self.assertEqual(closing["finish_reason"], "stop")
+        self.assertNotIn("tool_calls", closing["message"])
+        self.assertIn("still open", closing["message"]["content"])
+
+    def test_a_finish_prompt_completes_every_step(self):
+        history = [{"role": "user", "content": "Plan the replies"},
+                   {"role": "assistant", "content": "Let me write down the plan."},
+                   {"role": "user", "content": "Finish the plan"}]
+        choice = self.answer({"tools": PLAN_TOOLS, "messages": history})
+        todos = json.loads(choice["message"]["tool_calls"][0]["function"]["arguments"])["todos"]
+        self.assertEqual({t["status"] for t in todos}, {"completed"})
+        closing = self.answer({"tools": PLAN_TOOLS, "messages": history + [
+            {"role": "tool", "tool_call_id": "call_3", "content": json.dumps({"todos": todos, "revision": 2})}]})
+        self.assertEqual(closing["message"]["content"], "Every step is done.")
+
+    def test_a_plan_prompt_without_the_todo_tool_gets_the_terminal_call(self):
+        choice = self.answer({"tools": TOOLS, "messages": [{"role": "user", "content": "Plan the replies"}]})
+        self.assertEqual([c["function"]["name"] for c in choice["message"]["tool_calls"]], ["terminal"])
+
     def test_a_streaming_request_is_refused(self):
         status, reply = local.stub_reply({"stream": True, "tools": TOOLS, "messages": [{"role": "user", "content": "hi"}]})
         self.assertEqual(status, 400)
@@ -82,6 +113,7 @@ class HomeTests(unittest.TestCase):
         self.assertEqual(config["model"]["base_url"], "http://127.0.0.1:5123/v1")
         self.assertIs(config["model"]["streaming"], False)
         self.assertEqual(config["approvals"]["mode"], "manual")
+        self.assertEqual(config["tools"]["tool_search"]["enabled"], "off", "todo_list must not defer behind tool_search")
 
     def test_every_home_carries_the_same_install_id(self):
         first, second = self.make_home(), self.make_home()

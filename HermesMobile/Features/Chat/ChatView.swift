@@ -1971,8 +1971,8 @@ struct ChatView: View {
         }
     }
 
-    /// A Hermes chat's running plan, pinned above the composer while it has an open step
-    /// (#1139). Hidden on the offline cache's copy.
+    /// A Hermes chat's plan, pinned above the composer while a step is still open, between
+    /// turns too (#1139). Hidden on the offline cache's copy.
     private var pinnedPlan: HermesPlan? {
         viewModel.isViewingCachedData ? nil : viewModel.hermesActivity?.pinnedPlan
     }

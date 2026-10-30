@@ -821,9 +821,9 @@ import SwiftUI
         XCTAssertNil(HermesPlan(.null))
     }
 
-    /// A turn that calls `todo` pins its plan while it runs. Once every step is done, or the turn
-    /// ends, the plan settles at the top of that turn: under the prompt the chat sent, then by the
-    /// row the host saved it as. A later turn that leaves the plan alone does not take it.
+    /// A turn that calls `todo` pins its plan while it runs. Once every step is done, the plan
+    /// settles at the top of that turn: under the prompt the chat sent, then by the row the host
+    /// saved it as. A later turn that leaves the plan alone does not take it.
     func testAPlanPinsWhileItsTurnRunsAndSettlesIntoThatTurn() async throws {
         let chat = await openChat()
         let activity = chat.turn.activity
@@ -854,18 +854,29 @@ import SwiftUI
         XCTAssertEqual(activity.settledPlan?.followsLastPrompt, false, "the new turn did not touch the plan")
     }
 
-    /// A plan whose turn ends with steps still open settles too, showing where it stopped.
-    func testAnOpenPlanSettlesWhenItsTurnEnds() async {
+    /// A plan whose turn ends with steps still open stays pinned, through the next turn's start,
+    /// so a task that spans turns keeps its plan in view; once a turn settles every step, the plan
+    /// settles at the top of that turn.
+    func testAnOpenPlanStaysPinnedBetweenTurnsUntilEveryStepSettles() async {
         let chat = await openChat()
+        let activity = chat.turn.activity
         chat.host.always("prompt.submit", .init(result: .object(["status": .string("streaming")])))
         _ = await chat.model.sendMessage("Plan it")
         chat.receive(event(1, "message.start"))
         chat.receive(event(2, "todo.updated", todos(revision: 1, ["completed", "in_progress", "pending"])))
         chat.receive(event(3, "message.complete", ["status": .string("complete"), "text": .string("Stopping here.")]))
         chat.receive(event(4, "session.info", ["running": .bool(false)]))
-        XCTAssertNil(chat.turn.activity.pinnedPlan)
-        XCTAssertEqual(chat.turn.activity.settledPlan?.plan.current?.content, "Step 2")
-        XCTAssertEqual(chat.turn.activity.settledPlan?.followsLastPrompt, true)
+        XCTAssertEqual(activity.pinnedPlan?.current?.content, "Step 2", "an open plan stays pinned once its turn ends")
+        XCTAssertNil(activity.settledPlan, "and is not also in the transcript")
+
+        _ = await chat.model.sendMessage("Go on")
+        chat.receive(event(5, "message.start"))
+        XCTAssertEqual(activity.pinnedPlan?.revision, 1, "the next turn starts with the plan still pinned")
+
+        chat.receive(event(6, "todo.updated", todos(revision: 2, ["completed", "completed", "completed"])))
+        XCTAssertNil(activity.pinnedPlan, "every step settled: the strip goes")
+        XCTAssertEqual(activity.settledPlan?.plan.revision, 2)
+        XCTAssertEqual(activity.settledPlan?.followsLastPrompt, true, "under the prompt of the turn that finished it")
     }
 
     /// An older revision never replaces a newer one, and an empty list at revision 1 or later is
@@ -944,13 +955,17 @@ import SwiftUI
         XCTAssertEqual(activity.settledPlan?.rowID, 5, "at the top of its own turn")
     }
 
-    /// As above, but the turn did not revise its plan again: the plan it already owned settles at
-    /// the top of that turn all the same.
-    func testAFollowedTurnsUnchangedPlanSettlesUnderItsPromptAfterAReattach() async {
+    /// As above, but the turn ended with steps still open and did not revise its plan again: the
+    /// plan it already owned is still its own, so it stays pinned, and settles at the top of that
+    /// turn once every step is done.
+    func testAFollowedTurnsOpenPlanStaysPinnedAfterAReattach() async {
         let activity = await followTurnThatEndsAway(saving: [userRow("Plan it", id: 5, at: 1_790_000_001)],
                                                     finalPlan: todos(revision: 1, ["in_progress", "pending"]))
+        XCTAssertEqual(activity.pinnedPlan?.revision, 1, "the turn's open plan stays pinned")
+        XCTAssertNil(activity.settledPlan)
+
+        activity.receivePlan(.object(todos(revision: 2, ["completed", "completed"])))
         XCTAssertNil(activity.pinnedPlan)
-        XCTAssertEqual(activity.settledPlan?.plan.revision, 1, "the turn's plan settles")
         XCTAssertEqual(activity.settledPlan?.rowID, 5, "at the top of its own turn")
     }
 

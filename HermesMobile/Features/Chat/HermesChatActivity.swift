@@ -88,9 +88,10 @@ struct HermesPlanState: Equatable {
 
 /// A Hermes chat's plan, how its last turn ended (#1139), and its delegated workers (#1140).
 /// `HermesChatTurnCoordinator` owns it and only forwards its frames and snapshots here;
-/// `ChatView` draws the plan pinned above the composer while its turn runs (`pinnedPlan`),
-/// then at the top of that turn (`settledPlan`), the outcome row under the failed or warned
-/// turn, and the workers button while `delegatedWork` counts any. Never cached.
+/// `ChatView` draws the plan pinned above the composer while a step is still open, through
+/// its turn and between turns (`pinnedPlan`), then at the top of the turn that finished it
+/// (`settledPlan`), the outcome row under the failed or warned turn, and the workers button
+/// while `delegatedWork` counts any. Never cached.
 @MainActor @Observable final class HermesChatActivity {
     /// A plan out of the strip, at the top of its turn: after that turn's prompt.
     struct SettledPlan: Equatable {
@@ -144,7 +145,6 @@ struct HermesPlanState: Equatable {
     /// A new runtime dropped the plan, so the next snapshot's plan can't be placed in a turn.
     private var planRuntimeIsNew = false
     private var turn = 0
-    private var isTurnRunning = false
     /// The chat showed the newest turn's prompt itself (`turnDidStart`).
     private var turnShowsPrompt = false
     /// The row the host saved the newest turn's prompt as, from its `message.complete`.
@@ -169,15 +169,18 @@ struct HermesPlanState: Equatable {
     /// The newest plan the host holds, wherever it shows, for a bot's Live Activity chips.
     var plan: HermesPlan? { planState.plan }
 
-    /// The plan while its turn runs with a step still open.
+    /// The plan while a step is still open: through its turn and between turns, so a task that
+    /// spans turns keeps its plan in view, until every step is done, the host clears it, `/undo`
+    /// removes its turn or a new runtime drops it. Only a plan a turn the chat saw owns: one a
+    /// snapshot restored with no turn is not drawn.
     var pinnedPlan: HermesPlan? {
-        guard isTurnRunning, let plan = planState.plan, planTurn?.turn == turn, !plan.isFinished else { return nil }
+        guard let plan = planState.plan, planTurn != nil, !plan.isFinished else { return nil }
         return plan
     }
 
-    /// The plan in the transcript: once it is finished or its turn ended. Nil while pinned,
-    /// cleared, when no turn is known to own it, or when its prompt's row is unknown and the
-    /// last prompt shown may be another turn's.
+    /// The plan in the transcript: once every step is done. Nil while pinned, cleared, when no
+    /// turn is known to own it, or when its prompt's row is unknown and the last prompt shown
+    /// may be another turn's.
     var settledPlan: SettledPlan? {
         guard pinnedPlan == nil, let plan = planState.plan, let planTurn else { return nil }
         let followsLastPrompt = planTurn.turn == turn && planTurn.showsPrompt
@@ -199,16 +202,10 @@ struct HermesPlanState: Equatable {
     /// client started.
     func turnDidStart(showsPrompt: Bool) {
         turn += 1
-        isTurnRunning = true
         turnShowsPrompt = showsPrompt
         turnPromptRowID = nil
         failure = nil; notice = nil
         failedPrompt = nil; failedPromptRowID = nil; failedTurnStartedAt = nil
-    }
-
-    /// The running turn ended, however it ended: an open plan settles into it.
-    func turnDidEnd() {
-        isTurnRunning = false
     }
 
     /// The running turn's `todo.updated`: the plan at that revision is this turn's, including
