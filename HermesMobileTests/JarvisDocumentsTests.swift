@@ -55,6 +55,15 @@ final class JarvisDocumentsTests: XCTestCase {
         }
     }
 
+    func testEveryDocumentGetsTheBundledLibraries() throws {
+        for name in JarvisDocumentKit.libraries + [JarvisDocumentKit.stylesheet] {
+            XCTAssertNotNil(JarvisDocumentKit.file(name), "\(name) is missing from the app's DocumentKit folder")
+        }
+        let tailwind = try XCTUnwrap(JarvisDocumentKit.file("tailwindcss-browser.js"))
+        XCTAssertNotEqual(JarvisDocumentKit.tailwind(tailwind), tailwind,
+                          "Tailwind no longer appends to document.head as it loads: check the document-start patch")
+    }
+
     func testManagedFilesListsAHostFolder() throws {
         let request = try HermesREST.managedFiles(path: "~/JARVIS-Files/a+b c").request(base: URL(string: "https://hermes.example")!)
         XCTAssertEqual(request.httpMethod, "GET")

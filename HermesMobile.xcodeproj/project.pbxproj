@@ -400,6 +400,7 @@
 		1A2B3C4D5E6F70000000214 /* SkillsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F70000000215 /* SkillsViewModel.swift */; };
 		1A2B3C4D5E6F70000000300 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F70000000301 /* PrivacyInfo.xcprivacy */; };
 		9E2A653D968A4ACDA19A8142 /* ThirdPartyNotices in Resources */ = {isa = PBXBuildFile; fileRef = 488791F556304AD2AC59BC5D /* ThirdPartyNotices */; };
+		4016A6DB403F581A1ECD3CF9 /* DocumentKit in Resources */ = {isa = PBXBuildFile; fileRef = 44EA1A4D026634E0B999FA87 /* DocumentKit */; };
 		B5A100000000000000000001 /* SharedDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A100000000000000000010 /* SharedDraftStore.swift */; };
 		B5A100000000000000000002 /* SharedDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A100000000000000000010 /* SharedDraftStore.swift */; };
 		B5A100000000000000000003 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A100000000000000000011 /* ShareViewController.swift */; };
@@ -1113,6 +1114,7 @@
 		B5A100000000000000000014 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B5A100000000000000000015 /* HermesMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HermesMobile.entitlements; sourceTree = "<group>"; };
 		488791F556304AD2AC59BC5D /* ThirdPartyNotices */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ThirdPartyNotices; sourceTree = "<group>"; };
+		44EA1A4D026634E0B999FA87 /* DocumentKit */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DocumentKit; sourceTree = "<group>"; };
 		B5A100000000000000000016 /* SharedDraftStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedDraftStoreTests.swift; sourceTree = "<group>"; };
 		B5A100000000000000000019 /* ShareInputReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareInputReaderTests.swift; sourceTree = "<group>"; };
 		B5A100000000000000000061 /* AuthManagerStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManagerStateTests.swift; sourceTree = "<group>"; };
@@ -1408,6 +1410,7 @@
 				B5A100000000000000000015 /* HermesMobile.entitlements */,
 				1A2B3C4D5E6F70000000301 /* PrivacyInfo.xcprivacy */,
 				488791F556304AD2AC59BC5D /* ThirdPartyNotices */,
+				44EA1A4D026634E0B999FA87 /* DocumentKit */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -2472,6 +2475,7 @@
 				10CA110C0DE000000000B004 /* AppShortcuts.xcstrings in Resources */,
 				1A2B3C4D5E6F70000000300 /* PrivacyInfo.xcprivacy in Resources */,
 				9E2A653D968A4ACDA19A8142 /* ThirdPartyNotices in Resources */,
+				4016A6DB403F581A1ECD3CF9 /* DocumentKit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

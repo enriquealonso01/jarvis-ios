@@ -19,5 +19,11 @@ with the iOS app.
   See NetworkImage-LICENSE.txt.
 - swift-cmark / cmark-gfm 0.7.1
   See swift-cmark-COPYING.txt.
-- Lucide icons
+- Lucide icons (also lucide 1.56.0 in JARVIS documents)
   See LucideIcons-LICENSE.txt.
+- Tailwind CSS browser build (@tailwindcss/browser 4.3.3), in JARVIS documents
+  See TailwindCSS-LICENSE.txt.
+- Basecoat (basecoat-css 1.1.0), in JARVIS documents
+  See Basecoat-LICENSE.txt.
+- Chart.js 4.5.1, in JARVIS documents
+  See ChartJS-LICENSE.txt.

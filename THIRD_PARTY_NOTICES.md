@@ -5,6 +5,21 @@
 JARVIS is a fork of Hermex (https://github.com/uzairansaruzi/hermex) by Uzair Ansar, used under
 the MIT License. See `LICENSE`.
 
+## JARVIS documents kit
+
+Every JARVIS document (`HermesMobile/Features/Documents/JarvisDocumentKit.swift`) loads these
+libraries, unmodified, from `HermesMobile/Resources/DocumentKit/`. The app patches one line of the
+Tailwind build when it loads it (see `JarvisDocumentKit.tailwind`). Their licenses are in
+`HermesMobile/Resources/ThirdPartyNotices/`.
+
+- Tailwind CSS browser build, `@tailwindcss/browser` 4.3.3, Copyright Tailwind Labs, Inc., MIT
+  License (https://github.com/tailwindlabs/tailwindcss).
+- Basecoat, `basecoat-css` 1.1.0, Copyright Ronan Berder, MIT License
+  (https://github.com/hunvreus/basecoat).
+- Chart.js 4.5.1, Copyright Chart.js Contributors, MIT License (https://github.com/chartjs/Chart.js).
+- Lucide 1.56.0, Copyright Lucide Contributors, ISC License, with parts from Feather, MIT License
+  (https://github.com/lucide-icons/lucide).
+
 ## LiveKit Agents UI: AgentAudioVisualizerAura
 
 The voice screen's Aura visualizer (`HermesMobile/Features/Calls/JarvisAuraVisualizer.swift`) is a
