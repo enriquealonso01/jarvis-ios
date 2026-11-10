@@ -292,11 +292,12 @@ import XCTest
 
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello.", "Sent from Desktop"])
         // The drain sends the queued prompt on the reconnect; its pending row is
-        // replaced by the submit's own sent row.
-        await waitUntil("the drain sends the queued prompt") { wire.methods.contains("prompt.submit") }
+        // replaced by the submit's own sent row. (The wire's method list is not
+        // observable, so the wait rides the row's replacement instead.)
         await waitUntil("the queued row is replaced by the sent one") {
             chat.model.messages.contains { $0.content == "Still there?" && $0.displayKind != TextMessageOutbox.pendingDisplayKind }
         }
+        XCTAssertTrue(wire.methods.contains("prompt.submit"))
     }
 
     /// A session opening keeps its transcript empty — the loading skeleton — until the
