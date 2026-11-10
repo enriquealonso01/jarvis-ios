@@ -3487,6 +3487,7 @@ final class ChatViewModel {
     // MARK: Offline-first text outbox
 
     @ObservationIgnored private var isDrainingTextOutbox = false
+    @ObservationIgnored private var wasViewingCachedData = false
 
     private var textOutboxChatKey: String? {
         hermesTurn.map { TextMessageOutbox.chatKey(for: $0.currentDraftKey) }
@@ -8282,6 +8283,7 @@ extension ChatViewModel: HermesChatTurnDelegate {
         // retry or a later read succeeds. A session's copy shown while it connects goes even
         // then: the rebuild holds the running turn the frames it releases next continue, and
         // the failure, reported after them, shows the cache again where it would offline.
+        wasViewingCachedData = isViewingCachedData
         if isViewingCachedData {
             // A Bot Chat whose history read failed keeps its cached copy until a read succeeds.
             guard transcript.newestCoverage != nil else { return }
@@ -8309,6 +8311,11 @@ extension ChatViewModel: HermesChatTurnDelegate {
         if let title = transcript.title { applyLiveActivitySessionTitle(title) }
         if !messages.isEmpty { transcriptRelayoutScrollToken += 1 }
         cacheHermesHistory(transcript)
+        // A reconnect's rebuild is what finally clears a cached offline transcript; the
+        // connection-state drain fired too early, while the cache was still showing.
+        if wasViewingCachedData, !isViewingCachedData {
+            Task { [weak self] in await self?.drainTextOutbox() }
+        }
     }
 
     func hermesPrependHistory(_ transcript: HermesChatTranscript) {
