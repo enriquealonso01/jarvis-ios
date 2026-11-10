@@ -438,9 +438,10 @@ import Observation
 
     // MARK: Shortcuts
 
-    /// A list that read the host and then lost it, closed or dropped, holds a Shortcut's new
-    /// chat again (#1180) until its next read, rather than opening a chat on a host it can't reach.
-    func testANewChatWaitsAgainAfterTheListLosesTheHost() async {
+    /// A list that read the host and then lost it, closed or dropped, still opens a Shortcut's
+    /// new chat at once (#1180) — offline-first, locally, as a new chat that queues its first
+    /// message — and it opens the same way once the list reads the host again.
+    func testANewChatOpensLocallyAfterTheListLosesTheHost() async {
         let wire = HermesSessionListWire()
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a")])]
         let list = makeList(wire)
@@ -452,21 +453,23 @@ import Observation
 
         list.closeHermes()
         XCTAssertFalse(list.isHermesLive)
-        XCTAssertNil(chat(), "Held once the list closes its connection")
+        XCTAssertEqual(chat()?.target, .new(profile: "research"),
+                       "Opens locally once the list closes its connection")
         await list.openHermes()
         XCTAssertEqual(chat()?.target, .new(profile: "research"))
 
         wire.onDisconnect?(BotFailure.transport)
         XCTAssertFalse(list.isHermesLive)
-        XCTAssertNil(chat(), "Held once the list's socket drops")
+        XCTAssertEqual(chat()?.target, .new(profile: "research"),
+                       "Opens locally once the list's socket drops")
         await list.openHermes()
         XCTAssertEqual(chat()?.target, .new(profile: "research"))
     }
 
-    /// A Shortcut's new chat arriving while a cached chat covers the paused list (#1180) closes it
-    /// at once, so the list shows and reads the host again (its appearing reopens it), and the new
-    /// chat opens after that read rather than waiting for the user to go back to Sessions.
-    func testAHeldNewChatOverACachedChatOpensAfterTheListReadsAgain() async {
+    /// A Shortcut's new chat arriving while a cached chat covers the paused list (#1180) closes
+    /// it at once and opens offline — a local new chat that queues its first message — and the
+    /// list still reads the host again (its appearing reopens it), with the same chat after it.
+    func testAHeldNewChatOverACachedChatOpensAtOnceOffline() async {
         let wire = HermesSessionListWire()
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a")])]
         wire.connectFailure = BotFailure.transport
@@ -478,8 +481,9 @@ import Observation
         list.pauseHermes()
         let request = HermesNewChatDestination(server: server, profile: "research")
 
-        XCTAssertFalse(covers.open(request, on: entry, listed: list.hermesProfile, isLive: list.isHermesLive))
-        XCTAssertNil(covers.chat, "The cached chat closes before the list is live")
+        XCTAssertTrue(covers.open(request, on: entry, listed: list.hermesProfile, isLive: list.isHermesLive),
+                      "The new chat opens locally, with no live read")
+        XCTAssertEqual(covers.chat?.target, .new(profile: "research"))
 
         wire.connectFailure = nil
         await list.openHermes()
@@ -488,9 +492,9 @@ import Observation
     }
 
     /// A share arriving while a new-session chat covers a list the trip to the sharing app closed
-    /// (#1212) closes that chat at once, so the list shows and reads the host again, rather than
-    /// waiting for the user to go back to Sessions; the share then opens as a new session.
-    func testAShareOverAChatTheBackgroundClosedOpensAfterTheListReadsAgain() async {
+    /// (#1212) closes that chat at once and opens offline as a new session — a local chat that
+    /// queues its share — rather than waiting for the user to go back to Sessions.
+    func testAShareOverAChatTheBackgroundClosedOpensAtOnceOffline() async {
         let wire = HermesSessionListWire()
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a")])]
         let list = makeList(wire)
@@ -503,15 +507,19 @@ import Observation
         let share = SharedImportReservation(itemID: "item", reservationID: "reservation", createdAt: Date(),
                                             sharedImport: SharedImport(draft: "Read this", attachments: []))
 
-        XCTAssertNil(covers.open(share, on: entry, listed: list.hermesProfile, isLive: list.isHermesLive))
-        XCTAssertNil(covers.chat, "The covering chat closes before the list is live")
-
-        await list.openHermes()
         guard case .chat(let chat)? = covers.open(share, on: entry, listed: list.hermesProfile,
-                                                   isLive: list.isHermesLive) else {
-            return XCTFail("The share opens a new session once the list reads the host")
+                                                  isLive: list.isHermesLive) else {
+            return XCTFail("The share opens a new session at once, offline")
         }
         XCTAssertEqual(chat.target, .new(profile: "default"))
+        XCTAssertNil(covers.chat, "The covering chat closed when the share opened")
+
+        await list.openHermes()
+        guard case .chat(let afterRead)? = covers.open(share, on: entry, listed: list.hermesProfile,
+                                                       isLive: list.isHermesLive) else {
+            return XCTFail("The share opens a new session once the list reads the host")
+        }
+        XCTAssertEqual(afterRead.target, .new(profile: "default"))
     }
 
     // MARK: Fixture

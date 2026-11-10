@@ -435,8 +435,10 @@ final class SharedDraftStoreTests: XCTestCase {
         let share = reservation("  Read this  ", [photo, pdf])
 
         XCTAssertNil(share.hermesOpening(on: entry, listed: nil, isLive: true), "Waits for New Session's Profile")
-        XCTAssertNil(share.hermesOpening(on: entry, listed: "default", isLive: false),
-                     "Waits for the list's live read of the host, as a Shortcut's new session does")
+        guard case .chat(let offline)? = share.hermesOpening(on: entry, listed: "default", isLive: false) else {
+            return XCTFail("A share opens a new session offline, as a Shortcut's new session does")
+        }
+        XCTAssertEqual(offline.target, .new(profile: "default"))
         guard case .chat(let chat)? = share.hermesOpening(on: entry, listed: "default", isLive: true) else {
             return XCTFail("A share opens a new session")
         }
