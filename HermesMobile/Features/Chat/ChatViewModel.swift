@@ -3589,8 +3589,7 @@ final class ChatViewModel {
     /// its place, so keeping it would show the prompt twice.
     private func restoreFailedQueuedTextRows() {
         guard let chatKey = textOutboxChatKey else { return }
-        for entry in textOutbox.entries(for: chatKey) where entry.failed,
-            !messages.contains(where: { $0.messageId == entry.messageID }) {
+        for entry in textOutbox.entries(for: chatKey) where entry.failed && !messages.contains(where: { $0.messageId == entry.messageID }) {
             messages.append(TextMessageOutbox.pendingMessage(for: entry))
         }
     }
