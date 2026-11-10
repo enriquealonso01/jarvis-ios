@@ -2764,7 +2764,10 @@ final class ChatViewModel {
             // A submit the connection refused (NotSent: the engine dropped
             // between the route attempt and the send) queues instead of
             // bouncing the draft, unless its answer may simply be lost (#508).
-            if !sent, hermesTurn.engine.connectionState != .connected, !isHermesSubmissionUncertain {
+            // A refused sign-in never queues: the prompt was refused, not held
+            // back by the network, and it is not sent again unasked (#884).
+            if !sent, hermesTurn.engine.connectionState != .connected, !isHermesSubmissionUncertain,
+               !hermesTurn.needsSignIn {
                 return enqueuePendingText(draft)
             }
             return sent
@@ -3075,7 +3078,7 @@ final class ChatViewModel {
         // before the network await, and rolls it back on failure below.
         messages.removeAll { $0.messageId == Self.firstPromptPreviewMessageID }
         let sent = await submitHermesPrompt(text, mode: .send, to: hermes)
-        if !sent, !isHermesSubmissionUncertain {
+        if !sent, !isHermesSubmissionUncertain, !hermes.needsSignIn {
             // The attach's connection did not carry the prompt: it stays, as a
             // queued row, and the next attach drains it. (`submitHermesPrompt`
             // rolled its own row back on failure.) A lost answer (#508) is not
@@ -3576,6 +3579,18 @@ final class ChatViewModel {
     private func restoreQueuedTextRows() {
         guard let chatKey = textOutboxChatKey else { return }
         for entry in textOutbox.entries(for: chatKey) where !messages.contains(where: { $0.messageId == entry.messageID }) {
+            messages.append(TextMessageOutbox.pendingMessage(for: entry))
+        }
+    }
+
+    /// Only the chat's *failed* queued prompts come back after a transcript replace: a
+    /// refused row owns its Retry and Delete wherever the rebuild lands. An optimistic
+    /// row does not — the connect's drain resubmits it, and the submit's own row takes
+    /// its place, so keeping it would show the prompt twice.
+    private func restoreFailedQueuedTextRows() {
+        guard let chatKey = textOutboxChatKey else { return }
+        for entry in textOutbox.entries(for: chatKey) where entry.failed,
+            !messages.contains(where: { $0.messageId == entry.messageID }) {
             messages.append(TextMessageOutbox.pendingMessage(for: entry))
         }
     }
@@ -7877,9 +7892,10 @@ final class ChatViewModel {
         var previous: String?
         for message in shown {
             // JARVIS: a voice note waiting to be sent (`VoiceNoteOutbox`) is this phone's row too.
+            // A queued text (`TextMessageOutbox`) is not: no replace carries it — the chat
+            // re-adds the queue's rows itself, or the connect's drain sends them.
             if message.messageId?.hasPrefix(hermesBackgroundCardPrefix) == true || message.role?.hasPrefix("local_") == true
-                || message.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true
-                || message.messageId?.hasPrefix(TextMessageOutbox.pendingMessagePrefix) == true {
+                || message.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true {
                 own.append((previous, message))
             } else {
                 previous = message.messageId ?? "" // A row without an id is never found again.
@@ -8278,7 +8294,7 @@ extension ChatViewModel: HermesChatTurnDelegate {
         messagesOffset = Self.hermesMessagesOffset(keeping: messages, at: messagesOffset, in: next)
         messages = next
         restoreQueuedVoiceNoteRows()
-        restoreQueuedTextRows()
+        restoreFailedQueuedTextRows()
         transcriptRevision &+= 1
         hasOlderMessages = transcript.hasOlder
         setCompletedToolCallGroups(transcript.toolCallGroups)
