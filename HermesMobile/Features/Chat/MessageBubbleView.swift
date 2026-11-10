@@ -58,6 +58,7 @@ struct MessageBubbleView: View {
         liveTokensPerSecond: Double? = nil,
         onAskHermex: @escaping (String) -> Void = { _ in },
         onReplyToJarvis: @escaping (String) -> Void = { _ in },
+        onPendingTextAction: ((PendingTextAction) -> Void)? = nil,
         contextMenuActions: [ChatMessageActionItem] = [],
         textOnly: Bool = false
     ) {
@@ -75,6 +76,7 @@ struct MessageBubbleView: View {
         self.liveTokensPerSecond = liveTokensPerSecond
         self.onAskHermex = onAskHermex
         self.onReplyToJarvis = onReplyToJarvis
+        self.onPendingTextAction = onPendingTextAction
         self.contextMenuActions = contextMenuActions
     }
 
