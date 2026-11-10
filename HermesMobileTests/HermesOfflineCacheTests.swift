@@ -276,9 +276,14 @@ import XCTest
         XCTAssertTrue(chat.model.showsOfflineCache, "the transcript shown while connecting becomes the offline state")
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello."])
         XCTAssertEqual(chat.model.messages.map(\.rowID), [1, 2])
-        let sent = await chat.model.sendMessage("Still there?")
-        XCTAssertFalse(sent)
-        XCTAssertEqual(chat.model.sendErrorMessage, "Reconnect to the server to send a message.")
+        // Offline-first: the prompt queues instead of refusing; the row shows
+        // at once with its clock, and nothing goes out while offline.
+        let queued = await chat.model.sendMessage("Still there?")
+        XCTAssertTrue(queued)
+        XCTAssertNil(chat.model.sendErrorMessage)
+        XCTAssertEqual(chat.model.messages.last?.content, "Still there?")
+        XCTAssertEqual(chat.model.messages.last?.displayKind, TextMessageOutbox.pendingDisplayKind)
+        XCTAssertFalse(wire.methods.contains("prompt.submit"))
 
         wire.connectFailure = nil
         wire.rows = [row(1, "user", "Hi"), row(2, "assistant", "Hello."), row(3, "user", "Sent from Desktop")]
@@ -286,7 +291,12 @@ import XCTest
         await waitUntil("reattached") { !chat.model.isViewingCachedData }
 
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello.", "Sent from Desktop"])
-        XCTAssertFalse(wire.methods.contains("prompt.submit"))
+        // The drain sends the queued prompt on the reconnect; its pending row is
+        // replaced by the submit's own sent row.
+        await waitUntil("the drain sends the queued prompt") { wire.methods.contains("prompt.submit") }
+        await waitUntil("the queued row is replaced by the sent one") {
+            chat.model.messages.contains { $0.content == "Still there?" && $0.displayKind != TextMessageOutbox.pendingDisplayKind }
+        }
     }
 
     /// A session opening keeps its transcript empty — the loading skeleton — until the
@@ -311,6 +321,58 @@ import XCTest
 
         XCTAssertFalse(chat.model.isViewingCachedData)
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello.", "Sent from Desktop"])
+        XCTAssertFalse(wire.methods.contains("prompt.submit"))
+    }
+
+    /// A routed chat's first prompt shows sent-style with the routing row from the
+    /// moment its chat attaches — through `session.create` — until the submit's own
+    /// row replaces the preview, never a blank transcript.
+    func testARoutedChatsFirstPromptShowsTheRoutingRowWhileItAttaches() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [])
+        let attach = Gate()
+        wire.connectGate = attach
+        // The routed chat: a new session in the destination profile with its first prompt.
+        let chat = makeChat(wire, target: .new(profile: "ios"))
+        chat.model.queueFirstHermesPrompt("Fix my widget", notice: nil)
+        let load = Task { await chat.model.loadMessages(modelContext: context) }
+
+        // While the attach is held: the routing state is on and the prompt shows
+        // sent-style as its preview row.
+        await waitUntil("the routing state shows") { chat.model.isRoutingFirstPrompt }
+        XCTAssertTrue(chat.model.messages.contains { $0.content == "Fix my widget" },
+                      "the first prompt shows while its chat attaches")
+        XCTAssertEqual(chat.model.messages.filter { $0.messageId == "local-firstprompt-preview" }.count, 1,
+                       "the preview row carries the fixed preview id")
+        XCTAssertFalse(wire.methods.contains("session.create"))
+
+        attach.open()
+        await load.value
+
+        // The submit's own row replaces the preview; the routing state is off.
+        XCTAssertFalse(chat.model.isRoutingFirstPrompt)
+        XCTAssertFalse(chat.model.messages.contains { $0.messageId == "local-firstprompt-preview" })
+        XCTAssertEqual(chat.model.messages.map(\.content), ["Fix my widget"])
+        XCTAssertTrue(wire.methods.contains("session.create"))
+        XCTAssertTrue(wire.methods.contains("prompt.submit"))
+    }
+
+    /// A routed chat whose host is unreachable keeps its first prompt: it becomes a
+    /// queued row — the outbox owns it — with the chat's opening notice above it.
+    func testARoutedChatsFirstPromptQueuesWhenTheHostIsUnreachable() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [])
+        wire.connectFailure = URLError(.cannotConnectToHost)
+        let chat = makeChat(wire, target: .new(profile: "ios"))
+        chat.model.queueFirstHermesPrompt("Fix my widget", notice: "Opened in iOS Builder")
+
+        await chat.model.loadMessages(modelContext: context)
+
+        // The attach failed; the prompt did not leave with it.
+        XCTAssertTrue(chat.model.messages.contains { $0.content == "Opened in iOS Builder" },
+                      "the opening notice shows")
+        let queued = try XCTUnwrap(chat.model.messages.first { $0.content == "Fix my widget" })
+        XCTAssertEqual(queued.displayKind, TextMessageOutbox.pendingDisplayKind)
         XCTAssertFalse(wire.methods.contains("prompt.submit"))
     }
 
@@ -826,6 +888,10 @@ import XCTest
         let model = ChatViewModel(
             session: SessionSummary(profile: "default"), server: server, streamingScrollCoalescingDelayNanoseconds: 0,
             draftStore: ChatDraftStore(persistence: BotMemoryDrafts(), debounceDuration: .seconds(60)),
+            textOutbox: TextMessageOutbox(url: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true).appendingPathComponent("outbox.json")),
+            localPendingChats: LocalPendingChatRegistry(url: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true).appendingPathComponent("chats.json")),
             backend: .hermes(HermesChatTurnCoordinator(engine: engine, isNetworkAvailable: { true }))
         )
         model.hermesBotChatRoot = botChatRoot
@@ -919,6 +985,10 @@ import XCTest
         case "session.events.since":
             if let replayFailure { throw replayFailure }
             return BotFixtureWire.replay(latest: 0)
+        case "prompt.submit":
+            return .object(["status": .string("streaming")])
+        case "session.create":
+            return .object(["stored_session_id": .string(tip), "session_id": .string("runtime")])
         default: throw BotFailure.unsupported
         }
     }

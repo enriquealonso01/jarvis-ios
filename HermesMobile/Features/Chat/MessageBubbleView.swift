@@ -38,6 +38,8 @@ struct MessageBubbleView: View {
     let liveTokensPerSecond: Double?
     let onAskHermex: (String) -> Void
     let onReplyToJarvis: (String) -> Void
+    /// Retry/Delete on a failed queued text row (`TextMessageOutbox`). Nil hides the actions.
+    var onPendingTextAction: ((PendingTextAction) -> Void)? = nil
     /// Long-press actions, attached to the message content only so the empty
     /// gutter beside a user bubble does not open its menu.
     let contextMenuActions: [ChatMessageActionItem]
@@ -110,6 +112,57 @@ struct MessageBubbleView: View {
         VoiceNoteOutbox.entryID(fromMessageID: message.messageId) != nil
     }
 
+    /// A queued text row (`TextMessageOutbox`): sent on this phone, waiting for the line.
+    private var pendingTextEntryID: String? {
+        TextMessageOutbox.entryID(fromMessageID: message.messageId)
+    }
+
+    private var isPendingText: Bool { pendingTextEntryID != nil }
+
+    /// The queued row's status, from the display kind the outbox sets: a clock
+    /// while pending, a red exclamation with Retry and Delete once refused.
+    private var isFailedPendingText: Bool {
+        message.displayKind == TextMessageOutbox.pendingFailedDisplayKind
+    }
+
+    /// The status line under a queued text row: a clock while it waits, or the
+    /// failure mark with its Retry and Delete. Static marks only, no animation.
+    @ViewBuilder
+    private var pendingTextStatus: some View {
+        if isFailedPendingText {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .imageScale(.small)
+                    .foregroundStyle(.red)
+                Button {
+                    onPendingTextAction?(.retry)
+                } label: {
+                    Text("Retry")
+                        .font(.caption.weight(.semibold))
+                }
+                Button(role: .destructive) {
+                    onPendingTextAction?(.delete)
+                } label: {
+                    Text("Delete")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(String(localized: "Message not sent"))
+        } else {
+            Label {
+                Text("Waiting to send…")
+                    .font(.caption)
+            } icon: {
+                Image(systemName: "clock")
+                    .imageScale(.small)
+            }
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(String(localized: "Waiting to send"))
+        }
+    }
+
     /// The voice note's audio from this phone, or a note that it lives on the phone that sent it.
     @ViewBuilder
     private var localVoiceNotePlayer: some View {
@@ -149,6 +202,10 @@ struct MessageBubbleView: View {
 
             if isVoiceNote {
                 voiceTranscriptButton
+            }
+
+            if isPendingText {
+                pendingTextStatus
             }
 
             // When the attachment-path line is hidden, an attachment-only

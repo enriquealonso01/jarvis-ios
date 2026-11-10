@@ -136,6 +136,10 @@ struct HermesSessionListView: View {
                 projectPendingRename: $covers.renamingProject, openDestination: open, switchActiveProfile: { _ in },
                 presentProjectCreation: { covers.creatingProject = HermesProjectCreation(folder: "") }
             )
+            // This phone's offline-born chats first, each opening the chat
+            // holding its queued messages. A search looks for the host's
+            // sessions, not these.
+            if !isSearching { localPendingChatsSection }
             SessionListRowsSection(
                 viewModel: viewModel,
                 searchText: searchText,
@@ -396,7 +400,9 @@ struct HermesSessionListView: View {
         Button("New Session", systemImage: "square.and.pencil") {
             if workspaces.isEmpty { startNewSession(in: nil) } else { isChoosingWorkspace = true }
         }
-        .disabled(viewModel.isViewingCachedData || profile == nil)
+        // Offline-first: a new chat opens locally with no network; its first
+        // message queues and the first connect drains it.
+        .disabled(profile == nil)
     }
 
     private var workspaceSheet: some View {
@@ -458,6 +464,42 @@ struct HermesSessionListView: View {
         guard let profile else { return }
         covers.chat = HermesSessionChat(server: entry.server, connection: entry.connection,
                                         target: .new(profile: profile, cwd: folder))
+    }
+
+    /// This phone's offline-born chats (Feature: offline-first): each shows as a row
+    /// above the host's sessions, clock-marked, opening the chat that holds its
+    /// queued messages. The rows leave as each chat's messages drain.
+    private var localPendingChatsSection: some View {
+        // Draft keys for new chats key by server URL + Profile (`ConversationTarget.draftKey`),
+        // so at most one offline chat per Profile shows here, as drafts already work.
+        let pending = LocalPendingChatRegistry.shared.all().filter {
+            $0.chatKey.serverID == entry.server.absoluteString && $0.profile == profile
+        }
+        return ForEach(pending) { chat in
+            Button {
+                covers.chat = HermesSessionChat(
+                    server: entry.server, connection: entry.connection,
+                    target: .new(profile: chat.profile, cwd: chat.cwd))
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "clock")
+                        .imageScale(.small)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("New Chat")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                        Text("Waiting to send")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "New chat, waiting to send"))
+        }
     }
 
     private var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

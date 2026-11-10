@@ -536,10 +536,11 @@ struct ChatView: View {
             ),
             // A Hermes prompt whose answer was lost holds Send until the chat reattaches (#508), and
             // a request card's answer holds it while out, so Steer and Queue send no competing
-            // Continue (#1141). So does the chat's offline presentation.
+            // Continue (#1141). A Hermes chat offline queues instead, so the cache view holds Send
+            // only for the webui path.
             isSending: viewModel.isStartingChat || viewModel.isSendingVoiceNote || viewModel.isHermesSubmissionUncertain
                 || viewModel.isUndoingExchange || viewModel.hermesRequests?.answeringRequestID != nil
-                || viewModel.showsOfflineCache,
+                || (!isHermesSession && viewModel.showsOfflineCache),
             isCompressingSession: viewModel.isCompressingSession,
             isWaitingForStream: viewModel.activeStreamID != nil,
             isCancellingStream: viewModel.isCancellingStream,
@@ -740,15 +741,20 @@ struct ChatView: View {
     private var composerReadOnlyMessage: String? {
         Self.composerReadOnlyMessage(
             for: session,
-            isViewingCachedData: viewModel.showsOfflineCache
+            isViewingCachedData: viewModel.showsOfflineCache,
+            allowsOfflineQueue: isHermesSession
         )
     }
 
     static func composerReadOnlyMessage(
         for session: SessionSummary,
-        isViewingCachedData: Bool
+        isViewingCachedData: Bool,
+        allowsOfflineQueue: Bool = false
     ) -> String? {
         if isViewingCachedData {
+            // A Hermes chat queues offline: the composer stays editable and the
+            // offline banner says the messages send when reconnected.
+            if allowsOfflineQueue { return nil }
             return String(localized: "Reconnect to send messages.")
         }
         if session.isSessionReadOnly {
@@ -950,7 +956,7 @@ struct ChatView: View {
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
                     if viewModel.showsOfflineCache {
-                        ChatOfflineCacheBanner()
+                        ChatOfflineCacheBanner(allowsOfflineQueue: isHermesSession)
                     }
 
                     listenPlaybackBar
@@ -2033,6 +2039,7 @@ struct ChatView: View {
             showsThinkingAndToolCards: thinkingAndToolCards.showsCards,
             workingRowStartedAt: workingRowStartedAt,
             isRoutingFirstPrompt: viewModel.isRoutingFirstPrompt,
+            isStartingChat: viewModel.isStartingChat,
             requestWithdrawal: viewModel.hermesRequests?.withdrawal,
             showsScrollToBottomButton: showsScrollToBottomButton,
             shouldFollowLatestMessage: shouldFollowLatestMessage,
@@ -2112,6 +2119,9 @@ struct ChatView: View {
             onCopy: { context in
                 UIPasteboard.general.string = context.copyText
                 ChatHaptics.copied(isEnabled: isHapticsEnabled)
+            },
+            onPendingTextAction: { action, message in
+                viewModel.performPendingTextAction(action, on: message)
             },
             inlineCommitContext: inlineCommitContext,
             onInlineCommit: {
