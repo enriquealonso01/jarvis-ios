@@ -1892,8 +1892,12 @@ final class SessionListViewModel {
 
     /// A chat opened from this list closed on `key`. The next list read marks it read again
     /// when the host says it is unread: a reply that finished while it was open was seen.
+    /// The socket stays, so a list the chat still covers keeps this note for its reopening.
+    /// A read already out began before the chat closed, so its pages predate the reply:
+    /// the bump discards it and the read asked here reads fresh pages.
     func noteHermesReturn(from key: String) {
         hermesReturnedFrom.insert(key)
+        hermesReadSerial += 1
         if hermesIsListening { requestHermesReload() }
     }
 

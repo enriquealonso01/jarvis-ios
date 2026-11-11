@@ -185,6 +185,54 @@ import Observation
         XCTAssertEqual(list.sessions.map { list.isUnread($0) }, [false, true])
     }
 
+    /// The list rests while a chat covers it (build 96's stale list): a `sessions.changed`
+    /// that lands covered reads nothing, and the open that resumes listening reads the
+    /// changed rows at once — live again with no manual refresh.
+    func testAChangedListReadsAgainOnceTheChatThatCoveredItCloses() async throws {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: false)])]
+        let list = makeList(wire)
+        await list.openHermes()
+        XCTAssertEqual(list.sessions.count, 1)
+
+        // The chat covers the list: events are ignored, however many arrive.
+        list.pauseHermes()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a"), HermesSessionRow(id: "b")])]
+        for _ in 0..<3 { wire.emit("sessions.changed") }
+        await list.noteHermesReturn(from: "a")
+        await waitUntil("no read while covered") { wire.pageReads.count == 1 && list.sessions.count == 1 }
+
+        // The chat closed: the list listens again and reads at once.
+        await list.openHermes()
+        await waitUntil("fresh rows") { list.sessions.count == 2 }
+        XCTAssertEqual(wire.pageReads.map(\.offset), [0, 0])
+    }
+
+    /// A list read that began before the chat closed carries pages from before the reply, so
+    /// it must never settle: the return discards it, and the read that follows marks the
+    /// seen chat read again rather than showing the host's stale unread mark.
+    func testAReadBegunBeforeTheChatClosedIsDiscardedNotApplied() async throws {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: false)])]
+        let list = makeList(wire)
+        await list.openHermes()
+
+        // A read is out when the chat closes; the host has since marked the seen chat unread.
+        wire.holdsPages = true
+        wire.emit("sessions.changed")
+        await waitUntil("read parked") { wire.pageReads.count == 2 }
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: true)])]
+        list.noteHermesReturn(from: "a")
+        wire.holdsPages = false
+        wire.release()
+
+        await waitUntil("marked read again") { wire.unreadWrites.count == 1 }
+        XCTAssertEqual(wire.unreadWrites.map(\.unread), [false], "the seen chat is marked read, not unread")
+        await waitUntil("fresh read applied") {
+            list.sessions.count == 1 && list.sessions.first.map { !list.isUnread($0) } == true
+        }
+    }
+
     // MARK: Live state
 
     /// `session.active_list` marks the listed rows by session key; idle and other Profiles'
