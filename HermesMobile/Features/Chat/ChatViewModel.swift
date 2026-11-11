@@ -3007,15 +3007,18 @@ final class ChatViewModel {
     /// Attaches the Hermes session; its newest history page and live state fill the transcript.
     /// After a failed history read (the chat's retry, a pull to refresh) it reads the page again.
     private func loadHermesSession(_ hermes: HermesChatTurnCoordinator) async {
-        isLoading = messages.isEmpty
-        errorMessage = nil
         // A routed chat's first send starts here: from the re-attach through
         // `session.create` to the first submit, the transcript shows the
-        // "Choosing the right JARVIS" row over the sent prompt rather than
-        // an empty transcript.
+        // "Starting the chat" row over the sent prompt rather than an empty
+        // transcript. The chat is already assigned; "Choosing the right
+        // JARVIS" (routing) belongs only to the send that picked it.
         let showsFirstPromptLoading = pendingFirstHermesPrompt != nil && messages.isEmpty
+        // The loading skeleton would cover the preview row; the row is the
+        // loading indication for this window.
+        isLoading = messages.isEmpty && !showsFirstPromptLoading
+        errorMessage = nil
         if showsFirstPromptLoading {
-            isRoutingFirstPrompt = true
+            isStartingChat = true
             // The prompt shows sent-style while its chat attaches; the real
             // submit's row replaces it.
             if let text = pendingFirstHermesPrompt {
@@ -3026,7 +3029,7 @@ final class ChatViewModel {
         }
         defer {
             isLoading = false
-            if showsFirstPromptLoading { isRoutingFirstPrompt = false }
+            if showsFirstPromptLoading { isStartingChat = false }
         }
         let retriesHistory = hermes.hasHistoryFailure
         await hermes.activate()

@@ -953,6 +953,7 @@ struct ChatRoutingRowView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(String(localized: "JARVIS is choosing the right profile for your message"))
+        .accessibilityIdentifier("chat.routingRow")
         .padding(.leading, 4)
         .padding(.vertical, 6)
     }

@@ -140,14 +140,21 @@ struct ChatTranscriptView: View {
     var turnOutcome: HermesTurnOutcomeRow? = nil
 
     /// What stands in for a transcript with no rows. Nil draws the transcript, as for a Hermes
-    /// turn that failed before the host saved any row, whose outcome row still shows (#1139).
+    /// turn that failed before the host saved any row, whose outcome row still shows (#1139),
+    /// or while a first send's routing/starting row stands in for the transcript.
     enum Placeholder: Equatable {
         case loading
         case loadFailed(String)
         case startPrompt
 
-        init?(isLoading: Bool, errorMessage: String?, isEmpty: Bool, showsTurnOutcome: Bool) {
+        init?(isLoading: Bool, errorMessage: String?, isEmpty: Bool, showsTurnOutcome: Bool,
+              isStartingFirstSend: Bool = false) {
             guard isEmpty else { return nil }
+            // A first send's tail row ("Choosing the right JARVIS" / "Starting
+            // the chat") is the transcript's only content while it runs: draw
+            // the scroll view so the row shows at once, not a placeholder over
+            // an empty transcript.
+            guard !isStartingFirstSend else { return nil }
             if isLoading {
                 self = .loading
             } else if let errorMessage {
@@ -162,7 +169,8 @@ struct ChatTranscriptView: View {
 
     var body: some View {
         switch Placeholder(isLoading: isLoading, errorMessage: errorMessage, isEmpty: messages.isEmpty,
-                           showsTurnOutcome: turnOutcome != nil) {
+                           showsTurnOutcome: turnOutcome != nil,
+                           isStartingFirstSend: isRoutingFirstPrompt || isStartingChat) {
         case .loading?:
             ChatTranscriptLoadingSkeletonView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
