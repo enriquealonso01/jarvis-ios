@@ -330,9 +330,10 @@ import XCTest
         XCTAssertFalse(wire.methods.contains("prompt.submit"))
     }
 
-    /// A routed chat's first prompt shows sent-style with the routing row from the
+    /// A routed chat's first prompt shows sent-style with the starting row from the
     /// moment its chat attaches — through `session.create` — until the submit's own
-    /// row replaces the preview, never a blank transcript.
+    /// row replaces the preview, never a blank transcript. The chat is already
+    /// assigned: the "Choosing the right JARVIS" routing state stays off.
     func testARoutedChatsFirstPromptShowsTheRoutingRowWhileItAttaches() async throws {
         let context = try makeContext()
         let wire = HermesOfflineWire(rows: [])
@@ -343,9 +344,14 @@ import XCTest
         chat.model.queueFirstHermesPrompt("Fix my widget", notice: nil)
         let load = Task { await chat.model.loadMessages(modelContext: context) }
 
-        // While the attach is held: the routing state is on and the prompt shows
-        // sent-style as its preview row.
-        await waitUntil("the routing state shows") { chat.model.isRoutingFirstPrompt }
+        // While the attach is held: the chat is starting (never routing — the
+        // profile is already chosen) and the prompt shows sent-style as its
+        // preview row.
+        await waitUntil("the starting state shows") { chat.model.isStartingChat }
+        XCTAssertFalse(chat.model.isRoutingFirstPrompt,
+                       "the chat is already assigned; it is not choosing a JARVIS")
+        XCTAssertFalse(chat.model.isLoading,
+                       "the skeleton would cover the preview row")
         XCTAssertTrue(chat.model.messages.contains { $0.content == "Fix my widget" },
                       "the first prompt shows while its chat attaches")
         XCTAssertEqual(chat.model.messages.filter { $0.messageId == "local-firstprompt-preview" }.count, 1,
@@ -355,11 +361,73 @@ import XCTest
         attach.open()
         await load.value
 
-        // The submit's own row replaces the preview; the routing state is off.
+        // The submit's own row replaces the preview; both first-send states are off.
         XCTAssertFalse(chat.model.isRoutingFirstPrompt)
+        XCTAssertFalse(chat.model.isStartingChat)
         XCTAssertFalse(chat.model.messages.contains { $0.messageId == "local-firstprompt-preview" })
         XCTAssertEqual(chat.model.messages.map(\.content), ["Fix my widget"])
         XCTAssertTrue(wire.methods.contains("session.create"))
+        XCTAssertTrue(wire.methods.contains("prompt.submit"))
+    }
+
+    /// A new general chat's first send shows the routing state — "Choosing the right
+    /// JARVIS" — the moment Send is tapped, before and while the box's classifier
+    /// answers, and never once the chat has been assigned (the routed chat starts,
+    /// it does not route again).
+    func testAFirstSendShowsRoutingImmediatelyWhileTheClassifierAnswers() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [])
+        let chat = makeChat(wire, target: .new(profile: "default"))
+        await chat.model.loadMessages(modelContext: context)
+        XCTAssertNil(chat.model.routedHermesChat)
+
+        // Hold the classifier: the routing state must be on the instant the send
+        // starts, with nothing sent to the host yet.
+        let answered = Gate()
+        JarvisBotRouter.testHook = { _, current in
+            await answered.wait()
+            return JarvisBotRoute(profile: "ios", confidence: 0.95, reason: nil, title: "iOS Builder")
+        }
+        defer { JarvisBotRouter.testHook = nil }
+
+        let send = Task { await chat.model.sendMessage("Fix my widget") }
+        await waitUntil("the routing state shows on send") { chat.model.isRoutingFirstPrompt }
+        XCTAssertFalse(wire.methods.contains("prompt.submit"),
+                       "nothing is submitted while the classifier decides")
+
+        answered.open()
+        let routed = await send.value
+        XCTAssertTrue(routed)
+        XCTAssertFalse(chat.model.isRoutingFirstPrompt,
+                       "routing never outlives the classifier's answer")
+        // The routed chat the send produced carries the prompt and the notice.
+        let target = try XCTUnwrap(chat.model.routedHermesChat)
+        XCTAssertEqual(target.firstPrompt, "Fix my widget")
+        XCTAssertEqual(target.openingNotice, "Opened in iOS Builder")
+    }
+
+    /// A silent box keeps the routing state up for the whole wait, then the send
+    /// proceeds in place: the state never outlives the routing window.
+    func testASilentClassifierShowsRoutingUntilTheSendProceeds() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [])
+        let chat = makeChat(wire, target: .new(profile: "default"))
+        await chat.model.loadMessages(modelContext: context)
+
+        let answered = Gate()
+        JarvisBotRouter.testHook = { _, _ in
+            await answered.wait()
+            return nil
+        }
+        defer { JarvisBotRouter.testHook = nil }
+
+        let send = Task { await chat.model.sendMessage("Fix my widget") }
+        await waitUntil("the routing state shows on send") { chat.model.isRoutingFirstPrompt }
+        answered.open()
+        let sent = await send.value
+        XCTAssertTrue(sent)
+        XCTAssertNil(chat.model.routedHermesChat)
+        XCTAssertFalse(chat.model.isRoutingFirstPrompt)
         XCTAssertTrue(wire.methods.contains("prompt.submit"))
     }
 

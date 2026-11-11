@@ -1892,9 +1892,21 @@ final class SessionListViewModel {
 
     /// A chat opened from this list closed on `key`. The next list read marks it read again
     /// when the host says it is unread: a reply that finished while it was open was seen.
+    /// The socket stays, so a list the chat still covers keeps this note for its reopening.
+    /// A read already out began before the chat closed, so its pages predate the reply:
+    /// the bump discards it and the read asked here reads fresh pages.
     func noteHermesReturn(from key: String) {
         hermesReturnedFrom.insert(key)
+        hermesReadSerial += 1
         if hermesIsListening { requestHermesReload() }
+    }
+
+    /// The list is uncovered with its socket still up: it listens once more and reads at once,
+    /// so a read mark a chat owes and everything that changed while it covered the rows show
+    /// without a manual refresh. A read in flight already asks for one more.
+    func resumeHermes() {
+        hermesIsListening = true
+        if hermesWire != nil { requestHermesReload() }
     }
 
     /// Reads as many pages of each listed Profile as the list holds, plus the page a "Load more"

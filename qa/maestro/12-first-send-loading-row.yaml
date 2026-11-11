@@ -1,0 +1,55 @@
+appId: com.enriquecodes.jarvis
+# Feature: routing/loading — a new chat's first send must show its loading row
+# (local-hermes has no /bridge/route, so routing is skipped and the row reads
+# "Starting the chat") the moment Send is tapped, and the transcript must never
+# sit blank-frozen while the host works. On the production box the same row
+# reads "Choosing the right JARVIS" while the classifier runs.
+name: 12 first send loading row shows immediately
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+# New Session stays disabled while the list still shows cached rows after launch.
+- retry:
+    maxRetries: 3
+    commands:
+      - waitForAnimationToEnd:
+          timeout: 5000
+      - tapOn: New Session
+      - tapOn:
+          text: General
+          optional: true
+      - extendedWaitUntil:
+          visible: Ask anything.*
+          timeout: 10000
+- tapOn: Ask anything.*
+- inputText: Automated QA first send
+# The loading row must be up within seconds of Send — before the host can have
+# started the chat — so the transcript is never blank-frozen on the first send.
+- tapOn:
+    text: Send
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: chat.routingRow
+    timeout: 8000
+- takeScreenshot: 12-routing-row
+# Hermex's one-time notification offer can cover the transcript; answer it if so.
+- extendedWaitUntil:
+    visible: Want a notification.*
+    timeout: 20000
+    optional: true
+- takeScreenshot: 12-notification-offer
+- tapOn:
+    text: Not now
+    optional: true
+# The row leaves once the chat has started: the stub model's first reply is up,
+# the submit settled, and the loading row is gone — it never outlives the chat's start.
+- extendedWaitUntil:
+    visible: Let me run a quick check.*
+    timeout: 60000
+- assertNotVisible:
+    id: chat.routingRow
+- takeScreenshot: 12-started
