@@ -377,6 +377,75 @@ import XCTest
         XCTAssertFalse(wire.methods.contains("prompt.submit"))
     }
 
+    /// A send whose socket write the host refused while the engine still read connected
+    /// queues instead of bouncing the draft (#508's refused-write shape): the prompt never
+    /// went out, so the outbox owns it and the drain sends it on the next connect.
+    func testARefusedWriteQueuesInsteadOfKeepingTheDraft() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [])
+        let chat = makeChat(wire)
+        await chat.model.loadMessages(modelContext: context)
+
+        // The engine reads connected; the write itself refuses.
+        wire.promptFailure = URLError(.networkConnectionLost)
+        let sent = await chat.model.sendMessage("Automated QA ping")
+
+        XCTAssertTrue(sent, "the prompt is queued, not bounced")
+        XCTAssertNil(chat.model.sendErrorMessage)
+        let queued = try XCTUnwrap(chat.model.messages.last { $0.content == "Automated QA ping" })
+        XCTAssertEqual(queued.displayKind, TextMessageOutbox.pendingDisplayKind,
+                       "the queued row shows in place of the optimistic one")
+        XCTAssertFalse(wire.methods.contains("prompt.submit"), "nothing went out")
+    }
+
+    /// A transcript replace that lands while a send awaits the host must not drop its
+    /// optimistic row (#508's wipe shape): the row is this phone's until the submit
+    /// itself settles it — here by refusing, which queues the prompt.
+    func testATranscriptReplaceKeepsAnInFlightPromptRow() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [row(1, "user", "Hi"), row(2, "assistant", "Hello.")])
+        let chat = makeChat(wire)
+        await chat.model.loadMessages(modelContext: context)
+
+        let submit = Gate()
+        wire.promptGate = submit
+        wire.promptFailure = URLError(.networkConnectionLost)
+        let send = Task { await chat.model.sendMessage("Automated QA ping") }
+
+        // The optimistic row is in while the write hangs; a rebuild's replace lands.
+        await waitUntil("the optimistic row shows") {
+            chat.model.messages.contains { $0.content == "Automated QA ping" }
+        }
+        chat.model.hermesReplaceTranscript(HermesChatTranscript(
+            messages: chat.model.messages.filter { $0.content != "Automated QA ping" },
+            toolCallGroups: [], reasoningGroups: [], compaction: nil))
+        XCTAssertTrue(chat.model.messages.contains { $0.content == "Automated QA ping" },
+                      "the in-flight prompt row survives the replace")
+
+        submit.open()
+        let sent = await send.value
+        XCTAssertTrue(sent, "the refused write queues the prompt")
+        XCTAssertEqual(chat.model.messages.last?.content, "Automated QA ping")
+        XCTAssertEqual(chat.model.messages.last?.displayKind, TextMessageOutbox.pendingDisplayKind)
+    }
+
+    /// A queued prompt's row survives a transcript replace: until the connect's drain
+    /// sends it, the row is the only place the prompt shows.
+    func testATranscriptReplaceKeepsAQueuedPromptRow() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [row(1, "user", "Hi"), row(2, "assistant", "Hello.")])
+        let chat = makeChat(wire)
+        await chat.model.loadMessages(modelContext: context)
+
+        XCTAssertTrue(chat.model.enqueuePendingText("Automated QA ping"))
+        chat.model.hermesReplaceTranscript(HermesChatTranscript(
+            messages: chat.model.messages.filter { $0.content != "Automated QA ping" },
+            toolCallGroups: [], reasoningGroups: [], compaction: nil))
+        let queued = try XCTUnwrap(chat.model.messages.last { $0.content == "Automated QA ping" },
+                                   "the queued row is restored after the replace")
+        XCTAssertEqual(queued.displayKind, TextMessageOutbox.pendingDisplayKind)
+    }
+
     /// `ChatView` asks for its first load before its appearance completes; a Hermes chat
     /// keeps the skeleton until the attach's rows arrive.
     func testASessionKeepsTheSkeletonBeforeItsAppearanceCompletes() async throws {
@@ -962,6 +1031,11 @@ import XCTest
     var messagesGate: Gate?
     var onRead: (() -> Void)?
     var running = false
+    /// Refuses `prompt.submit` before its socket write, as a stalled host does to a
+    /// write that never left the phone: the engine stays connected, the prompt never went.
+    var promptFailure: Error?
+    /// Holds `prompt.submit` until opened, before `promptFailure` decides its result.
+    var promptGate: Gate?
     var rows: [BotJSON]
     private(set) var methods: [String] = []
 
@@ -975,6 +1049,10 @@ import XCTest
     func close() {}
 
     func call(_ call: HermesCall, validateDispatch: (() throws -> Void)?) async throws -> BotJSON {
+        if call.method == "prompt.submit" {
+            await promptGate?.wait()
+            if let promptFailure { throw promptFailure }
+        }
         try validateDispatch?()
         methods.append(call.method)
         switch call.method {

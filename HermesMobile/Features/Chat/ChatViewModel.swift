@@ -2761,12 +2761,15 @@ final class ChatViewModel {
                 return true
             }
             let sent = await submitHermesPrompt(draft, mode: .send, to: hermesTurn)
-            // A submit the connection refused (NotSent: the engine dropped
-            // between the route attempt and the send) queues instead of
-            // bouncing the draft, unless its answer may simply be lost (#508).
+            // A submit the connection refused (NotSent: it never went out — the engine
+            // dropped between the route attempt and the send, or the socket write
+            // itself refused while the engine still read connected) queues instead
+            // of bouncing the draft, unless its answer may simply be lost (#508).
+            // `connectionState` alone cannot say it: the write can fail while the
+            // engine still reports `.connected`, so the submit's own report does.
             // A refused sign-in never queues: the prompt was refused, not held
             // back by the network, and it is not sent again unasked (#884).
-            if !sent, hermesTurn.engine.connectionState != .connected, !isHermesSubmissionUncertain,
+            if !sent, lastSubmitNeverWentOut, !isHermesSubmissionUncertain,
                !hermesTurn.needsSignIn {
                 return enqueuePendingText(draft)
             }
@@ -2877,6 +2880,17 @@ final class ChatViewModel {
 
     /// A Hermes prompt is on its way, from its uploads to the host's answer.
     @ObservationIgnored private var isSubmittingHermesPrompt = false
+
+    /// The last submit's own report of whether its prompt ever reached the socket:
+    /// true only when the coordinator threw `NotSent`. `connectionState` cannot say
+    /// it — a socket write can refuse while the engine still reads `.connected` —
+    /// and the offline-first send path queues on exactly this.
+    @ObservationIgnored private(set) var lastSubmitNeverWentOut = false
+
+    /// The optimistic row id of a `.send` submit currently awaiting the host. A
+    /// transcript replace that lands meanwhile must not drop it (#508's race): the
+    /// submit itself appends, rolls back, or replaces it.
+    @ObservationIgnored private var inFlightHermesPromptRowID: String?
     /// #508: a Hermes prompt's answer was lost, so nothing sends until the next attach's
     /// snapshot shows whether it ran. Restored from the draft's mark when the chat opens.
     private(set) var isHermesSubmissionUncertain = false
@@ -3102,6 +3116,7 @@ final class ChatViewModel {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         // Only Send and Queue carry the staged files (#1012); Steer and Stop & send stay text-only.
         let files = mode.startsTurn && shown == nil ? attachmentCoordinator.pendingAttachments : []
+        lastSubmitNeverWentOut = false
         guard !text.isEmpty || !files.isEmpty, !isHermesSubmissionUncertain else { return false }
         sendErrorMessage = nil
         lastError = nil
@@ -3119,8 +3134,17 @@ final class ChatViewModel {
             isStartingChat = true
             archiveLiveActivityForNewTurn()
             messages.append(prompt)
+            // A transcript replace that lands while this submit awaits the host must
+            // not drop its optimistic row (#508's race, widened by a slow host): the
+            // row is this phone's until the submit itself settles it.
+            inFlightHermesPromptRowID = promptID
         }
-        defer { if mode == .send { isStartingChat = false } }
+        defer {
+            if mode == .send {
+                isStartingChat = false
+                inFlightHermesPromptRowID = nil
+            }
+        }
 
         // #508: from just before the prompt goes out until the host answers, the draft and
         // its files are on disk with the submission marked unresolved. A lost answer keeps
@@ -3142,6 +3166,10 @@ final class ChatViewModel {
             }
         } catch {
             rollbackOptimisticMessage(id: promptID)
+            // Whether the prompt ever reached the socket: a `NotSent` never did, so the
+            // send path may queue it for the next connect; anything else either went
+            // out and lost its answer (#508) or was refused by the host itself.
+            lastSubmitNeverWentOut = error is HermesChatTurnCoordinator.NotSent
             if let notSent = error as? HermesChatTurnCoordinator.NotSent {
                 if marked { drafts.setBotSubmissionUncertain(false, for: hermes.currentDraftKey) }
                 sendErrorMessage = notSent.duringUpload
@@ -3488,6 +3516,9 @@ final class ChatViewModel {
 
     @ObservationIgnored private var isDrainingTextOutbox = false
     @ObservationIgnored private var wasViewingCachedData = false
+    /// The pending row the drain is submitting right now: a transcript replace that
+    /// lands mid-submit must not restore it — the submit's own row takes its place.
+    @ObservationIgnored private var drainingTextOutboxMessageID: String?
 
     private var textOutboxChatKey: String? {
         hermesTurn.map { TextMessageOutbox.chatKey(for: $0.currentDraftKey) }
@@ -3539,7 +3570,9 @@ final class ChatViewModel {
             entry.attempts += 1
             // The prompt's own row takes the pending row's place.
             messages.removeAll { $0.messageId == entry.messageID }
+            drainingTextOutboxMessageID = entry.messageID
             let sent = await submitHermesPrompt(entry.text, mode: .send, to: hermes)
+            drainingTextOutboxMessageID = nil
             guard sent else {
                 if isHermesSubmissionUncertain {
                     // Lost answer: Hermex never resends a prompt the host may have run.
@@ -3576,21 +3609,14 @@ final class ChatViewModel {
     }
 
     /// The chat's queued prompts as rows, after a transcript replaced them: each once, at
-    /// the end, in order. Voice-note rows keep their own order ahead of them.
-    private func restoreQueuedTextRows() {
+    /// the end, in order. Voice-note rows keep their own order ahead of them. `omitting`
+    /// names the entry the drain is submitting right now — its pending row is already
+    /// gone, and the submit's own row takes its place, so restoring it would show the
+    /// prompt twice.
+    private func restoreQueuedTextRows(omitting omittedMessageID: String? = nil) {
         guard let chatKey = textOutboxChatKey else { return }
-        for entry in textOutbox.entries(for: chatKey) where !messages.contains(where: { $0.messageId == entry.messageID }) {
-            messages.append(TextMessageOutbox.pendingMessage(for: entry))
-        }
-    }
-
-    /// Only the chat's *failed* queued prompts come back after a transcript replace: a
-    /// refused row owns its Retry and Delete wherever the rebuild lands. An optimistic
-    /// row does not — the connect's drain resubmits it, and the submit's own row takes
-    /// its place, so keeping it would show the prompt twice.
-    private func restoreFailedQueuedTextRows() {
-        guard let chatKey = textOutboxChatKey else { return }
-        for entry in textOutbox.entries(for: chatKey) where entry.failed && !messages.contains(where: { $0.messageId == entry.messageID }) {
+        for entry in textOutbox.entries(for: chatKey)
+        where entry.messageID != omittedMessageID && !messages.contains(where: { $0.messageId == entry.messageID }) {
             messages.append(TextMessageOutbox.pendingMessage(for: entry))
         }
     }
@@ -7887,7 +7913,8 @@ final class ChatViewModel {
     /// history never holds. Each follows the row it followed, comes first when it followed
     /// none, and comes last when that row is gone, as a streamed row is once it takes its saved
     /// id. So a turn's end moves no row.
-    private static func hermesKeepingOwnRows(of shown: [ChatMessage], in rows: [ChatMessage]) -> [ChatMessage] {
+    private static func hermesKeepingOwnRows(of shown: [ChatMessage], in rows: [ChatMessage],
+                                             keepingInFlight inFlightID: String? = nil) -> [ChatMessage] {
         var own: [(after: String?, row: ChatMessage)] = []
         var previous: String?
         for message in shown {
@@ -7895,7 +7922,8 @@ final class ChatViewModel {
             // A queued text (`TextMessageOutbox`) is not: no replace carries it — the chat
             // re-adds the queue's rows itself, or the connect's drain sends them.
             if message.messageId?.hasPrefix(hermesBackgroundCardPrefix) == true || message.role?.hasPrefix("local_") == true
-                || message.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true {
+                || message.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true
+                || message.messageId == inFlightID {
                 own.append((previous, message))
             } else {
                 previous = message.messageId ?? "" // A row without an id is never found again.
@@ -8290,12 +8318,17 @@ extension ChatViewModel: HermesChatTurnDelegate {
             isViewingCachedData = false
         }
         resetPendingStreamingContentBuffers()
-        let next = Self.hermesKeepingOwnRows(of: messages, in: transcript.messages + transcript.live)
+        let next = Self.hermesKeepingOwnRows(of: messages, in: transcript.messages + transcript.live,
+                                             keepingInFlight: inFlightHermesPromptRowID)
             + (transcript.streamingReply.map { [$0] } ?? [])
         messagesOffset = Self.hermesMessagesOffset(keeping: messages, at: messagesOffset, in: next)
         messages = next
         restoreQueuedVoiceNoteRows()
-        restoreFailedQueuedTextRows()
+        // A queued prompt's row survives the replace too: the connect's drain may
+        // not have run yet (it fires after this rebuild), and until it does the
+        // row is the only place the prompt shows. Skips the entry the drain is
+        // submitting right now — that submit's own row takes its place.
+        restoreQueuedTextRows(omitting: drainingTextOutboxMessageID)
         transcriptRevision &+= 1
         hasOlderMessages = transcript.hasOlder
         setCompletedToolCallGroups(transcript.toolCallGroups)
