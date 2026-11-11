@@ -285,6 +285,12 @@ import XCTest
         XCTAssertEqual(chat.model.messages.last?.displayKind, TextMessageOutbox.pendingDisplayKind)
         XCTAssertFalse(wire.methods.contains("prompt.submit"))
 
+        // The drain sends the queued prompt on the reconnect; its pending row is
+        // replaced by the submit's own sent row. (The row's replacement can show
+        // before the wire call completes, so the assert rides the call itself —
+        // armed before the reconnect, which is what releases the drain.)
+        let submitted = XCTestExpectation(description: "the drain's submit reached the host")
+        wire.onPromptSubmit = { [weak submitted] in submitted?.fulfill() }
         wire.connectFailure = nil
         wire.rows = [row(1, "user", "Hi"), row(2, "assistant", "Hello."), row(3, "user", "Sent from Desktop")]
         chat.reconnect.open()
@@ -292,12 +298,10 @@ import XCTest
 
         XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello.", "Sent from Desktop", "Still there?"],
                        "the queued row survives the reconnect's rebuild until the drain replaces it")
-        // The drain sends the queued prompt on the reconnect; its pending row is
-        // replaced by the submit's own sent row. (The wire's method list is not
-        // observable, so the wait rides the row's replacement instead.)
         await waitUntil("the queued row is replaced by the sent one") {
             chat.model.messages.contains { $0.content == "Still there?" && $0.displayKind != TextMessageOutbox.pendingDisplayKind }
         }
+        await fulfillment(of: [submitted], timeout: 5)
         XCTAssertTrue(wire.methods.contains("prompt.submit"))
     }
 
@@ -1037,6 +1041,8 @@ import XCTest
     var promptFailure: Error?
     /// Holds `prompt.submit` until opened, before `promptFailure` decides its result.
     var promptGate: Gate?
+    /// Reports each `prompt.submit` that reached the host, before its reply.
+    var onPromptSubmit: (() -> Void)?
     var rows: [BotJSON]
     private(set) var methods: [String] = []
 
@@ -1055,6 +1061,7 @@ import XCTest
             if let promptFailure { throw promptFailure }
         }
         try validateDispatch?()
+        if call.method == "prompt.submit" { onPromptSubmit?() }
         methods.append(call.method)
         switch call.method {
         case "session.list":
