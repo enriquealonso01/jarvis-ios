@@ -188,6 +188,8 @@ struct HermesNewChatDestination: Hashable {
     }
 
     /// Decided by the registry and auth state alone, as a session link is (`HermesSessionLinkRouter`).
+    /// Offline-first: `.open` no longer waits on the list being live — the chat exists locally
+    /// (`LocalPendingChat`) once its first message queues, so New Chat works with no network.
     @MainActor func route(state: AuthManager.State, servers: [ServerAccount]) -> Route {
         guard let account = servers.first(where: { $0.id == server.absoluteString }), account.kind == .hermes else {
             return .ignore
@@ -198,10 +200,11 @@ struct HermesNewChatDestination: Hashable {
     }
 
     /// The chat `entry`'s Sessions list opens: in this request's Profile, else `listed`, the one
-    /// its New Session uses. Nil for another server's list, and until the list `isLive`, having
-    /// read the host and showing no offline cache, whatever Profile the request names.
+    /// its New Session uses. Nil for another server's list. Offline-first: with no live host the
+    /// chat still opens — locally, as a new chat that queues its first message — so a Shortcut's
+    /// New Chat no longer dies offline; the request's Profile is trusted then, else `listed`.
     @MainActor func chat(on entry: HermesSessionListEntry, listed: String?, isLive: Bool) -> HermesSessionChat? {
-        guard entry.server == server, isLive, let profile = profile ?? listed else { return nil }
+        guard entry.server == server, let profile = profile ?? listed else { return nil }
         return HermesSessionChat(server: server, connection: entry.connection, target: .new(profile: profile),
                                  autoStartsVoiceInput: autoStartsVoiceInput)
     }

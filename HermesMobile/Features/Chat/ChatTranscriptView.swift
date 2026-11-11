@@ -50,9 +50,15 @@ struct ChatTranscriptView: View {
     /// Start date for the "Working for" tail row; nil hides the row.
     let workingRowStartedAt: Date?
     /// True while the first prompt of a new chat is being routed by the box's
-    /// classifier (`/bridge/route`). Shows a "Choosing the right JARVIS" row so
-    /// the up-to-10s classification wait is never a frozen empty transcript.
+    /// classifier (`/bridge/route`), or while a first send that skips routing
+    /// (a Bot's chat, staged files) is still starting its chat: the same row
+    /// covers the whole first-send window so the transcript is never empty
+    /// and frozen while the host works.
     let isRoutingFirstPrompt: Bool
+    /// True while a first send that skipped routing is starting its chat (the
+    /// attach, `session.create`, and first submit): shows a quiet starting row
+    /// so the transcript never freezes empty (Feature: routing/loading).
+    let isStartingChat: Bool
     /// The note a Hermes session's withdrawn request leaves at the transcript's end (#1011).
     let requestWithdrawal: BotRequestWithdrawal?
     let showsScrollToBottomButton: Bool
@@ -112,6 +118,8 @@ struct ChatTranscriptView: View {
     let onEdit: (MessageActionContext) -> Void
     let onFork: (MessageActionContext) -> Void
     let onCopy: (MessageActionContext) -> Void
+    /// Retry/Delete on a failed queued text row (`TextMessageOutbox`).
+    var onPendingTextAction: ((PendingTextAction, ChatMessage) -> Void)? = nil
     /// Non-nil shows the inline "Commit & Push" button under the latest assistant turn
     /// (issue #315, Slice C, surface B). Nil hides it (non-git chats, no changes, etc.).
     var inlineCommitContext: ChatInlineCommitContext? = nil
@@ -409,7 +417,8 @@ struct ChatTranscriptView: View {
                     onRegenerate: onRegenerate,
                     onEdit: onEdit,
                     onFork: onFork,
-                    onCopy: onCopy
+                    onCopy: onCopy,
+                    onPendingTextAction: onPendingTextAction
                 )
                 .equatable()
                 .transition(rowEntryTransition(for: transcriptMessage.message, now: now))
@@ -568,6 +577,13 @@ struct ChatTranscriptView: View {
             ChatRoutingRowView()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityHidden(hidesRunStatusAccessibility)
+        } else if isStartingChat && workingRowStartedAt == nil && !isRoutingFirstPrompt {
+            // A first send that skipped routing (a Bot's chat, staged files) is
+            // still starting the chat: the same quiet row, a caption, so the
+            // transcript never freezes empty while the host works.
+            ChatRoutingRowView(caption: String(localized: "Starting the chat"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityHidden(hidesRunStatusAccessibility)
         }
     }
 
@@ -695,6 +711,8 @@ struct ChatTranscriptMessageBlock: View, Equatable {
     let onEdit: (MessageActionContext) -> Void
     let onFork: (MessageActionContext) -> Void
     let onCopy: (MessageActionContext) -> Void
+    /// Retry/Delete on a failed queued text row (`TextMessageOutbox`).
+    var onPendingTextAction: ((PendingTextAction, ChatMessage) -> Void)? = nil
 
     // Equality over the value inputs only. The closures are pure functions of
     // these values (e.g. `actionContext` is determined by `transcriptMessage`,
@@ -820,7 +838,8 @@ struct ChatTranscriptMessageBlock: View, Equatable {
                     onRegenerate: onRegenerate,
                     onEdit: onEdit,
                     onFork: onFork,
-                    onCopy: onCopy
+                    onCopy: onCopy,
+                    onPendingTextAction: onPendingTextAction
                 )
     }
 
@@ -912,6 +931,8 @@ private struct ChatTranscriptMessageRow: View {
     let onEdit: (MessageActionContext) -> Void
     let onFork: (MessageActionContext) -> Void
     let onCopy: (MessageActionContext) -> Void
+    /// Retry/Delete on a failed queued text row (`TextMessageOutbox`).
+    var onPendingTextAction: ((PendingTextAction, ChatMessage) -> Void)? = nil
 
     var body: some View {
         // Compaction marker messages render as collapsible cards (matching the
@@ -981,6 +1002,9 @@ private struct ChatTranscriptMessageRow: View {
             liveTokensPerSecond: liveTokensPerSecond,
             onAskHermex: onAskHermex,
             onReplyToJarvis: onReplyToJarvis,
+            onPendingTextAction: onPendingTextAction.map { action in
+                { (pendingAction: PendingTextAction) in action(pendingAction, message) }
+            },
             contextMenuActions: isUserMessage && !message.isSteerMessage ? (actionMenu?.items ?? []) : []
         )
     }

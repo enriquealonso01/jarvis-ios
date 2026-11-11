@@ -128,7 +128,10 @@ final class AppIntentNewChatTests: XCTestCase {
         let voice = HermesNewChatDestination(server: studio, profile: nil, autoStartsVoiceInput: true)
 
         XCTAssertNil(voice.chat(on: entry, listed: nil, isLive: true), "Waits for New Session's Profile")
-        XCTAssertNil(voice.chat(on: entry, listed: "default", isLive: false), "Waits for the host, as New Session does")
+        // Offline-first: with no live host the chat still opens — locally, as a
+        // new chat that queues its first message — instead of dying.
+        let offline = voice.chat(on: entry, listed: "default", isLive: false)
+        XCTAssertEqual(offline?.target, .new(profile: "default"))
         let opened = voice.chat(on: entry, listed: "default", isLive: true)
         XCTAssertEqual(opened?.target, .new(profile: "default"))
         XCTAssertEqual(opened?.server, studio)

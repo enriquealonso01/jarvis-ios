@@ -933,6 +933,9 @@ struct ChatWorkingRowView: View {
 /// row, over "Choosing the right JARVIS" with no elapsed counter, since the
 /// wait is bounded by the route timeout rather than the run's duration.
 struct ChatRoutingRowView: View {
+    /// The row's caption; the routing default when nil.
+    var caption: String? = nil
+
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 4) {
@@ -944,7 +947,7 @@ struct ChatRoutingRowView: View {
                 }
             }
 
-            Text("Choosing the right JARVIS")
+            Text(caption ?? String(localized: "Choosing the right JARVIS"))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         }
@@ -1178,12 +1181,18 @@ private struct ChatTranscriptSkeletonLine: Identifiable {
 }
 
 struct ChatOfflineCacheBanner: View {
+    /// A Hermes chat queues offline: the banner says when the messages go out
+    /// instead of calling the view read-only.
+    var allowsOfflineQueue = false
+
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "wifi.slash")
                 .imageScale(.small)
 
-            Text("Offline — viewing cached version")
+            Text(allowsOfflineQueue
+                 ? String(localized: "Offline — messages send when reconnected")
+                 : String(localized: "Offline — viewing cached version"))
                 .font(.subheadline)
                 .fontWeight(.semibold)
 

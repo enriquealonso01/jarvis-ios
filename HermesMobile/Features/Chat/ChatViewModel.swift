@@ -593,6 +593,9 @@ final class ChatViewModel {
     /// Set on a Hermes session: its turns run here, and webui-only paths stay off.
     private let hermesTurn: HermesChatTurnCoordinator?
     private let drafts: ChatDraftStore
+    /// The chat's offline queue and offline-born chats; injectable for tests.
+    private let textOutbox: TextMessageOutbox
+    private let pendingChats: LocalPendingChatRegistry
     private let pendingActionCoordinator: ChatPendingActionCoordinator
     private let attachmentCoordinator: ChatAttachmentCoordinator
     private let btwStreamClient: SSEStreamingClient
@@ -716,6 +719,8 @@ final class ChatViewModel {
         synthesizeListenAudio: (@MainActor (String) async throws -> Data?)? = nil,
         draftAttachmentStore: any ChatDraftAttachmentStoring = ChatDraftAttachmentStore.shared,
         draftStore: ChatDraftStore? = nil,
+        textOutbox: TextMessageOutbox? = nil,
+        localPendingChats: LocalPendingChatRegistry? = nil,
         userDefaults: UserDefaults = .standard,
         backend: ChatBackend = .webui
     ) {
@@ -752,6 +757,8 @@ final class ChatViewModel {
             coordinator.setShowsLiveActivityResponseExcerpts(showsLiveActivityResponseExcerpts)
         }
         self.drafts = draftStore ?? .shared
+        self.textOutbox = textOutbox ?? .shared
+        self.pendingChats = localPendingChats ?? .shared
         self.pendingActionCoordinator = ChatPendingActionCoordinator(
             client: resolvedClient,
             approvalStreamClient: approvalStreamClient ?? SSEClient(),
@@ -2736,22 +2743,42 @@ final class ChatViewModel {
     }
 
     func sendMessage(_ draft: String, modelContext: ModelContext? = nil) async -> Bool {
-        guard !isViewingCachedData else {
-            sendErrorMessage = String(localized: "Reconnect to the server to send a message.")
-            return false
-        }
-
         guard !isClearingConversation else {
             sendErrorMessage = String(localized: "Wait for the conversation to finish clearing.")
             return false
         }
 
+        // Offline-first: with the host unreachable the prompt is queued, not
+        // refused. The bubble shows at once with a clock; the drain sends it
+        // once the chat connects again. Only a Hermes chat can queue — the
+        // webui path below still needs its session.
         if let hermesTurn {
+            if isViewingCachedData {
+                return enqueuePendingText(draft)
+            }
             if let routed = await routeFirstHermesPrompt(draft, on: hermesTurn) {
                 routedHermesChat = routed
                 return true
             }
-            return await submitHermesPrompt(draft, mode: .send, to: hermesTurn)
+            let sent = await submitHermesPrompt(draft, mode: .send, to: hermesTurn)
+            // A submit the connection refused (NotSent: it never went out — the engine
+            // dropped between the route attempt and the send, or the socket write
+            // itself refused while the engine still read connected) queues instead
+            // of bouncing the draft, unless its answer may simply be lost (#508).
+            // `connectionState` alone cannot say it: the write can fail while the
+            // engine still reports `.connected`, so the submit's own report does.
+            // A refused sign-in never queues: the prompt was refused, not held
+            // back by the network, and it is not sent again unasked (#884).
+            if !sent, lastSubmitNeverWentOut, !isHermesSubmissionUncertain,
+               !hermesTurn.needsSignIn {
+                return enqueuePendingText(draft)
+            }
+            return sent
+        }
+
+        guard !isViewingCachedData else {
+            sendErrorMessage = String(localized: "Reconnect to the server to send a message.")
+            return false
         }
 
         guard !isCompressionRotated else {
@@ -2853,6 +2880,17 @@ final class ChatViewModel {
 
     /// A Hermes prompt is on its way, from its uploads to the host's answer.
     @ObservationIgnored private var isSubmittingHermesPrompt = false
+
+    /// The last submit's own report of whether its prompt ever reached the socket:
+    /// true only when the coordinator threw `NotSent`. `connectionState` cannot say
+    /// it — a socket write can refuse while the engine still reads `.connected` —
+    /// and the offline-first send path queues on exactly this.
+    @ObservationIgnored private(set) var lastSubmitNeverWentOut = false
+
+    /// The optimistic row id of a `.send` submit currently awaiting the host. A
+    /// transcript replace that lands meanwhile must not drop it (#508's race): the
+    /// submit itself appends, rolls back, or replaces it.
+    @ObservationIgnored private var inFlightHermesPromptRowID: String?
     /// #508: a Hermes prompt's answer was lost, so nothing sends until the next attach's
     /// snapshot shows whether it ran. Restored from the draft's mark when the chat opens.
     private(set) var isHermesSubmissionUncertain = false
@@ -2971,13 +3009,33 @@ final class ChatViewModel {
     private func loadHermesSession(_ hermes: HermesChatTurnCoordinator) async {
         isLoading = messages.isEmpty
         errorMessage = nil
-        defer { isLoading = false }
+        // A routed chat's first send starts here: from the re-attach through
+        // `session.create` to the first submit, the transcript shows the
+        // "Choosing the right JARVIS" row over the sent prompt rather than
+        // an empty transcript.
+        let showsFirstPromptLoading = pendingFirstHermesPrompt != nil && messages.isEmpty
+        if showsFirstPromptLoading {
+            isRoutingFirstPrompt = true
+            // The prompt shows sent-style while its chat attaches; the real
+            // submit's row replaces it.
+            if let text = pendingFirstHermesPrompt {
+                messages.append(ChatMessage(role: "user", content: text,
+                                            timestamp: Date().timeIntervalSince1970,
+                                            messageId: Self.firstPromptPreviewMessageID))
+            }
+        }
+        defer {
+            isLoading = false
+            if showsFirstPromptLoading { isRoutingFirstPrompt = false }
+        }
         let retriesHistory = hermes.hasHistoryFailure
         await hermes.activate()
         if retriesHistory { await hermes.retryHistoryIfFailed() }
         await sendPendingFirstHermesPrompt(hermes)
         restoreQueuedVoiceNoteRows()
+        restoreQueuedTextRows()
         await drainVoiceNoteOutbox()
+        await drainTextOutbox()
     }
 
     /// Bot routing: a general chat's first message, with no files, asks the box which Bot should
@@ -2988,7 +3046,8 @@ final class ChatViewModel {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let profile = hermes.settings.profile
         guard JarvisBotRouting.routes(profile: profile), hermes.isUnstarted, messages.isEmpty,
-              attachmentCoordinator.pendingAttachments.isEmpty, !text.isEmpty else { return nil }
+              attachmentCoordinator.pendingAttachments.isEmpty, !text.isEmpty,
+              NetworkPathMonitor.shared.isSatisfied else { return nil }
         isStartingChat = true
         isRoutingFirstPrompt = true
         defer { isStartingChat = false; isRoutingFirstPrompt = false }
@@ -3001,12 +3060,27 @@ final class ChatViewModel {
         return chat
     }
 
+    /// The row a routed chat's first prompt shows while its chat attaches: the sent text,
+    /// sent-style, until the real submit's own row takes its place.
+    private static let firstPromptPreviewMessageID = "local-firstprompt-preview"
+
     /// A routed chat's first message goes out on its first successful attach, after its notice;
     /// a failed attach keeps it for the next one and says why nothing was sent.
     private func sendPendingFirstHermesPrompt(_ hermes: HermesChatTurnCoordinator) async {
         guard let text = pendingFirstHermesPrompt else { return }
         guard hermes.engine.connectionState == .connected else {
-            sendErrorMessage = String(localized: "Reconnect to the server to send a message.")
+            // Offline-first: the prompt becomes a queued row now — the outbox
+            // owns it, the next attach drains it — and the chat's notice, if
+            // any, shows at once. (`pendingFirstHermesPrompt` leaves here so a
+            // later attach cannot queue it twice.)
+            pendingFirstHermesPrompt = nil
+            if let notice = pendingHermesOpeningNotice {
+                pendingHermesOpeningNotice = nil
+                appendLocalNoticeMessage(notice)
+            }
+            // The queued row replaces the preview row.
+            messages.removeAll { $0.messageId == Self.firstPromptPreviewMessageID }
+            _ = enqueuePendingText(text)
             return
         }
         pendingFirstHermesPrompt = nil
@@ -3014,7 +3088,17 @@ final class ChatViewModel {
             pendingHermesOpeningNotice = nil
             appendLocalNoticeMessage(notice)
         }
-        _ = await submitHermesPrompt(text, mode: .send, to: hermes)
+        // The submit's own row replaces the preview row: it appends its prompt
+        // before the network await, and rolls it back on failure below.
+        messages.removeAll { $0.messageId == Self.firstPromptPreviewMessageID }
+        let sent = await submitHermesPrompt(text, mode: .send, to: hermes)
+        if !sent, !isHermesSubmissionUncertain, !hermes.needsSignIn {
+            // The attach's connection did not carry the prompt: it stays, as a
+            // queued row, and the next attach drains it. (`submitHermesPrompt`
+            // rolled its own row back on failure.) A lost answer (#508) is not
+            // resent: the host may have run it.
+            _ = enqueuePendingText(text)
+        }
     }
 
     /// Sends one prompt to the Hermes session in `mode`, once (#1010). A Send shows the
@@ -3032,6 +3116,7 @@ final class ChatViewModel {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         // Only Send and Queue carry the staged files (#1012); Steer and Stop & send stay text-only.
         let files = mode.startsTurn && shown == nil ? attachmentCoordinator.pendingAttachments : []
+        lastSubmitNeverWentOut = false
         guard !text.isEmpty || !files.isEmpty, !isHermesSubmissionUncertain else { return false }
         sendErrorMessage = nil
         lastError = nil
@@ -3049,8 +3134,17 @@ final class ChatViewModel {
             isStartingChat = true
             archiveLiveActivityForNewTurn()
             messages.append(prompt)
+            // A transcript replace that lands while this submit awaits the host must
+            // not drop its optimistic row (#508's race, widened by a slow host): the
+            // row is this phone's until the submit itself settles it.
+            inFlightHermesPromptRowID = promptID
         }
-        defer { if mode == .send { isStartingChat = false } }
+        defer {
+            if mode == .send {
+                isStartingChat = false
+                inFlightHermesPromptRowID = nil
+            }
+        }
 
         // #508: from just before the prompt goes out until the host answers, the draft and
         // its files are on disk with the submission marked unresolved. A lost answer keeps
@@ -3072,6 +3166,12 @@ final class ChatViewModel {
             }
         } catch {
             rollbackOptimisticMessage(id: promptID)
+            // Whether the prompt ever reached the socket: a `NotSent` before its write
+            // never did, so the send path may queue it for the next connect. One that
+            // failed mid-upload did not either, but its files are still staged and the
+            // draft keeps them (#1012); anything else either went out and lost its
+            // answer (#508) or was refused by the host itself.
+            lastSubmitNeverWentOut = (error as? HermesChatTurnCoordinator.NotSent).map { !$0.duringUpload } ?? false
             if let notSent = error as? HermesChatTurnCoordinator.NotSent {
                 if marked { drafts.setBotSubmissionUncertain(false, for: hermes.currentDraftKey) }
                 sendErrorMessage = notSent.duringUpload
@@ -3412,6 +3512,122 @@ final class ChatViewModel {
         for entry in VoiceNoteOutbox.shared.entries(for: chatKey) where !messages.contains(where: { $0.messageId == entry.messageID }) {
             messages.append(VoiceNoteOutbox.pendingMessage(for: entry))
         }
+    }
+
+    // MARK: Offline-first text outbox
+
+    @ObservationIgnored private var isDrainingTextOutbox = false
+    @ObservationIgnored private var wasViewingCachedData = false
+    /// The pending row the drain is submitting right now: a transcript replace that
+    /// lands mid-submit must not restore it — the submit's own row takes its place.
+    @ObservationIgnored private var drainingTextOutboxMessageID: String?
+
+    private var textOutboxChatKey: String? {
+        hermesTurn.map { TextMessageOutbox.chatKey(for: $0.currentDraftKey) }
+    }
+
+    /// Puts the prompt in the chat now, with or without a connection: its bubble at the end
+    /// of the transcript with a clock, and an outbox entry that survives a relaunch. An
+    /// offline-born chat (a `LocalPendingChat`) is registered so the session list shows it
+    /// at once. Nothing here needs the network.
+    func enqueuePendingText(_ draft: String) -> Bool {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let chatKey = textOutboxChatKey else {
+            if hermesTurn == nil { sendErrorMessage = String(localized: "Reconnect to the server to send a message.") }
+            return false
+        }
+        let entry = TextOutboxEntry(id: UUID().uuidString.lowercased(), chatKey: chatKey, text: text, createdAt: Date())
+        // An offline first message in a new chat makes the chat itself exist on
+        // this phone: the session list can open it again before any network.
+        if let turn = hermesTurn, messages.isEmpty, case .new(let profile, let cwd, _) = turn.engine.target {
+            pendingChats.add(LocalPendingChat(
+                id: UUID().uuidString.lowercased(),
+                chatKey: turn.currentDraftKey,
+                profile: profile,
+                cwd: cwd,
+                createdAt: Date()
+            ))
+        }
+        textOutbox.add(entry)
+        messages.append(TextMessageOutbox.pendingMessage(for: entry))
+        // The refusal the submit path may just have shown is superseded: the
+        // prompt is queued now, not lost.
+        sendErrorMessage = nil
+        scheduleStreamingScrollTrigger()
+        JarvisClientLog.record("outbox", "queued \(text.count) chars")
+        return true
+    }
+
+    /// Sends the chat's queued prompts in order, oldest first, each through the normal
+    /// `submitHermesPrompt` path. Stops at the first the network or host refuses, as the
+    /// voice-note drain does; the next connect, foreground or send tries again. A send the
+    /// host may have run despite the lost answer (#508) leaves the queue, its bubble staying.
+    func drainTextOutbox() async {
+        guard let hermes = hermesTurn, let chatKey = textOutboxChatKey, !isDrainingTextOutbox else { return }
+        isDrainingTextOutbox = true
+        defer { isDrainingTextOutbox = false }
+        for var entry in textOutbox.entries(for: chatKey) {
+            guard hermes.engine.connectionState == .connected, !isViewingCachedData,
+                  !isHermesSubmissionUncertain, !entry.failed else { return }
+            entry.attempts += 1
+            // The prompt's own row takes the pending row's place.
+            messages.removeAll { $0.messageId == entry.messageID }
+            drainingTextOutboxMessageID = entry.messageID
+            let sent = await submitHermesPrompt(entry.text, mode: .send, to: hermes)
+            drainingTextOutboxMessageID = nil
+            guard sent else {
+                if isHermesSubmissionUncertain {
+                    // Lost answer: Hermex never resends a prompt the host may have run.
+                    textOutbox.remove(id: entry.id)
+                    dropLocalPendingChatIfDrained(chatKey: chatKey)
+                } else {
+                    // Refused: the row stays, marked failed, with Retry and Delete.
+                    entry.failed = true
+                    textOutbox.update(entry)
+                    messages.append(TextMessageOutbox.pendingMessage(for: entry))
+                }
+                return
+            }
+            textOutbox.remove(id: entry.id)
+            dropLocalPendingChatIfDrained(chatKey: chatKey)
+        }
+    }
+
+    /// Retry and Delete on a failed queued row, as the transcript offers them.
+    func performPendingTextAction(_ action: PendingTextAction, on message: ChatMessage) {
+        guard let entryID = TextMessageOutbox.entryID(fromMessageID: message.messageId),
+              let chatKey = textOutboxChatKey else { return }
+        switch action {
+        case .retry:
+            guard var entry = textOutbox.entry(id: entryID) else { return }
+            entry.failed = false
+            textOutbox.update(entry)
+            Task { [weak self] in await self?.drainTextOutbox() }
+        case .delete:
+            textOutbox.remove(id: entryID)
+            messages.removeAll { $0.messageId == message.messageId }
+            dropLocalPendingChatIfDrained(chatKey: chatKey)
+        }
+    }
+
+    /// The chat's queued prompts as rows, after a transcript replaced them: each once, at
+    /// the end, in order. Voice-note rows keep their own order ahead of them. `omitting`
+    /// names the entry the drain is submitting right now — its pending row is already
+    /// gone, and the submit's own row takes its place, so restoring it would show the
+    /// prompt twice.
+    private func restoreQueuedTextRows(omitting omittedMessageID: String? = nil) {
+        guard let chatKey = textOutboxChatKey else { return }
+        for entry in textOutbox.entries(for: chatKey)
+        where entry.messageID != omittedMessageID && !messages.contains(where: { $0.messageId == entry.messageID }) {
+            messages.append(TextMessageOutbox.pendingMessage(for: entry))
+        }
+    }
+
+    /// An offline-born chat leaves the registry once nothing of it is left to send or show.
+    private func dropLocalPendingChatIfDrained(chatKey: String) {
+        guard textOutbox.entries(for: chatKey).isEmpty,
+              let chat = pendingChats.chat(for: chatKey) else { return }
+        pendingChats.remove(id: chat.id)
     }
 
     /// Shared optimistic-append + `startChat` + rollback core used by both the
@@ -7699,13 +7915,17 @@ final class ChatViewModel {
     /// history never holds. Each follows the row it followed, comes first when it followed
     /// none, and comes last when that row is gone, as a streamed row is once it takes its saved
     /// id. So a turn's end moves no row.
-    private static func hermesKeepingOwnRows(of shown: [ChatMessage], in rows: [ChatMessage]) -> [ChatMessage] {
+    private static func hermesKeepingOwnRows(of shown: [ChatMessage], in rows: [ChatMessage],
+                                             keepingInFlight inFlightID: String? = nil) -> [ChatMessage] {
         var own: [(after: String?, row: ChatMessage)] = []
         var previous: String?
         for message in shown {
             // JARVIS: a voice note waiting to be sent (`VoiceNoteOutbox`) is this phone's row too.
+            // A queued text (`TextMessageOutbox`) is not: no replace carries it — the chat
+            // re-adds the queue's rows itself, or the connect's drain sends them.
             if message.messageId?.hasPrefix(hermesBackgroundCardPrefix) == true || message.role?.hasPrefix("local_") == true
-                || message.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true {
+                || message.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true
+                || message.messageId == inFlightID {
                 own.append((previous, message))
             } else {
                 previous = message.messageId ?? "" // A row without an id is never found again.
@@ -8093,17 +8313,24 @@ extension ChatViewModel: HermesChatTurnDelegate {
         // retry or a later read succeeds. A session's copy shown while it connects goes even
         // then: the rebuild holds the running turn the frames it releases next continue, and
         // the failure, reported after them, shows the cache again where it would offline.
+        wasViewingCachedData = isViewingCachedData
         if isViewingCachedData {
             // A Bot Chat whose history read failed keeps its cached copy until a read succeeds.
             guard transcript.newestCoverage != nil else { return }
             isViewingCachedData = false
         }
         resetPendingStreamingContentBuffers()
-        let next = Self.hermesKeepingOwnRows(of: messages, in: transcript.messages + transcript.live)
+        let next = Self.hermesKeepingOwnRows(of: messages, in: transcript.messages + transcript.live,
+                                             keepingInFlight: inFlightHermesPromptRowID)
             + (transcript.streamingReply.map { [$0] } ?? [])
         messagesOffset = Self.hermesMessagesOffset(keeping: messages, at: messagesOffset, in: next)
         messages = next
         restoreQueuedVoiceNoteRows()
+        // A queued prompt's row survives the replace too: the connect's drain may
+        // not have run yet (it fires after this rebuild), and until it does the
+        // row is the only place the prompt shows. Skips the entry the drain is
+        // submitting right now — that submit's own row takes its place.
+        restoreQueuedTextRows(omitting: drainingTextOutboxMessageID)
         transcriptRevision &+= 1
         hasOlderMessages = transcript.hasOlder
         setCompletedToolCallGroups(transcript.toolCallGroups)
@@ -8119,6 +8346,11 @@ extension ChatViewModel: HermesChatTurnDelegate {
         if let title = transcript.title { applyLiveActivitySessionTitle(title) }
         if !messages.isEmpty { transcriptRelayoutScrollToken += 1 }
         cacheHermesHistory(transcript)
+        // A reconnect's rebuild is what finally clears a cached offline transcript; the
+        // connection-state drain fired too early, while the cache was still showing.
+        if wasViewingCachedData, !isViewingCachedData {
+            Task { [weak self] in await self?.drainTextOutbox() }
+        }
     }
 
     func hermesPrependHistory(_ transcript: HermesChatTranscript) {
@@ -8294,6 +8526,7 @@ extension ChatViewModel: HermesChatTurnDelegate {
             releaseSubmissionMark()
             if needsHermesForkCheck { Task { [weak self] in await self?.resolveHermesForkOrigin() } }
             Task { [weak self] in await self?.drainVoiceNoteOutbox() }
+            Task { [weak self] in await self?.drainTextOutbox() }
             return
         }
         // With nothing on screen yet it is the chat's error, with its retry; otherwise the composer's.
@@ -8308,6 +8541,7 @@ extension ChatViewModel: HermesChatTurnDelegate {
     func hermesDraftKeyDidChange(from: ChatDraftKey, to: ChatDraftKey) {
         drafts.moveDraft(from: from, to: to)
         VoiceNoteOutbox.shared.move(from: VoiceNoteOutbox.chatKey(for: from), to: VoiceNoteOutbox.chatKey(for: to))
+        textOutbox.move(from: TextMessageOutbox.chatKey(for: from), to: TextMessageOutbox.chatKey(for: to))
     }
 
     func hermesRequestDidFail(_ message: String) {
