@@ -71,6 +71,9 @@ def render(outcomes, logs, summary=None, tests=None):
             )[:20000])]
             if len(failures) > 20:
                 lines += ["", "Further failures are in the summary.json artifact."]
+    elif outcomes.get("RUN_MODE") == "compile" and not failed:
+        # A manual compile-only run never starts the tests; a missing bundle is expected.
+        lines += ["", "Compile-only run: the build passed and tests were not requested."]
     else:
         lines += ["", "Test summary unavailable. No assertion/infrastructure classification can be inferred from a missing result bundle."]
     if tests is not None:

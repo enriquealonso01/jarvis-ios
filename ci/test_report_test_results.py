@@ -17,6 +17,17 @@ class ReportTests(unittest.TestCase):
         self.assertIn("View.swift:12: error: cannot type-check", text)
         self.assertIn("Test summary unavailable", text)
 
+    def test_compile_only_run_reports_a_passed_build_not_a_missing_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logs = Path(directory)
+            passed = report.render({"BUILD_OUTCOME": "success", "TEST_OUTCOME": "skipped", "RUN_MODE": "compile"}, logs)
+            (logs / "build.log").write_text("View.swift:12: error: cannot type-check\n")
+            broken = report.render({"BUILD_OUTCOME": "failure", "TEST_OUTCOME": "skipped", "RUN_MODE": "compile"}, logs)
+        self.assertIn("Compile-only run", passed)
+        self.assertNotIn("Test summary unavailable", passed)
+        self.assertIn("View.swift:12: error: cannot type-check", broken)
+        self.assertNotIn("Compile-only run", broken)
+
     def test_assertion_failure_preserves_name_and_message(self):
         summary = {"passedTests": 3, "failedTests": 1, "skippedTests": 2,
                    "testFailures": [{"testName": "RoomTests.testCachedSearch()",

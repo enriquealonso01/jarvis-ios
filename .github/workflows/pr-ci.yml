@@ -27,19 +27,36 @@ on:
     branches: [v3]
   push:
     branches: [v3]
-  workflow_dispatch: {}
+  # Manual runs are the fast inner loop for a branch that has no PR yet (JARVIS
+  # has no Xcode on its Linux host, so this is its compiler):
+  #   compile  build only, about 6 minutes
+  #   tests    build, then only the test classes named in only_testing
+  #   full     the whole suite, same as a PR
+  # PR and push runs are always full.
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "compile = build only; tests = build + only_testing; full = whole suite"
+        type: choice
+        options: [full, compile, tests]
+        default: full
+      only_testing:
+        description: "mode=tests: test identifiers separated by spaces, e.g. HermesMobileTests/TextMessageOutboxTests"
+        type: string
+        default: ""
 
 permissions:
   contents: read
   pull-requests: read
 
-# A newer push to a PR cancels its older run. A master run always finishes;
+# A newer push to a PR cancels its older run, and a newer manual run on a branch
+# cancels that branch's older manual run. A master run always finishes;
 # pushes that land meanwhile wait, and only the newest waiting one runs. Its
 # result covers every commit before it, so a burst of merges ends with one
 # result for the latest master rather than a queue of macOS runs.
 concurrency:
   group: pr-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   changes:
@@ -99,6 +116,9 @@ jobs:
       SIMULATOR_NAME: iPhone 17
       CI_LOG_DIR: ci-logs
       TEST_WORKER_COUNT: 1
+      # Only a manual run can ask for less than the full suite.
+      RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
+      ONLY_TESTING: ${{ github.event_name == 'workflow_dispatch' && inputs.only_testing || '' }}
 
     steps:
       - name: Check out
@@ -160,6 +180,7 @@ jobs:
 
       - name: Test without building
         id: tests
+        if: ${{ env.RUN_MODE != 'compile' }}
         # Bound worker clone/boot and suite execution, leaving time for diagnostics.
         timeout-minutes: 30
         env:
@@ -168,10 +189,30 @@ jobs:
           set -euo pipefail
           start_seconds=${SECONDS}
           report_duration() {
-            echo "- Tests (one worker): $((SECONDS - start_seconds))s" >> "${GITHUB_STEP_SUMMARY}"
+            echo "- Tests (one worker, mode ${RUN_MODE}): $((SECONDS - start_seconds))s" >> "${GITHUB_STEP_SUMMARY}"
           }
           trap report_duration EXIT
+          # mode=tests narrows the run to the named classes or methods. The names
+          # come from a manual input, so they are checked before reaching xcodebuild.
+          only_args=()
+          if [[ "${RUN_MODE}" == "tests" ]]; then
+            read -r -a wanted <<< "${ONLY_TESTING}"
+            if [[ ${#wanted[@]} -eq 0 ]]; then
+              echo "mode=tests needs only_testing, e.g. HermesMobileTests/TextMessageOutboxTests" >&2
+              exit 1
+            fi
+            for identifier in "${wanted[@]}"; do
+              if [[ ! "${identifier}" =~ ^[A-Za-z0-9_]+(/[A-Za-z0-9_]+){0,2}$ ]]; then
+                echo "Not a test identifier: ${identifier}" >&2
+                exit 1
+              fi
+              only_args+=("-only-testing:${identifier}")
+            done
+            echo "Running only: ${wanted[*]}"
+          fi
+          # ${arr[@]+...} keeps an empty array legal under set -u on macOS bash 3.2.
           xcodebuild test-without-building \
+            ${only_args[@]+"${only_args[@]}"} \
             -project "${PROJECT_PATH}" \
             -scheme "${SCHEME}" \
             -destination "platform=iOS Simulator,id=${SIMULATOR_UDID}" \
