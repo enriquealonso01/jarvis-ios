@@ -159,6 +159,11 @@ def stub_reply(body):
     if plan and last.get("role") == "tool":
         return 200, completion("Every step is done." if plan == "finish" else "Two steps are still open; say finish when ready.")
     if last.get("role") == "user":
+        # The first-send loading-row journey (flow 12) holds its assert on the row
+        # while the chat starts; hold the reply so the row lives long enough to see.
+        # Real first prompts wait on the routing classifier for seconds; this mirrors it.
+        if "Automated QA first send" in json.dumps(messages[-1] if messages else {}):
+            time.sleep(4)
         # Unique per request within a conversation, and still a pure function of it.
         return 200, completion("Let me run a quick check.", tool_call_id="call_%d" % len(messages))
     if last.get("role") == "tool":
