@@ -321,6 +321,20 @@ struct HermesSessionListView: View {
         .onChange(of: covers.chat) { old, new in
             if case .session(_, let key)? = old?.target, new?.id != old?.id { viewModel.noteHermesReturn(from: key) }
             if let new, new.id != old?.id { SessionOpenSignpost.begin(sessionID: new.id.uuidString) }
+            // A closed chat uncovers the list: `.task` does not run again, so it opens here,
+            // listens once more and reads at once — the read mark a reply that finished while
+            // the chat was open owes, and everything that changed meanwhile, show without a
+            // manual refresh.
+            if old != nil, new == nil, !covers.isCoveredByScreen {
+                Task { await viewModel.openHermes(modelContext: modelContext) }
+            }
+        }
+        // A pushed screen (Tasks, Files, …) closed the list's socket when it covered the rows;
+        // uncovered, the list opens again and is live.
+        .onChange(of: covers.isCoveredByScreen) { _, covered in
+            if !covered, covers.chat == nil, !viewModel.isHermesConnected {
+                Task { await viewModel.openHermes(modelContext: modelContext) }
+            }
         }
         .onChange(of: viewModel.sessions.count, initial: true) { LaunchSignpost.end(rows: viewModel.sessions.count) }
         .onChange(of: scenePhase) {

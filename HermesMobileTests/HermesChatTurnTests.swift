@@ -1025,6 +1025,13 @@ import SwiftUI
         XCTAssertEqual(Placeholder(isLoading: false, errorMessage: "Offline", isEmpty: true, showsTurnOutcome: true),
                        .loadFailed("Offline"))
         XCTAssertNil(Placeholder(isLoading: false, errorMessage: nil, isEmpty: false, showsTurnOutcome: false))
+        // A first send's loading row stands in for the transcript: no placeholder,
+        // so "Choosing the right JARVIS"/"Starting the chat" shows at once.
+        XCTAssertNil(Placeholder(isLoading: true, errorMessage: nil, isEmpty: true, showsTurnOutcome: false,
+                                 isStartingFirstSend: true))
+        XCTAssertNil(Placeholder(isLoading: false, errorMessage: "Offline", isEmpty: true, showsTurnOutcome: false,
+                                 isStartingFirstSend: true),
+                     "even a load failure defers to the first-send row")
     }
 
     /// A failed turn says why in its outcome row, not as error text: the host's surface, its

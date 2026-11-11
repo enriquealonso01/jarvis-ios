@@ -53,9 +53,14 @@ enum JarvisBotRouting {
 /// (`JarvisVoiceAuth`). Any failure, the timeout included, is no route: the chat stays general.
 @MainActor
 enum JarvisBotRouter {
+    /// Tests stand in for `/bridge/route` here; nil (the default) asks the box.
+    nonisolated(unsafe) static var testHook: (@MainActor (String, String) async -> JarvisBotRoute?)?
+
     static func route(_ text: String, current: String) async -> JarvisBotRoute? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, JarvisBotRouting.asksTheBox(at: JarvisServer.address) else { return nil }
+        guard !trimmed.isEmpty else { return nil }
+        if let testHook { return await testHook(trimmed, current) }
+        guard JarvisBotRouting.asksTheBox(at: JarvisServer.address) else { return nil }
         do {
             return try await withTimeout(JarvisBotRouting.timeout) { try await request(trimmed, current: current) }
         } catch {
