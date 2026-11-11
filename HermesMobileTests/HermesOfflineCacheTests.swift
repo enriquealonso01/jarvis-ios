@@ -424,7 +424,8 @@ import XCTest
         let send = Task { await chat.model.sendMessage("Fix my widget") }
         await waitUntil("the routing state shows on send") { chat.model.isRoutingFirstPrompt }
         answered.open()
-        XCTAssertTrue(await send.value)
+        let sent = await send.value
+        XCTAssertTrue(sent)
         XCTAssertNil(chat.model.routedHermesChat)
         XCTAssertFalse(chat.model.isRoutingFirstPrompt)
         XCTAssertTrue(wire.methods.contains("prompt.submit"))
