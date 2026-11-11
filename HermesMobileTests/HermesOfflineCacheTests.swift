@@ -290,7 +290,8 @@ import XCTest
         chat.reconnect.open()
         await waitUntil("reattached") { !chat.model.isViewingCachedData }
 
-        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello.", "Sent from Desktop"])
+        XCTAssertEqual(chat.model.messages.map(\.content), ["Hi", "Hello.", "Sent from Desktop", "Still there?"],
+                       "the queued row survives the reconnect's rebuild until the drain replaces it")
         // The drain sends the queued prompt on the reconnect; its pending row is
         // replaced by the submit's own sent row. (The wire's method list is not
         // observable, so the wait rides the row's replacement instead.)

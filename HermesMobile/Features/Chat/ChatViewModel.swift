@@ -3166,10 +3166,12 @@ final class ChatViewModel {
             }
         } catch {
             rollbackOptimisticMessage(id: promptID)
-            // Whether the prompt ever reached the socket: a `NotSent` never did, so the
-            // send path may queue it for the next connect; anything else either went
-            // out and lost its answer (#508) or was refused by the host itself.
-            lastSubmitNeverWentOut = error is HermesChatTurnCoordinator.NotSent
+            // Whether the prompt ever reached the socket: a `NotSent` before its write
+            // never did, so the send path may queue it for the next connect. One that
+            // failed mid-upload did not either, but its files are still staged and the
+            // draft keeps them (#1012); anything else either went out and lost its
+            // answer (#508) or was refused by the host itself.
+            lastSubmitNeverWentOut = (error as? HermesChatTurnCoordinator.NotSent).map { !$0.duringUpload } ?? false
             if let notSent = error as? HermesChatTurnCoordinator.NotSent {
                 if marked { drafts.setBotSubmissionUncertain(false, for: hermes.currentDraftKey) }
                 sendErrorMessage = notSent.duringUpload
