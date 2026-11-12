@@ -56,11 +56,11 @@ final class JarvisApprovalsStore {
 
     private static let tokenKey = "jarvis.approvals.alertToken"
 
-    init(api: any JarvisApprovalsAPI = JarvisApprovalsBridge(),
+    init(api: (any JarvisApprovalsAPI)? = nil,
          signer: @escaping () throws -> JarvisApprovalSigner = { try JarvisApprovalSigner.onThisPhone() },
          setBadge: @escaping (Int) -> Void = JarvisApprovalsStore.setIconBadge,
          defaults: UserDefaults = .standard) {
-        self.api = api
+        self.api = api ?? JarvisApprovalsBridge()
         makeSigner = signer
         self.setBadge = setBadge
         self.defaults = defaults

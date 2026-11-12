@@ -161,3 +161,9 @@ _Avoid_: stream id (for a Hermes turn), run id
 **Document**:
 A page, report or live dashboard JARVIS writes as an HTML file in `~/JARVIS-Files/documents` on the host. The Documents screen lists it by its file name (a leading emoji is its icon) and opens it full screen in a web view with the app's kit (`JarvisDocumentKit`), reloading it when JARVIS changes the file. JARVIS writes it with its own tools; the app only reads it.
 _Avoid_: page, note, file (Files from JARVIS lists every file)
+
+## Approvals
+
+**Approval**:
+A request a JARVIS agent files for the owner's decision (a decision to approve or deny, or an action that needs a pasted value). The Approvals screen lists the pending ones by project and the recent ones; every answer is signed on the phone with a device-only Ed25519 key (`JarvisApprovalSigner`) and sent to the push bridge (`/bridge/approvals`), which runs the action and wakes the agent. Not a Hermes tool-call approval, which is asked inside a chat.
+_Avoid_: permission, confirmation, request (a chat's own pending request)
