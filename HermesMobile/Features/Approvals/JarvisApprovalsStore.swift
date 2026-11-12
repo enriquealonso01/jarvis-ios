@@ -131,7 +131,7 @@ final class JarvisApprovalsStore {
     func decide(_ item: JarvisApproval, _ decision: JarvisApprovals.Decision, input: String? = nil, note: String? = nil) async {
         guard !sending.contains(item.id) else { return }
         let typed = (item.kind == .action && decision != .deny) ? JarvisApprovals.firstText(input) : nil
-        if item.kind == .action, decision == .approve, item.input?.required ?? true, typed == nil {
+        if item.kind == .action, decision != .deny, item.input?.required ?? true, typed == nil {
             cardErrors[item.id] = CardError(message: String(localized: "Fill in the box first."), field: true)
             return
         }

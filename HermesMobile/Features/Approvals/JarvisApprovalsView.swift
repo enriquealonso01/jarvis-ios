@@ -143,6 +143,12 @@ private struct JarvisApprovalRecentRow: View {
     let item: JarvisApproval
     let store: JarvisApprovalsStore
 
+    @Environment(\.openURL) private var openURL
+    @State private var input = ""
+
+    /// A retry of an action that took pasted input asks for fresh text, with its links.
+    private var retriesWithInput: Bool { item.canRetry && item.kind == .action && item.input != nil }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
@@ -163,8 +169,36 @@ private struct JarvisApprovalRecentRow: View {
             if let error = store.cardErrors[item.id] {
                 Text(verbatim: error.message).font(.footnote).foregroundStyle(.red)
             }
+            if retriesWithInput, let box = item.input {
+                ForEach(item.links, id: \.self) { link in
+                    Button { openURL(link.url) } label: {
+                        Label { Text(verbatim: link.label) } icon: { Image(systemName: "arrow.up.right.square") }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                if !box.label.isEmpty { Text(verbatim: box.label).font(.footnote.weight(.medium)) }
+                HStack(spacing: 8) {
+                    TextField(text: $input, axis: .vertical) { Text(verbatim: box.placeholder) }
+                        .lineLimit(1...4)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("jarvisApprovals.input")
+                    Button {
+                        if let text = UIPasteboard.general.string {
+                            input = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            store.clearError(for: item.id)
+                        }
+                    } label: { Label("Paste", systemImage: "doc.on.clipboard") }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("Paste")
+                }
+            }
             if item.canRetry {
-                Button("Retry") { Task { await store.decide(item, .retry) } }
+                Button("Retry") { Task { await store.decide(item, .retry, input: retriesWithInput ? input : nil) } }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(store.sending.contains(item.id))

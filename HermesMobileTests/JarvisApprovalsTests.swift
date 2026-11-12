@@ -250,6 +250,26 @@ final class JarvisApprovalsTests: XCTestCase {
         XCTAssertNil(store.cardErrors["A-1043"])
     }
 
+    func testRetryOfAnActionSendsFreshInputSignedAsApprove() async throws {
+        var snapshot = try JarvisApprovals.snapshot(from: listing)
+        snapshot.keyFingerprint = "65b6-0673-d6ed-884b"
+        let api = FakeAPI(snapshot: snapshot)
+        let store = makeStore(api, badges: BadgeLog())
+        await store.refresh()
+        let row = try XCTUnwrap(store.pending.first { $0.id == "A-1043" })
+        await store.decide(row, .retry, input: "  ")
+        XCTAssertTrue(api.decided.isEmpty, "a retry that needs input will not go out empty")
+        await store.decide(row, .retry, input: "  \(vectorInput) ")
+        let body = try XCTUnwrap(api.decided.first?.body)
+        XCTAssertEqual(body["decision"] as? String, "retry")
+        XCTAssertEqual(body["input"] as? String, vectorInput)
+        let exp = try XCTUnwrap(body["exp"] as? Int)
+        let message = JarvisApprovalSigner.canonicalMessage(id: "A-1043", type: row.type, subject: row.subject,
+                                                            decisionWord: "approve", input: vectorInput, exp: exp)
+        let signature = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(body["signature"] as? String)))
+        XCTAssertTrue(try Curve25519.Signing.PublicKey(rawRepresentation: vectorSigner().publicKey).isValidSignature(signature, for: message))
+    }
+
     func testARefusedKeyIsRegisteredAgain() async throws {
         var snapshot = try JarvisApprovals.snapshot(from: listing)
         snapshot.keyFingerprint = "65b6-0673-d6ed-884b"
