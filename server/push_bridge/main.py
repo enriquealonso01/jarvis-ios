@@ -828,3 +828,169 @@ async def route(request: Request, x_bridge_sig: str = Header(default="")):
         confidence = 0.0
     return {"profile": profile, "confidence": confidence,
             "reason": str(data.get("reason") or "")[:120], "title": data.get("title")}
+
+
+# ---------------------------------------------------------------------------
+# Approvals: human in the loop (2026-11-12). An agent files a decision for Enrique, he answers on
+# the app's Approvals page, the system runs the approved action and wakes the agent. The store and
+# every rule live in the box CLI `jarvis-approval` (JARVIS-V2 services/approvals); these routes are
+# only transport:
+#   GET  /approvals                  app Bearer or agent HMAC: what is waiting, what was answered
+#   POST /approvals/{id}/decision    APP ONLY: {decision, signature, exp, input?, note?}. The answer is
+#                                    signed on the phone and verified by the CLI. An agent's HMAC is
+#                                    refused here on purpose: an agent must never answer for him.
+#   POST /approvals/register         APP ONLY: {alert_token?, signing_key?}
+#   POST /approvals/notify           AGENT ONLY (HMAC): {event, title?, body?, badge, id?} -> alert push
+import re as _re
+
+APPROVAL_ARGV = [os.environ.get("BRIDGE_APPROVAL_BIN", "/usr/local/bin/jarvis-approval")]
+APPROVAL_TIMEOUT_S = float(os.environ.get("BRIDGE_APPROVAL_TIMEOUT_S", "20"))
+_APPROVAL_STATUS = {"invalid": 422, "limit": 422, "not_found": 404, "conflict": 409, "signature": 403}
+
+
+def _require_bearer(request: Request) -> None:
+    bearer = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    if not bearer or not _bearer_valid(bearer):
+        raise HTTPException(401, "this route takes the app's sign-in only")
+
+
+def _approval_cli(args: list, stdin: str | None = None) -> dict:
+    """Run `jarvis-approval <args>` and return its JSON line ({"ok": bool, ...})."""
+    try:
+        proc = subprocess.run(APPROVAL_ARGV + args, input=stdin, capture_output=True, text=True,
+                              timeout=APPROVAL_TIMEOUT_S, env=dict(os.environ, HOME=os.environ.get("HOME") or "/root"))
+        data = json.loads((proc.stdout or "").strip().splitlines()[-1])
+    except (subprocess.TimeoutExpired, FileNotFoundError, IndexError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=f"approvals unavailable: {type(exc).__name__}")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=503, detail="approvals unavailable: bad answer")
+    return data
+
+
+def _approval_result(data: dict) -> dict:
+    if not data.get("ok"):
+        raise HTTPException(status_code=_APPROVAL_STATUS.get(str(data.get("code")), 422),
+                            detail=str(data.get("message") or "refused")[:300])
+    return data
+
+
+def _send_alert(payload: dict, collapse_id: str = "") -> bool:
+    """Send an ordinary (alert) push: banner, sound and/or app-icon badge. Same APNs key as the
+    VoIP pushes, the app's own topic. Loud on failure like _send_voip, never raises."""
+    cfg = _load_env()
+    key_id, team_id = cfg.get("APNS_KEY_ID"), cfg.get("APNS_TEAM_ID")
+    p8 = Path(cfg.get("APNS_P8_PATH", ""))
+    token = cfg.get("ALERT_DEVICE_TOKEN", "")
+    if not (key_id and team_id and p8.exists()):
+        print(f"[bridge] APNs not configured yet; would alert {payload.get('aps')}")
+        return False
+    if not token:
+        print("[bridge] alert push skipped: no ALERT_DEVICE_TOKEN registered yet")
+        return False
+    import jwt  # pyjwt
+    from httpx import Client
+    provider = jwt.encode({"iss": team_id, "iat": int(time.time())}, p8.read_text(), algorithm="ES256", headers={"kid": key_id})
+    headers = {"authorization": f"bearer {provider}", "apns-topic": cfg.get("APNS_BUNDLE_ID", "com.enriquecodes.jarvis"),
+               "apns-push-type": "alert", "apns-priority": "10"}
+    if collapse_id:
+        headers["apns-collapse-id"] = collapse_id
+    host = "api.sandbox.push.apple.com" if cfg.get("APNS_SANDBOX", "1") == "1" else "api.push.apple.com"
+    try:
+        with Client(http2=True, timeout=10) as c:
+            r = c.post(f"https://{host}/3/device/{token}", headers=headers, json=payload)
+    except Exception as e:  # noqa: BLE001
+        print(f"[bridge] APNs alert TRANSPORT ERROR: {type(e).__name__}: {e} (host={host})")
+        _save_env_key("LAST_ALERT_ERROR", f"transport {type(e).__name__} at {int(time.time())}")
+        return False
+    if r.status_code == 200:
+        _save_env_key("LAST_ALERT_ERROR", "")
+        return True
+    try:
+        reason = r.json().get("reason", "")
+    except Exception:  # noqa: BLE001
+        reason = (r.text or "")[:120]
+    print(f"[bridge] APNs alert REJECTED: HTTP {r.status_code} {reason} (topic={headers['apns-topic']}, host={host})")
+    _save_env_key("LAST_ALERT_ERROR", f"{r.status_code} {reason} at {int(time.time())}")
+    return False
+
+
+@app.get("/approvals")
+async def approvals_list(request: Request, x_bridge_sig: str = Header(default="")):
+    raw = await request.body()
+    _auth_dual(request, x_bridge_sig, raw)
+    data = _approval_result(await asyncio.to_thread(_approval_cli, ["list", "--json"]))
+    data["alert_registered"] = bool(_load_env().get("ALERT_DEVICE_TOKEN"))
+    return data
+
+
+@app.post("/approvals/{approval_id}/decision")
+async def approvals_decision(approval_id: str, request: Request):
+    raw = await request.body()
+    _require_bearer(request)          # the app only; an agent signature is not accepted here
+    if not _re.fullmatch(r"(?:[Aa]-)?\d{1,9}", approval_id):
+        raise HTTPException(status_code=404, detail="no such approval")
+    body = json.loads(raw or b"{}")
+    decision = str(body.get("decision") or "")
+    if decision not in ("approve", "deny", "retry"):
+        raise HTTPException(status_code=422, detail="decision must be approve, deny or retry")
+    try:
+        exp = int(body.get("exp") or 0)
+    except (TypeError, ValueError):
+        exp = 0
+    args = ["decide", approval_id, decision, "--sig=" + str(body.get("signature") or ""), "--exp=" + str(exp),
+            "--via=app", "--json"]
+    note = " ".join(str(body.get("note") or "").split())[:240]
+    if note:
+        args.append("--note=" + note)
+    text = body.get("input")
+    stdin = None
+    if isinstance(text, str) and text.strip():
+        args.append("--input-stdin")     # the pasted text travels on stdin, never on a command line
+        stdin = text.strip()[:4000]
+    return _approval_result(await asyncio.to_thread(_approval_cli, args, stdin))
+
+
+@app.post("/approvals/register")
+async def approvals_register(request: Request):
+    raw = await request.body()
+    _require_bearer(request)
+    body = json.loads(raw or b"{}")
+    out: dict = {"ok": True}
+    token = str(body.get("alert_token") or "").strip().lower()
+    if token:
+        if not _re.fullmatch(r"[0-9a-f]{64,200}", token):
+            raise HTTPException(status_code=400, detail="alert_token must be the APNs device token as lowercase hex")
+        _save_env_key("ALERT_DEVICE_TOKEN", token)
+        out["alert_registered"] = True
+    key = str(body.get("signing_key") or "").strip()
+    if key:
+        before = (await asyncio.to_thread(_approval_cli, ["key", "show", "--json"])).get("keys", {}).get("phone")
+        data = _approval_result(await asyncio.to_thread(_approval_cli, ["key", "set", "--name=phone", "--pub=" + key, "--json"]))
+        out["key_fingerprint"] = data.get("fingerprint")
+        if before and before != out["key_fingerprint"]:
+            # A changed signing key is never silent: he is told on the phone that holds the new one.
+            note = {"aps": {"alert": {"title": "JARVIS approvals",
+                                      "body": f"The signing key changed ({out['key_fingerprint']}). "
+                                              "If that was not you reinstalling the app, tell JARVIS."},
+                            "sound": "default"}}
+            threading.Thread(target=_send_alert, args=(note,), daemon=True).start()
+    return out
+
+
+@app.post("/approvals/notify")
+async def approvals_notify(request: Request, x_bridge_sig: str = Header(default="")):
+    raw = await request.body()
+    _auth(x_bridge_sig, raw)          # the box's own scripts only
+    body = json.loads(raw or b"{}")
+    event = str(body.get("event") or "badge")[:24]
+    try:
+        badge = max(0, int(body.get("badge") or 0))
+    except (TypeError, ValueError):
+        badge = 0
+    aps: dict = {"badge": badge}
+    if event != "badge":
+        aps.update({"alert": {"title": str(body.get("title") or "JARVIS")[:60], "body": str(body.get("body") or "")[:200]},
+                    "sound": "default", "thread-id": "jarvis-approvals"})
+    payload = {"aps": aps, "jarvis": {"kind": "approval", "event": event, "id": str(body.get("id") or "")[:16]}}
+    pushed = await asyncio.to_thread(_send_alert, payload, "jarvis-approvals-badge" if event == "badge" else "")
+    return {"ok": True, "pushed": pushed}

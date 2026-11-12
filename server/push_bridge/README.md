@@ -15,6 +15,26 @@ and answers `{"profile": "ios" | "general", "confidence": 0.95, "reason": "…",
 The app moves a new general chat into the named Bot when the confidence is at least 0.7
 (`JarvisBotRouting`); 503 or a slow answer leaves the chat general.
 
+## Approvals (human in the loop, since 2026-11-12)
+
+An agent files a decision for Enrique, he answers on the app's Approvals page, the system runs the
+approved action and wakes the agent. The store and every rule live in the box CLI
+`/usr/local/bin/jarvis-approval` (JARVIS-V2 `services/approvals`, `docs/approvals.md`); the bridge
+is only transport. These four routes are the exception to "auth is dual":
+
+| Route | Who | What |
+|---|---|---|
+| `GET /approvals` | app Bearer or agent HMAC | `{count, pending[], recent[], key_fingerprint, alert_registered}` |
+| `POST /approvals/{id}/decision` | **app only** | `{decision: approve\|deny\|retry, signature, exp, input?, note?}`; 403 bad signature, 409 already answered otherwise, 422 invalid input |
+| `POST /approvals/register` | **app only** | `{alert_token?, signing_key?}`: the APNs alert token and the phone's Ed25519 public key |
+| `POST /approvals/notify` | **agent HMAC only** | `{event: new\|outcome\|wake_failed\|badge, title?, body?, badge, id?}` sends an alert push |
+
+The answer is signed on the phone (Ed25519 over `jarvis-approval-v1`, id, type, subject, decision,
+sha256 of the input or `-`, expiry; one per line) and verified by the CLI, so an agent's HMAC can
+never answer for him. Pasted input goes to the CLI on stdin. Alert pushes use the same APNs key as
+the VoIP ones on the app's own topic; the token is `ALERT_DEVICE_TOKEN` in `apns.env`.
+Tests: `python -m pytest server/push_bridge -q`.
+
 ## Deploy (box, as root)
 
 The service runs from its own checkout of this repo, so the app checkout can move between
