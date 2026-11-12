@@ -622,6 +622,12 @@
 		11CC9AF98C3C0FA8D168B182 /* JarvisDocumentSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4662F69907C152695DDE751 /* JarvisDocumentSchemeHandler.swift */; };
 		13891E0A4048C20AB091DA16 /* JarvisDocumentKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47A52693CA5A4DDD8ACF7E8 /* JarvisDocumentKit.swift */; };
 		29CC006973911AF2BDDBEC80 /* JarvisDocumentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91E0713F23A62523531A2E41 /* JarvisDocumentsTests.swift */; };
+		C0E6380A4FB76BD5F043A1AE /* JarvisApprovals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68FFF4CAA4A873365E8B5602 /* JarvisApprovals.swift */; };
+		AE4A7080FFDBF9F4263CC246 /* JarvisApprovalSigner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F68FBF7C3CD5294919E30F44 /* JarvisApprovalSigner.swift */; };
+		964E854E4CAFA0C7F82212FA /* JarvisApprovalsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931D5FBE3E89F91AD89AD426 /* JarvisApprovalsStore.swift */; };
+		32CA4E46391C2E69D2A69331 /* JarvisApprovalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44F2D81207D36A5872D0AD44 /* JarvisApprovalsView.swift */; };
+		FEDCF4F9529FC3E49C78F5A4 /* JarvisApprovalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFE0FDEE7B7E6BB5458EEFBC /* JarvisApprovalCard.swift */; };
+		2EE380EF41347C5F37AC9F39 /* JarvisApprovalsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D1AE2541DAEC13CAA2D7EA /* JarvisApprovalsTests.swift */; };
 		C80F1E6C44BFF736CDC8FFCD /* JarvisFilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */; };
 		B20FBEF7E3003A6960A96315 /* JarvisWidgetSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 537CCB2EF170731EE01B6A9B /* JarvisWidgetSpec.swift */; };
 		339E0E5BF919150A082DC78F /* JarvisWidgetSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 537CCB2EF170731EE01B6A9B /* JarvisWidgetSpec.swift */; };
@@ -1295,6 +1301,12 @@
 		B4662F69907C152695DDE751 /* JarvisDocumentSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisDocumentSchemeHandler.swift; sourceTree = "<group>"; };
 		B47A52693CA5A4DDD8ACF7E8 /* JarvisDocumentKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisDocumentKit.swift; sourceTree = "<group>"; };
 		91E0713F23A62523531A2E41 /* JarvisDocumentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisDocumentsTests.swift; sourceTree = "<group>"; };
+		68FFF4CAA4A873365E8B5602 /* JarvisApprovals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApprovals.swift; sourceTree = "<group>"; };
+		F68FBF7C3CD5294919E30F44 /* JarvisApprovalSigner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApprovalSigner.swift; sourceTree = "<group>"; };
+		931D5FBE3E89F91AD89AD426 /* JarvisApprovalsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApprovalsStore.swift; sourceTree = "<group>"; };
+		44F2D81207D36A5872D0AD44 /* JarvisApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApprovalsView.swift; sourceTree = "<group>"; };
+		EFE0FDEE7B7E6BB5458EEFBC /* JarvisApprovalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApprovalCard.swift; sourceTree = "<group>"; };
+		37D1AE2541DAEC13CAA2D7EA /* JarvisApprovalsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApprovalsTests.swift; sourceTree = "<group>"; };
 		5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisFilesTests.swift; sourceTree = "<group>"; };
 		537CCB2EF170731EE01B6A9B /* JarvisWidgetSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisWidgetSpec.swift; sourceTree = "<group>"; };
 		DDD25AAAE5F7B1610FF5D4EF /* JarvisCustomWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisCustomWidget.swift; sourceTree = "<group>"; };
@@ -1425,6 +1437,7 @@
 				D288D5E859CDB14194854AD9 /* JarvisWidgetTests.swift */,
 				5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */,
 				91E0713F23A62523531A2E41 /* JarvisDocumentsTests.swift */,
+				37D1AE2541DAEC13CAA2D7EA /* JarvisApprovalsTests.swift */,
 				AA1685E4A514A299D624BED4 /* ChatPDFExportTests.swift */,
 				B48200000000000000000007 /* BotProfileEditorTests.swift */,
 				B48200000000000000000035 /* BotLifecycleTests.swift */,
@@ -1745,6 +1758,7 @@
 			children = (
 				2EE6D050A0B72E36A5F57D59 /* RichBlocks */,
 				30610250CB879B8661165BFB /* CommandCenter */,
+				181590712BA0EA34CC8731A2 /* Approvals */,
 				4752BA7FE4609D944A42DA54 /* Documents */,
 				760C4365BFA3BC653889E180 /* Calls */,
 				B48200000000000000000001 /* BotProfileAppearance.swift */,
@@ -2238,6 +2252,18 @@
 			path = Calls;
 			sourceTree = "<group>";
 		};
+		181590712BA0EA34CC8731A2 /* Approvals */ = {
+			isa = PBXGroup;
+			children = (
+				68FFF4CAA4A873365E8B5602 /* JarvisApprovals.swift */,
+				F68FBF7C3CD5294919E30F44 /* JarvisApprovalSigner.swift */,
+				931D5FBE3E89F91AD89AD426 /* JarvisApprovalsStore.swift */,
+				44F2D81207D36A5872D0AD44 /* JarvisApprovalsView.swift */,
+				EFE0FDEE7B7E6BB5458EEFBC /* JarvisApprovalCard.swift */,
+			);
+			path = Approvals;
+			sourceTree = "<group>";
+		};
 		4752BA7FE4609D944A42DA54 /* Documents */ = {
 			isa = PBXGroup;
 			children = (
@@ -2525,6 +2551,11 @@
 				990AE255330DE163A52575CF /* JarvisDocumentView.swift in Sources */,
 				11CC9AF98C3C0FA8D168B182 /* JarvisDocumentSchemeHandler.swift in Sources */,
 				13891E0A4048C20AB091DA16 /* JarvisDocumentKit.swift in Sources */,
+				C0E6380A4FB76BD5F043A1AE /* JarvisApprovals.swift in Sources */,
+				AE4A7080FFDBF9F4263CC246 /* JarvisApprovalSigner.swift in Sources */,
+				964E854E4CAFA0C7F82212FA /* JarvisApprovalsStore.swift in Sources */,
+				32CA4E46391C2E69D2A69331 /* JarvisApprovalsView.swift in Sources */,
+				FEDCF4F9529FC3E49C78F5A4 /* JarvisApprovalCard.swift in Sources */,
 				A12F1EC764CDF3FDAE543ECF /* ChatPDFExport.swift in Sources */,
 				E1752DF69B4412E2719B55FB /* RichMessageContent.swift in Sources */,
 				53410C5AFB6F19D8F0CA2595 /* RichTokens.swift in Sources */,
@@ -2914,6 +2945,7 @@
 				BC887AA37FC423650C10BA6C /* JarvisWidgetTests.swift in Sources */,
 				C80F1E6C44BFF736CDC8FFCD /* JarvisFilesTests.swift in Sources */,
 				29CC006973911AF2BDDBEC80 /* JarvisDocumentsTests.swift in Sources */,
+				2EE380EF41347C5F37AC9F39 /* JarvisApprovalsTests.swift in Sources */,
 				36413DDE3EABAE7C1BD149DC /* ChatPDFExportTests.swift in Sources */,
 				A4790000000000000000E006 /* PushRegistrationTests.swift in Sources */,
 				B48200000000000000000008 /* BotProfileEditorTests.swift in Sources */,

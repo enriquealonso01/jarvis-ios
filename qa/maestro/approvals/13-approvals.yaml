@@ -1,0 +1,36 @@
+appId: com.enriquecodes.jarvis
+# Approvals: the home row shows how many requests wait for the owner (badge 2), the page lists them
+# by project, and approving one signs and sends the answer, so the card leaves and the count drops to 1.
+# The QA lane runs it after the journeys with the Debug build pointed at the stub push bridge in
+# scripts/local-hermes (JarvisBridgeAddress); the stub refuses a decision that carries no signature.
+# Push delivery, the app icon badge and the Keychain key are checked on a phone, not here.
+name: 13 approvals
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: jarvisApprovals.badge
+    timeout: 30000
+- assertVisible: Approvals
+- takeScreenshot: 13-home-badge
+- tapOn: Approvals
+- extendedWaitUntil:
+    visible: "2 waiting for you"
+    timeout: 30000
+- assertVisible: "Free product from dead channel.*"
+- assertVisible: "Reconnect AutoDS"
+- assertVisible: "Krendora"
+- assertVisible: "Ticketflipping"
+- takeScreenshot: 13-approvals-two
+- tapOn:
+    id: jarvisApprovals.approve
+- extendedWaitUntil:
+    visible: "1 waiting for you"
+    timeout: 30000
+- assertNotVisible: "Free product from dead channel.*"
+- assertVisible: "Reconnect AutoDS"
+- takeScreenshot: 13-approvals-one
