@@ -163,6 +163,22 @@ jobs:
           kill "$FEED" 2>/dev/null || true
           exit "$STATUS"
 
+      # Approvals (flow 13) need the push bridge, which CI has none of: scripts/local-hermes serves a
+      # stub of its /bridge/approvals routes on port 9198, and the Debug build reaches it through the
+      # JarvisBridgeAddress default (a fixed stand-in Bearer, no sign-in). Pending starts at two and
+      # the flow answers one. Runs after the others, so the stub's state is untouched until now.
+      - name: Run the Approvals journey
+        id: approvals
+        continue-on-error: true
+        run: |
+          curl -fsS "http://127.0.0.1:9198/bridge/approvals" | python3 -m json.tool | head -12
+          xcrun simctl spawn "${{ steps.env.outputs.udid }}" defaults write "$APP_ID" JarvisBridgeAddress "http://127.0.0.1:9198"
+          cd qa-out
+          maestro --device "${{ steps.env.outputs.udid }}" test \
+            --format junit --output "$GITHUB_WORKSPACE/qa-out/report-approvals.xml" \
+            --test-output-dir "$GITHUB_WORKSPACE/qa-out/maestro-approvals" \
+            "$GITHUB_WORKSPACE/qa/maestro/approvals/13-approvals.yaml"
+
       - name: Collect evidence
         if: always()
         run: |
@@ -175,6 +191,7 @@ jobs:
           find qa-out -name "*.png" | sort
           echo "---- JUnit ----"; cat qa-out/report.xml || true
           echo "---- JUnit (documents) ----"; cat qa-out/report-documents.xml || true
+          echo "---- JUnit (approvals) ----"; cat qa-out/report-approvals.xml || true
           # Stop the host, then keep its logs: local-hermes prints the kept home on exit.
           kill "$(cat /tmp/local-hermes.pid)" 2>/dev/null || true
           for i in $(seq 1 15); do grep -q "Kept the Hermes home at" qa-out/local-hermes.log && break; sleep 1; done
@@ -206,5 +223,5 @@ jobs:
           if-no-files-found: warn
 
       - name: Fail if any journey failed
-        if: steps.maestro.outcome == 'failure' || steps.documents.outcome == 'failure' || steps.probe.outcome == 'failure'
+        if: steps.maestro.outcome == 'failure' || steps.documents.outcome == 'failure' || steps.approvals.outcome == 'failure' || steps.probe.outcome == 'failure'
         run: exit 1

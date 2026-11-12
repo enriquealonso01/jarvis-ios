@@ -169,13 +169,39 @@ private extension Data {
 /// Where the call stack reaches JARVIS: the push bridge and the voice gateway, both behind the
 /// JARVIS host's Caddy (`/bridge/*` strips its prefix; the gateway's offer is `/voice-gw/api/offer`).
 enum JarvisCallEndpoints {
-    static var bridge: URL { JarvisServer.address.appendingPathComponent("bridge") }
+    static var bridge: URL { (qaBridgeOverride ?? JarvisServer.address).appendingPathComponent("bridge") }
     static var voiceGateway: URL { JarvisServer.address }
+
+    /// The bridge host override: in a Debug build, `JarvisBridgeAddress` when set. Maestro's
+    /// Approvals journey points it at the stub bridge in `scripts/local-hermes`, which has no
+    /// sign-in, so a Debug build with that default sends a fixed stand-in Bearer. Release: nil.
+    static var qaBridgeOverride: URL? {
+        #if DEBUG
+        if let raw = UserDefaults.standard.string(forKey: "JarvisBridgeAddress"), let url = try? BotConnection.address(raw) {
+            return url
+        }
+        #endif
+        return nil
+    }
 
     /// A JSON request to the bridge with the voice Bearer.
     @MainActor
     static func bridgeRequest(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> [String: Any] {
-        let token = try await JarvisVoiceAuth.shared.validAccessToken()
+        let (status, object) = try await bridgeExchange(path, method: method, body: body)
+        guard (200...299).contains(status) else {
+            let detail = object["detail"] as? String
+            throw JarvisVoiceAuth.AuthError.badResponse(detail ?? "bridge HTTP \(status)")
+        }
+        return object
+    }
+
+    /// The same request, but a refusal is an answer, not an error: the HTTP status and the JSON
+    /// object (`detail` on an error). Only a transport or sign-in failure throws.
+    @MainActor
+    static func bridgeExchange(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> (status: Int, body: [String: Any]) {
+        let override = qaBridgeOverride
+        let token: String
+        if override != nil { token = "qa-stub" } else { token = try await JarvisVoiceAuth.shared.validAccessToken() }
         var request = URLRequest(url: bridge.appendingPathComponent(path))
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -187,10 +213,6 @@ enum JarvisCallEndpoints {
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-        guard (200...299).contains(status) else {
-            let detail = object["detail"] as? String
-            throw JarvisVoiceAuth.AuthError.badResponse(detail ?? "bridge HTTP \(status)")
-        }
-        return object
+        return (status, object)
     }
 }

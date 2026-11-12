@@ -42,7 +42,11 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
-        MainActor.assumeIsolated { PushRegistrar.shared?.didRegisterForRemoteNotifications(deviceToken: deviceToken) }
+        MainActor.assumeIsolated {
+            PushRegistrar.shared?.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+            // The same token goes to the approvals bridge, which sends its own alerts.
+            JarvisApprovalsStore.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+        }
     }
 
     func application(
@@ -61,6 +65,12 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
     ) {
         let userInfo = notification.request.content.userInfo
         Task { @MainActor in
+            // An approval push banners over the app, and the list reads again.
+            if JarvisApprovalsPush.isApproval(userInfo) {
+                Task { await JarvisApprovalsStore.shared.refresh() }
+                completionHandler([.banner, .list, .sound, .badge])
+                return
+            }
             completionHandler(PushPresence.presentation(
                 userInfo: userInfo, viewer: PushPresence.shared.viewer, pairings: Self.configuredPairings() ?? [:]))
         }
@@ -81,6 +91,12 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         let userInfo = response.notification.request.content.userInfo
         // The system does not promise a thread here, so hop rather than assume.
         Task { @MainActor in
+            // An approval notification opens the Approvals page, cold start included.
+            if JarvisApprovalsPush.isApproval(userInfo) {
+                AppIntentRouter.shared.requestDeepLink(HermesDeepLink.approvalsURL)
+                completionHandler()
+                return
+            }
             let activeServer = ServerRegistry.shared.activeServerID.flatMap(URL.init(string:))
             if let destination = PushNotificationRouter.localAlertLink(userInfo: userInfo,
                                                                        servers: ServerRegistry.shared.servers) {

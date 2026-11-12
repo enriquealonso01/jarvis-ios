@@ -388,6 +388,8 @@ struct SidebarSectionVisibility: Equatable {
     var files: Bool = false
     /// JARVIS's documents, on the Hermes home only.
     var documents: Bool = false
+    /// JARVIS's approvals, on the Hermes home only.
+    var approvals: Bool = false
 
     /// Show every row, primarily for previews and tests.
     static let showAll = SidebarSectionVisibility(
@@ -403,7 +405,7 @@ struct SidebarSectionVisibility: Equatable {
     /// The plain links share one List row, so that row is dropped entirely
     /// once all of them are hidden rather than leaving an empty padded gap.
     var showsAnyUtilityLink: Bool {
-        bots || tasks || skills || memory || insights || calls || files || documents
+        bots || tasks || skills || memory || insights || calls || files || documents || approvals
     }
 }
 
@@ -426,6 +428,9 @@ struct SessionSidebarUtilityRows: View {
     let openDestination: (SessionListUtilityDestination) -> Void
     let switchActiveProfile: (ProfileSummary) -> Void
     let presentProjectCreation: () -> Void
+
+    /// The Approvals row's pending count.
+    private var approvalsStore: JarvisApprovalsStore { .shared }
 
     // Each disclosure subrow is emitted as its own List row (like the session
     // rows below it). List does not animate height/transition changes inside a
@@ -526,6 +531,13 @@ struct SessionSidebarUtilityRows: View {
             if sectionVisibility.memory {
                 SidebarNavButton(title: String(localized: "Memory"), assetImage: "LucideBrain") {
                     openDestination(.memory)
+                }
+            }
+
+            if sectionVisibility.approvals {
+                SidebarNavButton(title: String(localized: "Approvals"), assetImage: "sf:checkmark.seal",
+                                 badge: approvalsStore.pendingCount, identifier: "jarvisApprovals.row") {
+                    openDestination(.approvals)
                 }
             }
 
@@ -1387,6 +1399,9 @@ struct SessionListFloatingChatButtonStyle: ButtonStyle {
 struct SidebarNavButton: View {
     let title: String
     let assetImage: String
+    /// A count capsule at the row's trailing edge while it is above zero (Approvals' pending count).
+    var badge: Int = 0
+    var identifier: String?
     let action: () -> Void
 
     var body: some View {
@@ -1406,6 +1421,31 @@ struct SidebarNavButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
+        .modifier(OptionalAccessibilityIdentifier(identifier: identifier))
+        .overlay(alignment: .trailing) {
+            if badge > 0 {
+                // A separate element beside the row's button, so the count reads on its own.
+                Text(verbatim: "\(badge)")
+                    .font(AppFont.caption(weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .frame(minWidth: 22)
+                    .background(Color("AttentionApproval"), in: Capsule())
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(String(localized: "\(badge) pending"))
+                    .accessibilityIdentifier("jarvisApprovals.badge")
+            }
+        }
+    }
+}
+
+private struct OptionalAccessibilityIdentifier: ViewModifier {
+    let identifier: String?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let identifier { content.accessibilityIdentifier(identifier) } else { content }
     }
 }
 

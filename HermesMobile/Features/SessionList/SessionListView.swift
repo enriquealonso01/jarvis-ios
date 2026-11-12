@@ -254,6 +254,8 @@ enum SessionListUtilityDestination: Hashable, Identifiable {
     case files
     /// JARVIS's documents (JarvisDocumentsView).
     case documents
+    /// JARVIS's approvals (JarvisApprovalsView).
+    case approvals
 
     var id: Self { self }
 }

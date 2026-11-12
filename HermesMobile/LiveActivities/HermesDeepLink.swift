@@ -19,6 +19,22 @@ enum HermesDeepLink {
     /// which is main-app only; this file is shared with the Live Activity widget.
     static let botHost = "bot"
 
+    /// Host for "open the Approvals page", which an approval notification's tap queues.
+    static let approvalsHost = "approvals"
+
+    /// `hermes-agent://approvals` (scheme follows the active build).
+    static var approvalsURL: URL? {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = approvalsHost
+        return components.url
+    }
+
+    static func isApprovalsURL(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == scheme
+            && url.host?.lowercased() == approvalsHost
+    }
+
     /// Host for the parameter-less "open the New Chat composer" deep link used by the
     /// New Chat App Intent (issue #337). Mirrors the share extension's host-based routing
     /// so the intent can reuse `ContentView.handleOpenURL` rather than inventing a new path.

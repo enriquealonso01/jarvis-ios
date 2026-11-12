@@ -107,6 +107,11 @@ struct ContentView: View {
     }
 
     private func handleOpenURL(_ url: URL) {
+        // A tapped approval notification: the Sessions list opens the Approvals page.
+        if HermesDeepLink.isApprovalsURL(url) {
+            JarvisApprovalsStore.shared.wantsOpen = true
+            return
+        }
         Task { await AgentLiveActivityManager.shared.dismissFinishedActivity(from: url) }
         pendingLinks.webuiPush = nil
         pendingLinks.hermesSession = nil
@@ -527,6 +532,8 @@ struct HermesServerHome: View {
     /// so a sign-in changed in Settings or the inbox gets a fresh list.
     @State private var sessions: HermesSessionsSide?
     @State private var isShowingSettings = false
+    /// A tapped approval notification lands on the Sessions side, whose list opens the page.
+    @State private var approvals = JarvisApprovalsStore.shared
     /// JARVIS asks once, after the first sign-in, whether to turn on the Face ID lock.
     @State private var isOfferingAppLock = false
     @AppStorage("jarvis.appLockOffered") private var appLockOffered = false
@@ -630,6 +637,11 @@ struct HermesServerHome: View {
         .onChange(of: pendingNewChat, initial: true) {
             guard pendingNewChat != nil else { return }
             if sessions == nil { pendingNewChat = nil; return }
+            tab = .sessions; isShowingSettings = false
+        }
+        // The Approvals page opens from the same list.
+        .onChange(of: approvals.wantsOpen, initial: true) {
+            guard approvals.wantsOpen, sessions != nil else { return }
             tab = .sessions; isShowingSettings = false
         }
         // And a share (#1181), which stays queued while there is no list to open it.

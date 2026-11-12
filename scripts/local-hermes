@@ -16,7 +16,14 @@ reuse it. Each run gets a temporary HERMES_HOME, deleted on exit unless
 --keep-home, with a fixed install_id so a saved Hermes connection survives
 restarts. The server binds loopback only, so only the simulator can reach it.
 
-Usage: scripts/local-hermes [--port 9199] [--keep-home]
+It also serves a stub of the JARVIS push bridge's Approvals routes on a second loopback port
+(--bridge-port, default 9198): `GET /bridge/approvals`, `POST /bridge/approvals/<id>/decision` and
+`POST /bridge/approvals/register`, with two pending requests in different projects (one an action
+with an input box). A decision moves the request to Recent. It never checks a signature, but a
+decision without one is refused (400), so a regression that stops signing fails the Maestro flow. A
+Debug build reaches it through the `JarvisBridgeAddress` default (Maestro flow 13).
+
+Usage: scripts/local-hermes [--port 9199] [--bridge-port 9198] [--keep-home]
 Stop it with Ctrl-C. It stops only the process group it started, never a
 process found by name (so never `hermes dashboard --stop`).
 """
@@ -353,9 +360,91 @@ def interrupt(signum, frame):
     raise KeyboardInterrupt
 
 
+class BridgeHandler(BaseHTTPRequestHandler):
+    """The push bridge's Approvals routes, for Maestro flow 13. Paths may carry the `/bridge` prefix."""
+
+    lock = threading.Lock()
+    pending = None
+    recent = []
+
+    @classmethod
+    def fixtures(cls):
+        now = time.time()
+        return [
+            {"id": "A-1042", "project": "krendora", "project_name": "Krendora", "type": "krendora.free-dead-channel",
+             "subject": "jamie_fry", "adhoc": False, "kind": "decision", "title": "Free product from dead channel @jamie_fry",
+             "evidence": "Instagram blocked since Nov 10 · 31 posts queued", "evidence_source": "system", "links": [],
+             "input": None, "created_at": now - 600, "deadline_at": now + 5 * 3600, "state": "pending", "decided_at": None,
+             "decided_via": None, "note": None, "result": None, "outcome": None, "can_retry": False, "session": None,
+             "runs_action": True},
+            {"id": "A-1043", "project": "tft", "project_name": "Ticketflipping", "type": "tft.reconnect-autods", "subject": "",
+             "adhoc": False, "kind": "action", "title": "Reconnect AutoDS", "evidence": "AutoDS sign-in expired",
+             "evidence_source": "agent", "links": [{"label": "Open AutoDS login", "url": "https://auth.autods.com/login"}],
+             "input": {"label": "Paste the address the browser lands on", "placeholder": "http://localhost:2048/callback?code=",
+                       "required": True, "mismatch": "That is not the callback address."},
+             "created_at": now - 300, "deadline_at": now + 8 * 3600, "state": "pending", "decided_at": None,
+             "decided_via": None, "note": None, "result": None, "outcome": None, "can_retry": False, "session": None,
+             "runs_action": True},
+        ]
+
+    def route(self):
+        path = self.path.split("?")[0].rstrip("/")
+        return path[len("/bridge"):] if path.startswith("/bridge/") else path
+
+    def do_GET(self):
+        if self.route() != "/approvals":
+            return self.send_json(404, {"detail": "not found"})
+        with self.lock:
+            if BridgeHandler.pending is None:
+                BridgeHandler.pending = self.fixtures()
+            self.send_json(200, {"ok": True, "count": len(self.pending), "now": time.time(), "key_fingerprint": None,
+                                 "alert_registered": False, "pending": self.pending, "recent": self.recent})
+
+    def do_POST(self):
+        route = self.route()
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        except ValueError:
+            return self.send_json(400, {"detail": "the request body is not JSON"})
+        body = body if isinstance(body, dict) else {}
+        if route == "/approvals/register":
+            print("bridge: register " + ",".join(sorted(body)), file=sys.stderr, flush=True)
+            return self.send_json(200, {"ok": True, "alert_registered": "alert_token" in body, "key_fingerprint": "stub"})
+        match = re.fullmatch(r"/approvals/([^/]+)/decision", route)
+        if not match:
+            return self.send_json(404, {"detail": "not found"})
+        if not body.get("signature") or not isinstance(body.get("exp"), int) or body.get("decision") not in ("approve", "deny", "retry"):
+            return self.send_json(400, {"detail": "the decision needs a decision, a signature and an exp"})
+        with self.lock:
+            if BridgeHandler.pending is None:
+                BridgeHandler.pending = self.fixtures()
+            item = next((entry for entry in self.pending if entry["id"] == match.group(1)), None)
+            if item is None:
+                return self.send_json(404, {"detail": "no such request"})
+            BridgeHandler.pending = [entry for entry in self.pending if entry is not item]
+            denied = body["decision"] == "deny"
+            item = dict(item, state="denied" if denied else "approved", decided_at=time.time(), decided_via="app",
+                        note=body.get("note"), outcome="denied" if denied else "approved, done")
+            BridgeHandler.recent = [item] + self.recent
+            print("bridge: %s %s" % (body["decision"], item["id"]), file=sys.stderr, flush=True)
+            self.send_json(200, {"ok": True, "repeat": False, "item": item})
+
+    def send_json(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, format, *args):
+        pass
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=9199, help="loopback port for Hermes (default 9199)")
+    parser.add_argument("--bridge-port", type=int, default=9198, help="loopback port for the stub push bridge (default 9198)")
     parser.add_argument("--keep-home", action="store_true", help="keep the temporary HERMES_HOME on exit")
     args = parser.parse_args(argv)
 
@@ -368,6 +457,8 @@ def main(argv=None):
 
     stub = ThreadingHTTPServer(("127.0.0.1", 0), StubHandler)
     threading.Thread(target=stub.serve_forever, daemon=True).start()
+    bridge = ThreadingHTTPServer(("127.0.0.1", args.bridge_port), BridgeHandler)
+    threading.Thread(target=bridge.serve_forever, daemon=True).start()
     home = make_home(stub.server_address[1])
     process = None
     try:
@@ -391,6 +482,7 @@ def main(argv=None):
         if process is not None:
             stop(process)
         stub.shutdown()
+        bridge.shutdown()
         if args.keep_home:
             print("Kept the Hermes home at %s." % home)
         else:

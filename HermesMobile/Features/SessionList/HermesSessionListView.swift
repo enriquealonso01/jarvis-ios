@@ -66,6 +66,8 @@ struct HermesSessionListView: View {
     @State private var viewModel: SessionListViewModel
     /// The chat, pushed screens, sheets and confirmations over the rows.
     @State private var covers = HermesSessionListCovers()
+    /// The Approvals count the home's row shows, and the page a tapped approval notification asks for.
+    @State private var approvals = JarvisApprovalsStore.shared
     /// New Session's "where?" sheet (JARVIS workspaces) is up.
     @State private var isChoosingWorkspace = false
     @State private var actionToast = ActionToastState()
@@ -198,6 +200,9 @@ struct HermesSessionListView: View {
             JarvisDocumentsView(place: JarvisDocuments.Place(server: entry.server, connection: entry.connection,
                                                              profile: profile ?? "default"))
         }
+        .navigationDestination(isPresented: $covers.showingApprovals) {
+            JarvisApprovalsView(server: entry.server)
+        }
         .navigationDestination(isPresented: $covers.showingArchived) {
             if let profile {
                 ArchivedSessionsView(server: entry.server, hermes: .saved(entry.connection, server: entry.server, profile: profile))
@@ -292,6 +297,18 @@ struct HermesSessionListView: View {
             deleteProject: { project in Task { _ = await viewModel.delete(project) } }
         ))
         .task { await viewModel.openHermes(modelContext: modelContext) }
+        // The home keeps the Approvals count fresh while it is on screen, and a tapped approval
+        // notification opens the page over whatever covers the rows.
+        .task(id: scenePhase == .active && home != nil && covers.chat == nil) {
+            guard scenePhase == .active, home != nil, covers.chat == nil else { return }
+            await approvals.watch()
+        }
+        .onChange(of: approvals.wantsOpen, initial: true) {
+            guard approvals.wantsOpen, home != nil else { return }
+            approvals.wantsOpen = false
+            covers.bringForward()
+            covers.showingApprovals = true
+        }
         // A link arriving while a chat, screen or sheet covers the rows pops and closes them, so
         // what it opens or says shows here.
         .onChange(of: pendingLink, initial: true) { covers.accept(pendingLink, on: entry.server) }
@@ -360,7 +377,8 @@ struct HermesSessionListView: View {
         return SidebarSectionVisibility(
             bots: false, tasks: isHome && showsTasks, skills: isHome && showsSkills,
             memory: isHome && showsMemory, insights: isHome && showsInsights, activeProfile: false,
-            projects: !viewModel.hermesShowsAllProfiles, calls: isHome, files: isHome, documents: isHome
+            projects: !viewModel.hermesShowsAllProfiles, calls: isHome, files: isHome, documents: isHome,
+            approvals: isHome
         )
     }
 
@@ -371,6 +389,7 @@ struct HermesSessionListView: View {
         if destination == .calls { covers.showingCalls = true; return }
         if destination == .files { covers.showingFiles = true; return }
         if destination == .documents { covers.showingDocuments = true; return }
+        if destination == .approvals { covers.showingApprovals = true; return }
         guard let profile else { return }
         switch destination {
         case .tasks:
@@ -990,6 +1009,7 @@ struct HermesSessionListCovers {
     var showingCalls = false
     var showingFiles = false
     var showingDocuments = false
+    var showingApprovals = false
     var creatingProject: HermesProjectCreation?
     var renamingProject: ProjectSummary?
     var deletingProject: ProjectSummary?
@@ -1005,7 +1025,7 @@ struct HermesSessionListCovers {
 
     /// A screen this list pushed covers it, so the socket stays closed until it returns.
     var isCoveredByScreen: Bool {
-        showingArchived || showingCalls || showingFiles || showingDocuments || tasks != nil || skills != nil || memory != nil || insights != nil
+        showingArchived || showingCalls || showingFiles || showingDocuments || showingApprovals || tasks != nil || skills != nil || memory != nil || insights != nil
     }
 
     /// Counts the links that brought the rows forward, so work started before one (an export)
