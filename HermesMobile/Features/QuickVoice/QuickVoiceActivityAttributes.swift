@@ -34,6 +34,15 @@ struct QuickVoiceActivityAttributes: ActivityAttributes {
             destinationURL = try c.decodeIfPresent(URL.self, forKey: .destinationURL)
             schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         }
+
+        /// Explicit memberwise init: the Codable init above suppresses the
+        /// compiler-synthesized one, and the controller builds states in memory.
+        init(phase: Phase, startedAt: Date, message: String, destinationURL: URL? = nil) {
+            self.phase = phase
+            self.startedAt = startedAt
+            self.message = message
+            self.destinationURL = destinationURL
+        }
     }
 
     init() {}
