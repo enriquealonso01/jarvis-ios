@@ -16,6 +16,9 @@ import XCTest
     /// What the pill and the recorder did, in order, so a test can check which came first.
     private final class Events {
         var log: [String] = []
+        /// What the fake send was handed, and the hold a test releases it from.
+        var delivered: [Data] = []
+        var held: CheckedContinuation<Void, Never>?
     }
 
     private final class Recording: QuickVoiceRecording {
@@ -68,7 +71,7 @@ import XCTest
 
         func finish() async { events.log.append("finish") }
 
-        var phases: [QuickVoiceActivityAttributes.Phase] { lines.map(\.0) }
+        var phases: [QuickVoiceActivityAttributes.Phase] { lines.map { $0.0 } }
         var lastLine: String? { lines.last?.1 }
     }
 
@@ -79,10 +82,10 @@ import XCTest
         let events = Events()
         let recording = Recording(events, clip: note)
         let pill = Pill(events)
-        var delivered: [Data] = []
+        let url = chatURL
         let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { audio in
-            delivered.append(audio)
-            return .sent(self.chatURL)
+            events.delivered.append(audio)
+            return .sent(url)
         }, pill: pill)
 
         let first = await controller.toggle()
@@ -95,7 +98,7 @@ import XCTest
         let second = await controller.toggle()
         XCTAssertEqual(second, .sending, "The second press returns once the clip is stopped")
         await controller.sendTask?.value
-        XCTAssertEqual(delivered, [note.audio], "The second press sends exactly the recorded clip")
+        XCTAssertEqual(events.delivered, [note.audio], "The second press sends exactly the recorded clip")
         XCTAssertEqual(recording.stops, 1)
         XCTAssertEqual(pill.phases, [.recording, .sending, .done])
         XCTAssertEqual(pill.destination, chatURL, "The finished pill opens the new chat")
@@ -179,10 +182,10 @@ import XCTest
         let events = Events()
         let recording = Recording(events, clip: note)
         let pill = Pill(events)
-        var release: CheckedContinuation<Void, Never>?
+        let url = chatURL
         let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in
-            await withCheckedContinuation { release = $0 }
-            return .sent(self.chatURL)
+            await withCheckedContinuation { events.held = $0 }
+            return .sent(url)
         }, pill: pill)
 
         await controller.toggle()
@@ -191,8 +194,8 @@ import XCTest
         let third = await controller.toggle()
         XCTAssertEqual(third, .busy, "A press during the send neither starts nor stops anything")
         XCTAssertEqual(recording.starts, 1)
-        while release == nil { await Task.yield() }
-        release?.resume()
+        while events.held == nil { await Task.yield() }
+        events.held?.resume()
         await controller.sendTask?.value
         XCTAssertEqual(controller.phase, .idle)
         let fourth = await controller.toggle()
