@@ -3045,16 +3045,22 @@ final class ChatViewModel {
     /// own it. When one does, the chat that replaces this one carries and sends the message, so
     /// nothing is sent here. Nil sends it here: a Bot's or a picked Profile's chat, a chat that
     /// has started, files staged, or the box answering general, slowly, or not at all.
-    private func routeFirstHermesPrompt(_ draft: String, on hermes: HermesChatTurnCoordinator) async -> HermesSessionChat? {
+    /// A voice note is a first message too (`drainVoiceNoteOutbox`): its pending row, `ownRowID`,
+    /// is the one row the chat may show, and the box is asked with its words alone, `question`,
+    /// without the 🎤 marker the prompt carries.
+    private func routeFirstHermesPrompt(_ draft: String, on hermes: HermesChatTurnCoordinator,
+                                        asking question: String? = nil,
+                                        ownRowID: String? = nil) async -> HermesSessionChat? {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let profile = hermes.settings.profile
-        guard JarvisBotRouting.routes(profile: profile), hermes.isUnstarted, messages.isEmpty,
+        guard JarvisBotRouting.routes(profile: profile), hermes.isUnstarted,
+              messages.allSatisfy({ ownRowID != nil && $0.messageId == ownRowID }),
               attachmentCoordinator.pendingAttachments.isEmpty, !text.isEmpty,
               NetworkPathMonitor.shared.isSatisfied else { return nil }
         isStartingChat = true
         isRoutingFirstPrompt = true
         defer { isStartingChat = false; isRoutingFirstPrompt = false }
-        let reply = await JarvisBotRouter.route(text, current: profile)
+        let reply = await JarvisBotRouter.route(question ?? text, current: profile)
         guard let reply, let destination = JarvisBotRouting.destination(reply, current: profile) else { return nil }
         var chat = HermesSessionChat(server: hermes.engine.server, connection: hermes.engine.connection,
                                      target: .new(profile: destination))
@@ -3482,6 +3488,17 @@ final class ChatViewModel {
             guard let transcript = entry.transcript else { continue }
             let text = VoiceNoteText.message(transcript: transcript)
             VoiceNoteLocalStore.shared.link(messageText: text, toID: entry.id)
+            // Bot routing (JARVIS): a note that opens a general chat is its first message, so it
+            // asks the box which Bot should own it, as a typed one does. The Bot's chat then
+            // carries and sends the transcript; here the note leaves the queue and its row, and
+            // the clip stays on the phone under the same text for the Bot chat's bubble.
+            if let routed = await routeFirstHermesPrompt(text, on: hermes, asking: transcript,
+                                                         ownRowID: entry.messageID) {
+                VoiceNoteOutbox.shared.remove(id: entry.id)
+                messages.removeAll { $0.messageId == entry.messageID }
+                routedHermesChat = routed
+                return
+            }
             // The prompt's own row takes the pending row's place; files staged for a typed
             // message stay staged and don't ride along.
             messages.removeAll { $0.messageId == entry.messageID }

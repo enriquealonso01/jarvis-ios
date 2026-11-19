@@ -2456,6 +2456,10 @@ so its first message asks (`JarvisBotRouting`, `Features/Hermes/`):
   `POST /bridge/route {text, profile}` through `JarvisBotRouter` (the push bridge, with the
   native Bearer `JarvisVoiceAuth` mints). It waits at most six seconds; the composer shows
   the send as starting meanwhile.
+- A voice note that opens the chat is a first message too: `drainVoiceNoteOutbox` asks the same
+  way once the note is transcribed, with the words alone (no 🎤 marker), when the note's own
+  pending row is the only row. A routed note leaves this chat's outbox; the Bot's chat sends the
+  `🎤 …` text as its `firstPrompt`, and the clip stays in `VoiceNoteLocalStore` under that text.
 - A reply naming another Profile with confidence at or above 0.7 moves the chat: a
   `HermesSessionChat` with `.new(profile:)` for that Bot, `firstPrompt` set to the text and
   `openingNotice` to "Opened in <Bot title>", takes this chat's place exactly as `/clear`'s

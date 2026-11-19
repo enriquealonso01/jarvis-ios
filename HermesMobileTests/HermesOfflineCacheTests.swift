@@ -431,6 +431,76 @@ import XCTest
         XCTAssertTrue(wire.methods.contains("prompt.submit"))
     }
 
+    /// A voice note that opens a general chat is its first message: once transcribed it asks
+    /// the box which Bot should own it, with its words and not the 🎤 marker, and the Bot's
+    /// chat carries the transcript. Nothing is sent here, the note leaves this chat's queue
+    /// and its row, and the clip stays on the phone for the Bot chat's bubble.
+    func testAVoiceNoteThatOpensAGeneralChatIsRoutedToItsBot() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [])
+        let chat = makeChat(wire, target: .new(profile: "default"))
+        await chat.model.loadMessages(modelContext: context)
+        VoiceNoteOutbox.shared.removeAll()
+        let asked = RouteLog()
+        JarvisBotRouter.testHook = { text, _ in
+            asked.texts.append(text)
+            return JarvisBotRoute(profile: "ios", confidence: 0.95, reason: nil, title: "iOS Builder")
+        }
+        defer { JarvisBotRouter.testHook = nil }
+        let audio = Data("m4a bytes".utf8)
+        let prompt = "🎤 Add a shortcut for the action button"
+        defer { VoiceNoteLocalStore.shared.remove(forMessageText: prompt) }
+
+        let sent = await chat.model.sendVoiceNote(
+            audioData: audio, filename: "voice-note-ab12cd34.m4a",
+            transcriber: { _, _ in
+                TranscribeResponse(ok: true, transcript: "Add a shortcut for the action button", error: nil)
+            }
+        )
+
+        XCTAssertTrue(sent)
+        XCTAssertEqual(asked.texts, ["Add a shortcut for the action button"])
+        let routed = try XCTUnwrap(chat.model.routedHermesChat)
+        XCTAssertEqual(routed.target, .new(profile: "ios"))
+        XCTAssertEqual(routed.firstPrompt, prompt)
+        XCTAssertFalse(wire.methods.contains("prompt.submit"), "the Bot's chat sends it, not this one")
+        XCTAssertFalse(chat.model.messages.contains { $0.messageId?.hasPrefix(VoiceNoteOutbox.pendingMessagePrefix) == true },
+                       "the note's row left with it")
+        XCTAssertEqual(VoiceNoteLocalStore.shared.audio(forMessageText: prompt), audio,
+                       "the clip is still on the phone for the Bot chat's bubble")
+
+        // The note left this chat's queue: a later drain sends nothing here.
+        await chat.model.drainVoiceNoteOutbox()
+        XCTAssertFalse(wire.methods.contains("prompt.submit"))
+    }
+
+    /// A voice note in a chat that has started is sent where it was recorded: the box is
+    /// never asked, as for a typed message.
+    func testAVoiceNoteInAStartedChatIsSentWhereItWasRecorded() async throws {
+        let context = try makeContext()
+        let wire = HermesOfflineWire(rows: [row(1, "user", "Hi"), row(2, "assistant", "Hello.")])
+        let chat = makeChat(wire)
+        await chat.model.loadMessages(modelContext: context)
+        VoiceNoteOutbox.shared.removeAll()
+        let asked = RouteLog()
+        JarvisBotRouter.testHook = { text, _ in
+            asked.texts.append(text)
+            return JarvisBotRoute(profile: "ios", confidence: 0.95, reason: nil, title: "iOS Builder")
+        }
+        defer { JarvisBotRouter.testHook = nil }
+        defer { VoiceNoteLocalStore.shared.remove(forMessageText: "🎤 And one more thing") }
+
+        let sent = await chat.model.sendVoiceNote(
+            audioData: Data("m4a bytes".utf8), filename: "voice-note-cd34ef56.m4a",
+            transcriber: { _, _ in TranscribeResponse(ok: true, transcript: "And one more thing", error: nil) }
+        )
+
+        XCTAssertTrue(sent)
+        XCTAssertEqual(asked.texts, [])
+        XCTAssertNil(chat.model.routedHermesChat)
+        XCTAssertTrue(wire.methods.contains("prompt.submit"))
+    }
+
     /// A routed chat whose host is unreachable keeps its first prompt: it becomes a
     /// queued row — the outbox owns it — with the chat's opening notice above it.
     func testARoutedChatsFirstPromptQueuesWhenTheHostIsUnreachable() async throws {
@@ -1066,6 +1136,11 @@ import XCTest
             }
         }
     }
+}
+
+/// What the box's router was asked, for a test that stands in for it.
+@MainActor private final class RouteLog {
+    var texts: [String] = []
 }
 
 /// Holds a wait until `open()`, then lets every wait through.
