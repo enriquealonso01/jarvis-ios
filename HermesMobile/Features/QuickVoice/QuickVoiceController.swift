@@ -111,7 +111,7 @@ final class QuickVoiceController {
     private func requestActivity(phase: QuickVoiceActivityAttributes.Phase, message: String) async {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         let state = QuickVoiceActivityAttributes.ContentState(
-            phase: phase, startedAt: Date(), message: message, destinationURL: nil, schemaVersion: 1)
+            phase: phase, startedAt: Date(), message: message, destinationURL: nil)
         activity = try? Activity.request(attributes: QuickVoiceActivityAttributes(),
                                          content: ActivityContent(state: state, staleDate: nil))
     }
