@@ -31,6 +31,13 @@ name: 12 first send loading row shows immediately
 - tapOn:
     text: Send
     optional: true
+# The stub host can start the scripted turn fast enough that its approval card
+# ("python3 -c" script execution) covers the transcript before the row assert
+# runs (build 99, run 44607786398); dismiss it if present so it cannot occlude
+# the row.
+- tapOn:
+    text: Allow once
+    optional: true
 - extendedWaitUntil:
     visible:
       id: chat.routingRow
