@@ -44,11 +44,13 @@ import XCTest
             return .sent(self.chatURL)
         }
 
-        XCTAssertTrue(await controller.toggle())
-        XCTAssertEqual(controller.phase, .recording, "The first press records")
+        let started = await controller.toggle()
+        XCTAssertTrue(started, "The first press records")
+        XCTAssertEqual(controller.phase, .recording)
         XCTAssertEqual(recording.starts, 1)
 
-        XCTAssertTrue(await controller.toggle())
+        let stopped = await controller.toggle()
+        XCTAssertTrue(stopped)
         XCTAssertEqual(delivered, [clip], "The second press sends exactly the recorded clip")
         XCTAssertEqual(recording.stops, 1)
         XCTAssertEqual(controller.phase, .idle, "A finished send returns the toggle to idle")
@@ -62,12 +64,14 @@ import XCTest
             return .failed("unreachable")
         }
 
-        XCTAssertFalse(await controller.toggle(), "A mic permission failure refuses the start")
+        let refused = await controller.toggle()
+        XCTAssertFalse(refused, "A mic permission failure refuses the start")
         XCTAssertEqual(controller.phase, .idle)
         // The next press is a fresh start, not a stop of a recording that never was.
         recording.startError = nil
         recording.clip = Data("clip".utf8)
-        XCTAssertTrue(await controller.toggle())
+        let restarted = await controller.toggle()
+        XCTAssertTrue(restarted)
         XCTAssertEqual(controller.phase, .recording)
     }
 
@@ -79,7 +83,8 @@ import XCTest
             return .failed("unreachable")
         }
 
-        XCTAssertTrue(await controller.toggle())
+        let firstPress = await controller.toggle()
+        XCTAssertTrue(firstPress)
         await controller.toggle()
         XCTAssertEqual(controller.phase, .idle, "The empty clip ends where it failed, back at idle")
     }
@@ -89,8 +94,10 @@ import XCTest
         recording.clip = Data("clip".utf8)
         let controller = QuickVoiceController(makeRecorder: { recording }) { _ in .failed("no network") }
 
-        XCTAssertTrue(await controller.toggle())
-        XCTAssertTrue(await controller.toggle())
+        let start = await controller.toggle()
+        XCTAssertTrue(start)
+        let finish = await controller.toggle()
+        XCTAssertTrue(finish)
         XCTAssertEqual(controller.phase, .idle)
     }
 
