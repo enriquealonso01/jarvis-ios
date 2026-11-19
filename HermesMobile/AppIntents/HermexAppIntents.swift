@@ -121,6 +121,14 @@ struct HermexShortcuts: AppShortcutsProvider {
             systemImageName: "mic.badge.plus"
         )
         AppShortcut(
+            intent: QuickVoiceIntent(),
+            phrases: [
+                "Quick voice note in \(.applicationName)"
+            ],
+            shortTitle: "Quick Voice",
+            systemImageName: "waveform"
+        )
+        AppShortcut(
             intent: NewChatInProfileIntent(),
             phrases: [
                 "New \(\.$profile) chat in \(.applicationName)",
