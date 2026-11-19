@@ -121,7 +121,7 @@ import XCTest
         let wired = HermesConnection(connection: record, configuration: configuration,
                                      gateway: .init(rpcDeadline: .seconds(5), socketFactory: { _ in
                                          let socket = BotScriptedSocket()
-                                         socket.reply = { [weak socket, weak host] request in
+                                         socket.reply = { [weak socket, host] request in
                                              let method = request["method"].text ?? ""
                                              if method == "session.create" {
                                                  createdProfile(request["params"]["profile"].text)
@@ -203,13 +203,5 @@ import XCTest
             Data(#"{"ok":false,"detail":"provider down"}"#.utf8), 200))
         // A proxy in front of the host throws the connection's own failure.
         XCTAssertThrowsError(try QuickVoiceTranscription.transcript(Data("".utf8), 502))
-    }
-}
-
-extension BotSocketHost {
-    /// The private script entry `BotSocketHost.connection` wires into its sockets,
-    /// exposed for a test that builds its own connection around the same host.
-    func answerForTest(_ request: BotJSON, on socket: BotScriptedSocket?) -> BotJSON {
-        Self.answerForTest(request, on: socket)
     }
 }

@@ -65,6 +65,12 @@ final class BotSocketHost: @unchecked Sendable {
                          }))
     }
 
+    /// The scripted answer, exposed for a test that wires its own connection
+    /// around this host instead of using `connection(_:)`.
+    func answerForTest(_ request: BotJSON, on socket: BotScriptedSocket?) -> BotJSON {
+        answer(request, on: socket)
+    }
+
     /// Without a script, `session.resume` answers with the running turn, honouring
     /// `omit_messages` as the host does, and any other method is unknown.
     private func answer(_ request: BotJSON, on socket: BotScriptedSocket?) -> BotJSON {
