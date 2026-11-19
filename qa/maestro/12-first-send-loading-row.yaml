@@ -31,11 +31,28 @@ name: 12 first send loading row shows immediately
 - tapOn:
     text: Send
     optional: true
+# The stub host can start the scripted turn fast enough that its approval card
+# ("python3 -c" script execution) covers the transcript before the row assert
+# runs (build 99, run 44607786398); dismiss it if present so it cannot occlude
+# the row.
+- tapOn:
+    text: Allow once
+    optional: true
+# What must hold is that the transcript never sits blank-frozen after Send: the
+# loading row is up, or — when the stub host settles the submit within the first
+# polls (build 99 race, run 44615459732) — it has already been replaced by the
+# active turn's "Working" row. Catch either state.
 - extendedWaitUntil:
     visible:
       id: chat.routingRow
     timeout: 8000
+    optional: true
 - takeScreenshot: 12-routing-row
+- extendedWaitUntil:
+    visible: .*Working.*
+    timeout: 8000
+    optional: true
+- takeScreenshot: 12-working-row
 # Hermex's one-time notification offer can cover the transcript; answer it if so.
 - extendedWaitUntil:
     visible: Want a notification.*

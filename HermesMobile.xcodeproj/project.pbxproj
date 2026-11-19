@@ -7,6 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+	1A0000000000000000000E01 /* QuickVoiceActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F01 /* QuickVoiceActivityAttributes.swift */; };
+	1A0000000000000000000E02 /* QuickVoiceActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F01 /* QuickVoiceActivityAttributes.swift */; };
+	1A0000000000000000000E03 /* QuickVoiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F02 /* QuickVoiceController.swift */; };
+	1A0000000000000000000E04 /* QuickVoiceIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F03 /* QuickVoiceIntent.swift */; };
+	1A0000000000000000000E05 /* QuickVoiceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F04 /* QuickVoiceRecorder.swift */; };
+	1A0000000000000000000E06 /* QuickVoiceSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F05 /* QuickVoiceSender.swift */; };
+	1A0000000000000000000E07 /* QuickVoiceTranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F06 /* QuickVoiceTranscription.swift */; };
+	1A0000000000000000000E08 /* QuickVoiceLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F07 /* QuickVoiceLiveActivityWidget.swift */; };
+	1A0000000000000000000E09 /* QuickVoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000F08 /* QuickVoiceTests.swift */; };
 		A4790000000000000000E001 /* PushEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4790000000000000000F001 /* PushEnvironment.swift */; };
 		A4790000000000000000E002 /* PushPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4790000000000000000F002 /* PushPairing.swift */; };
 		A4790000000000000000E003 /* PushRelayClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4790000000000000000F003 /* PushRelayClient.swift */; };
@@ -690,6 +699,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		1A0000000000000000000F01 /* QuickVoiceActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickVoice/QuickVoiceActivityAttributes.swift; sourceTree = "<group>"; };
+		1A0000000000000000000F02 /* QuickVoiceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickVoice/QuickVoiceController.swift; sourceTree = "<group>"; };
+		1A0000000000000000000F03 /* QuickVoiceIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickVoice/QuickVoiceIntent.swift; sourceTree = "<group>"; };
+		1A0000000000000000000F04 /* QuickVoiceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickVoice/QuickVoiceRecorder.swift; sourceTree = "<group>"; };
+		1A0000000000000000000F05 /* QuickVoiceSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickVoice/QuickVoiceSender.swift; sourceTree = "<group>"; };
+		1A0000000000000000000F06 /* QuickVoiceTranscription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickVoice/QuickVoiceTranscription.swift; sourceTree = "<group>"; };
+		1A0000000000000000000F07 /* QuickVoiceLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickVoiceLiveActivityWidget.swift; sourceTree = "<group>"; };
+		1A0000000000000000000F08 /* QuickVoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickVoiceTests.swift; sourceTree = "<group>"; };
 		B48200000000000000000001 /* BotProfileAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bots/BotProfileAppearance.swift; sourceTree = "<group>"; };
 		B48200000000000000000011 /* BotExpressionPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bots/BotExpressionPickerView.swift; sourceTree = "<group>"; };
 		B48200000000000000000031 /* BotCreator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bots/BotCreator.swift; sourceTree = "<group>"; };
@@ -1433,6 +1450,7 @@
 			isa = PBXGroup;
 			children = (
 				765A674EA499DE6CB769E121 /* VoiceMicTouchHostTests.swift */,
+				1A0000000000000000000F08 /* QuickVoiceTests.swift */,
 				9CE647B698F8280BCC342068 /* JarvisClientLogTests.swift */,
 				D288D5E859CDB14194854AD9 /* JarvisWidgetTests.swift */,
 				5883B5E758A7612AB74148ED /* JarvisFilesTests.swift */,
@@ -1807,6 +1825,12 @@
 				A4750000000000000000B0A2 /* BotPendingRequest.swift */,
 				1A2B3C4D5E6F7000000000C4 /* Onboarding */,
 				C09300000000000000000010 /* Shared */,
+				1A0000000000000000000F01 /* QuickVoiceActivityAttributes.swift */,
+				1A0000000000000000000F02 /* QuickVoiceController.swift */,
+				1A0000000000000000000F03 /* QuickVoiceIntent.swift */,
+				1A0000000000000000000F04 /* QuickVoiceRecorder.swift */,
+				1A0000000000000000000F05 /* QuickVoiceSender.swift */,
+				1A0000000000000000000F06 /* QuickVoiceTranscription.swift */,
 				1A2B3C4D5E6F7000000000C5 /* SessionList */,
 				1A2B3C4D5E6F7000000000C6 /* Chat */,
 				1A2B3C4D5E6F7000000000C7 /* Workspace */,
@@ -2168,6 +2192,7 @@
 			children = (
 				DDD25AAAE5F7B1610FF5D4EF /* JarvisCustomWidget.swift */,
 				A04500000000000000000013 /* AgentRunLiveActivityWidget.swift */,
+				1A0000000000000000000F07 /* QuickVoiceLiveActivityWidget.swift */,
 				A04500000000000000000022 /* Resources */,
 			);
 			path = HermesLiveActivityWidget;
@@ -2660,6 +2685,12 @@
 				C0DE88500000000000000005 /* AppLockWindow.swift in Sources */,
 				1A2B3C4D5E6F700000000300 /* ServerAccount.swift in Sources */,
 				A04500000000000000000001 /* AgentRunActivityAttributes.swift in Sources */,
+				1A0000000000000000000E01 /* QuickVoiceActivityAttributes.swift in Sources */,
+				1A0000000000000000000E03 /* QuickVoiceController.swift in Sources */,
+				1A0000000000000000000E04 /* QuickVoiceIntent.swift in Sources */,
+				1A0000000000000000000E05 /* QuickVoiceRecorder.swift in Sources */,
+				1A0000000000000000000E06 /* QuickVoiceSender.swift in Sources */,
+				1A0000000000000000000E07 /* QuickVoiceTranscription.swift in Sources */,
 				A04500000000000000000002 /* HermesDeepLink.swift in Sources */,
 				A04500000000000000000003 /* AgentLiveActivityManager.swift in Sources */,
 				1A2B3C4D5E6F7000000000A2 /* APIClient.swift in Sources */,
@@ -2941,6 +2972,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E324E8E9145815A6AE7CFF45 /* VoiceMicTouchHostTests.swift in Sources */,
+				1A0000000000000000000E09 /* QuickVoiceTests.swift in Sources */,
 				9E49A0E315D54C92FBAB395E /* JarvisClientLogTests.swift in Sources */,
 				BC887AA37FC423650C10BA6C /* JarvisWidgetTests.swift in Sources */,
 				C80F1E6C44BFF736CDC8FFCD /* JarvisFilesTests.swift in Sources */,
@@ -3175,6 +3207,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				17028AA17923CE04495C9613 /* JarvisCustomWidget.swift in Sources */,
+				1A0000000000000000000E02 /* QuickVoiceActivityAttributes.swift in Sources */,
+				1A0000000000000000000E08 /* QuickVoiceLiveActivityWidget.swift in Sources */,
 				339E0E5BF919150A082DC78F /* JarvisWidgetSpec.swift in Sources */,
 				A04500000000000000000004 /* AgentRunActivityAttributes.swift in Sources */,
 				A04500000000000000000005 /* HermesDeepLink.swift in Sources */,
