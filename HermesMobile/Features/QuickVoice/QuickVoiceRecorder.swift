@@ -1,12 +1,18 @@
 import AVFoundation
 import Foundation
 
+/// One stopped recording: the file's bytes and how long it ran.
+struct QuickVoiceClip: Equatable {
+    let audio: Data
+    let duration: TimeInterval
+}
+
 /// What Quick Voice records with, so the controller's state machine runs in tests
 /// without a microphone.
 protocol QuickVoiceRecording {
     func start() throws
     /// Stops and returns the recorded clip; nil when nothing usable was captured.
-    func stop() -> Data?
+    func stop() -> QuickVoiceClip?
 }
 
 /// Quick Voice's own recorder, separate from the composer's
@@ -33,14 +39,17 @@ final class QuickVoiceRecorder: QuickVoiceRecording {
         fileURL = url
     }
 
-    func stop() -> Data? {
+    func stop() -> QuickVoiceClip? {
+        // Read before stopping: a stopped recorder reports zero.
+        let duration = recorder?.currentTime ?? 0
         recorder?.stop()
         recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        guard let fileURL, let data = try? Data(contentsOf: fileURL), !data.isEmpty else { return nil }
-        try? FileManager.default.removeItem(at: fileURL)
+        guard let fileURL else { return nil }
         self.fileURL = nil
-        return data
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else { return nil }
+        return QuickVoiceClip(audio: data, duration: duration)
     }
 }
 
