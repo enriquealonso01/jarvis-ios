@@ -111,7 +111,7 @@ final class QuickVoiceController {
     private func requestActivity(phase: QuickVoiceActivityAttributes.Phase, message: String) async {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         let state = QuickVoiceActivityAttributes.ContentState(
-            phase: phase, startedAt: Date(), message: message)
+            phase: phase, startedAt: Date(), message: message, destinationURL: nil, schemaVersion: 1)
         activity = try? Activity.request(attributes: QuickVoiceActivityAttributes(),
                                          content: ActivityContent(state: state, staleDate: nil))
     }
@@ -131,6 +131,6 @@ final class QuickVoiceController {
     private func endActivityAfterDismissal() async {
         guard let activity else { return }
         self.activity = nil
-        await activity.end(activity.content, dismissalPolicy: .after(.now.adding(by: .seconds(5))))
+        await activity.end(activity.content, dismissalPolicy: .after(Date().addingTimeInterval(5)))
     }
 }
