@@ -1,0 +1,23 @@
+appId: com.enriquecodes.jarvis
+# A new chat can open with an old draft in its input bar. When the runner stalls the stub host
+# past the app's wait for an answer, an earlier journey's send is kept as a draft ("Hermes did
+# not confirm this message") even though it ran, and that draft belongs to the next New Session
+# (run 44566657162: flow 03 passed, flows 06 and 09 then opened on "Automated QA ping"). The
+# camera and the mic are only there while the bar is empty, so the voice-note flows call this
+# first. Starts and ends on the open chat; the field keeps the focus if anything was erased.
+#
+# The field answers to its placeholder even while it holds text. A tap in its middle can leave
+# the caret inside a long draft, and erasing only removes what is before the caret, so it goes
+# round again: the second tap lands past what is left.
+---
+- waitForAnimationToEnd:
+    timeout: 3000
+- repeat:
+    times: 3
+    while:
+      notVisible: Camera
+    commands:
+      - tapOn: Ask anything.*
+      - eraseText: 60
+      - waitForAnimationToEnd:
+          timeout: 2000
