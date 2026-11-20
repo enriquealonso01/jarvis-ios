@@ -42,38 +42,58 @@ final class QuickVoiceController {
         case notSent
         /// No pill could be shown, so nothing was recorded.
         case refused(String)
+        /// A second run of the same press (within `repeatWindow` of the last one): nothing done.
+        case repeated
     }
 
     /// A clip shorter than this is a double press, not a note: it is dropped, not sent.
     static let minimumDuration: TimeInterval = 1
+    /// The system can run the Action button's intent twice for one press; a run this soon
+    /// after the last is that press again, and must not stop the clip it just started.
+    static let repeatWindow: TimeInterval = 1
 
     private(set) var phase: Phase = .idle
     /// The running or last send, so tests can wait for it.
     private(set) var sendTask: Task<Void, Never>?
     private var recorder: (any QuickVoiceRecording)?
+    private var lastPress: Date?
 
     private let makeRecorder: () -> any QuickVoiceRecording
     private let deliver: @MainActor (Data) async -> Outcome
     private let pill: any QuickVoicePill
+    private let isInFront: @MainActor () -> Bool
+    private let now: () -> Date
 
     /// The live path: records for real, shows the Live Activity, sends over the shared connection.
     convenience init() {
         self.init(makeRecorder: { QuickVoiceRecorder() },
                   deliver: { await QuickVoiceSender.deliver($0) },
-                  pill: QuickVoiceLiveActivityPill())
+                  pill: QuickVoiceLiveActivityPill(),
+                  isInFront: { UIApplication.shared.applicationState == .active },
+                  now: { Date() })
     }
 
     init(makeRecorder: @escaping () -> any QuickVoiceRecording,
          deliver: @escaping @MainActor (Data) async -> Outcome,
-         pill: any QuickVoicePill) {
+         pill: any QuickVoicePill,
+         isInFront: @escaping @MainActor () -> Bool = { false },
+         now: @escaping () -> Date = { Date() }) {
         self.makeRecorder = makeRecorder
         self.deliver = deliver
         self.pill = pill
+        self.isInFront = isInFront
+        self.now = now
     }
 
-    /// The Action button's single entry: starts a recording, or concludes the one running.
+    /// The Action button's single entry: starts a recording, or stops the one running and
+    /// sends it.
     @discardableResult
     func toggle() async -> Press {
+        let pressedAt = now()
+        if let lastPress, pressedAt.timeIntervalSince(lastPress) < Self.repeatWindow {
+            return .repeated
+        }
+        lastPress = pressedAt
         switch phase {
         case .recording: return await stop()
         case .sending: return .busy
@@ -89,14 +109,18 @@ final class QuickVoiceController {
             return .refused(String(localized: "Turn on Live Activities for JARVIS in Settings to record with Quick Voice."))
         }
         let recorder = makeRecorder()
+        let exclusive = isInFront()
         do {
-            try recorder.start()
+            try recorder.start(exclusive: exclusive)
         } catch {
             let message = (error as? LocalizedError)?.errorDescription
-                ?? String(localized: "Recording could not start.")
-            JarvisClientLog.record("quickVoice", "recording refused: \(message)")
+                ?? String(localized: "Recording could not start.") + " (\(HermesConnectionLog.reason(error)))"
+            JarvisClientLog.record("quickVoice", "recording refused (exclusive=\(exclusive)): \(message)")
             await end(saying: message)
             return .notSent
+        }
+        if recorder.usesEngine {
+            JarvisClientLog.record("quickVoice", "recorder said no; recording through the engine (exclusive=\(exclusive))")
         }
         self.recorder = recorder
         phase = .recording
