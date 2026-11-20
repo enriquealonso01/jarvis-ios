@@ -28,6 +28,7 @@ enum QuickVoiceSender {
         do {
             transcript = try await QuickVoiceTranscription.transcribe(audio, profile: profile, on: connection)
         } catch {
+            JarvisClientLog.record("quickVoice", "transcribe failed: \(HermesConnectionLog.reason(error))")
             return .failed(String(localized: "The recording could not be transcribed."))
         }
         guard !transcript.isEmpty else {
@@ -39,30 +40,70 @@ enum QuickVoiceSender {
             ? await JarvisBotRouter.route(transcript, current: profile) : nil
         let target = JarvisBotRouting.destination(reply, current: profile) ?? profile
 
-        let client = BotClient(http: connection)
-        defer { client.close() }
-        do {
-            guard (try? await client.connect()) != nil else {
-                return .failed(String(localized: "JARVIS could not be reached."))
-            }
-            let created = try await client.call(.sessionNew(profile: target))
-            guard let key = created["stored_session_id"].text, !key.isEmpty,
-                  let runtime = created["session_id"].text, !runtime.isEmpty else {
-                return .failed(String(localized: "The chat could not be opened."))
-            }
-            let message = VoiceNoteText.message(transcript: transcript)
-            let submitted = try await client.call(.promptSubmit(sessionID: runtime, text: message))
-            if submitted["status"].text == "rejected" {
-                return .failed(String(localized: "The note could not be sent."))
-            }
+        let message = VoiceNoteText.message(transcript: transcript)
+        // A failure before the prompt went out is tried once more on a fresh socket; once
+        // it may have reached JARVIS it is never sent twice.
+        var attempt = await openChat(target: target, message: message, connection: connection)
+        if case .beforePrompt = attempt {
+            try? await Task.sleep(for: .milliseconds(1500))
+            attempt = await openChat(target: target, message: message, connection: connection)
+        }
+        switch attempt {
+        case .sent(let key):
             VoiceNoteLocalStore.shared.save(audio, forMessageText: message)
             guard let url = HermesDeepLink.sessionURL(
                 for: HermesSessionDestination(server: server, profile: target, key: key)) else {
                 return .failed(String(localized: "The chat could not be opened."))
             }
             return .sent(url)
+        case .beforePrompt(let reason), .afterPrompt(let reason):
+            return .failed(reason)
+        }
+    }
+
+    private enum ChatAttempt {
+        /// The new chat's stored key.
+        case sent(String)
+        /// Failed before `prompt.submit` was sent: safe to try again.
+        case beforePrompt(String)
+        /// Failed once the prompt may have reached JARVIS: never retried.
+        case afterPrompt(String)
+    }
+
+    /// Opens a new chat on `target` and submits `message`, logging the step and reason of a
+    /// failure (`JarvisClientLog`, category `quickVoice`).
+    @MainActor private static func openChat(target: String, message: String,
+                                            connection: HermesConnection) async -> ChatAttempt {
+        let client = BotClient(http: connection)
+        defer { client.close() }
+        do {
+            try await client.connect()
         } catch {
-            return .failed(String(localized: "The note could not be sent."))
+            JarvisClientLog.record("quickVoice", "connect failed: \(HermesConnectionLog.reason(error))")
+            return .beforePrompt(String(localized: "JARVIS could not be reached."))
+        }
+        let created: BotJSON
+        do {
+            created = try await client.call(.sessionNew(profile: target))
+        } catch {
+            JarvisClientLog.record("quickVoice", "session.create failed: \(HermesConnectionLog.reason(error))")
+            return .beforePrompt(String(localized: "The chat could not be opened."))
+        }
+        guard let key = created["stored_session_id"].text, !key.isEmpty,
+              let runtime = created["session_id"].text, !runtime.isEmpty else {
+            JarvisClientLog.record("quickVoice", "session.create answered without its ids")
+            return .beforePrompt(String(localized: "The chat could not be opened."))
+        }
+        do {
+            let submitted = try await client.call(.promptSubmit(sessionID: runtime, text: message))
+            if submitted["status"].text == "rejected" {
+                JarvisClientLog.record("quickVoice", "prompt.submit rejected")
+                return .afterPrompt(String(localized: "The note could not be sent."))
+            }
+            return .sent(key)
+        } catch {
+            JarvisClientLog.record("quickVoice", "prompt.submit failed: \(HermesConnectionLog.reason(error))")
+            return .afterPrompt(String(localized: "The note could not be sent."))
         }
     }
 }
