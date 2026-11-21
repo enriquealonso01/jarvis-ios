@@ -336,6 +336,33 @@ import SwiftUI
         XCTAssertEqual(chat.writes("prompt.submit").count, 1, "nothing is resent")
     }
 
+    /// #508: the turn's own frames can land before the lost reply surfaces. Then the send
+    /// reads accepted at once — no banner, no hold, the draft clears — and the prompt is
+    /// never queued for the next connect, which would resend what the host already ran.
+    func testTheLostAnswerWhoseTurnAlreadyBeganReadsAccepted() async throws {
+        let drafts = ChatDraftStore(persistence: InMemoryDraftPersistence(), debounceDuration: .seconds(60))
+        let chat = await openChat(drafts: drafts)
+        let key = try XCTUnwrap(chat.model.hermesDraftKey)
+        drafts.setDraft("Deploy it", for: key)
+        // The turn's frames arrive ahead of a reply this build cannot read.
+        chat.host.always("prompt.submit", .init(
+            result: .object(["status": .string("something new")]),
+            before: [event(1, "message.start"), event(2, "message.delta", ["text": .string("On it")])]
+        ))
+
+        let sent = await chat.model.sendMessage("Deploy it")
+
+        XCTAssertTrue(sent, "a turn already showing is the confirmation")
+        XCTAssertNil(chat.model.sendErrorMessage)
+        XCTAssertFalse(chat.model.isHermesSubmissionUncertain)
+        await waitUntil("the draft clears") { chat.model.lostAnswerDraftClearTrigger == 1 }
+        let cleared = await drafts.draft(for: key)
+        XCTAssertNil(cleared)
+        // A reconnect drains the text outbox; nothing was queued, so nothing is resent.
+        await chat.model.reconnectStreamIfNeeded()
+        XCTAssertEqual(chat.writes("prompt.submit").count, 1)
+    }
+
     /// #508: a lost answer whose reattach shows the host never ran the prompt keeps today's
     /// behavior — Send's hold releases, the banner and the draft stay, and nothing is sent
     /// again.

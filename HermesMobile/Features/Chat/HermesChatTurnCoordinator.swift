@@ -746,10 +746,13 @@ struct HermesChatTranscript: Equatable {
 
     /// Releases a held lost confirmation whose proof was already showing when the hold was
     /// set (#508): the send's caller records what it held first, then settles. Later proof
-    /// — the turn's frames, or a reattach's rows — releases on its own.
-    func settleLostConfirmation() {
-        guard lostConfirmation, lostConfirmationProofSeen else { return }
+    /// — the turn's frames, or a reattach's rows — releases on its own. Returns whether it
+    /// released, so the send reads accepted.
+    @discardableResult
+    func settleLostConfirmation() -> Bool {
+        guard lostConfirmation, lostConfirmationProofSeen else { return false }
         releaseLostConfirmation()
+        return true
     }
 
     /// The host demonstrably ran a prompt while a lost confirmation was held (#508): its

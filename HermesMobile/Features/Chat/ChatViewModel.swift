@@ -3205,7 +3205,10 @@ final class ChatViewModel {
             } else {
                 sendErrorMessage = String(localized: "Hermes did not confirm this message. Your draft is still here.")
                 sendErrorIsLostAnswer = true
-                holdForLostAnswer(hermes, draft: draft, files: files)
+                // Its turn may have begun before the failure surfaced; a hold that
+                // released at once means the prompt demonstrably ran (#508), so the
+                // send reads accepted and nothing is queued or resent.
+                if holdForLostAnswer(hermes, draft: draft, files: files) { return true }
             }
             return false
         }
@@ -3242,7 +3245,10 @@ final class ChatViewModel {
             rollbackOptimisticMessage(id: promptID)
             sendErrorMessage = String(localized: "Hermes did not confirm this message. Your draft is still here.")
             sendErrorIsLostAnswer = true
-            holdForLostAnswer(hermes, draft: draft, files: files)
+            // The turn's own frames can land before this unreadable reply; a hold that
+            // released at once means the prompt demonstrably ran (#508), so the send
+            // reads accepted and nothing is queued or resent.
+            if holdForLostAnswer(hermes, draft: draft, files: files) { return true }
             return false
         }
         // Accepted: the host holds the files now, so their local copies go.
@@ -3253,14 +3259,17 @@ final class ChatViewModel {
     /// A prompt's answer was lost: Send waits, and the chat reattaches so the snapshot
     /// shows whether it ran (#508). Its connect releases the hold. What the send was
     /// holding — `draft` and its `files` — stays for the proof it ran to release; a
-    /// rewind's lost answer holds no composer draft.
-    private func holdForLostAnswer(_ hermes: HermesChatTurnCoordinator, draft: String?, files: [PendingAttachment] = []) {
+    /// rewind's lost answer holds no composer draft. Returns whether the proof was
+    /// already showing, so the send itself reads accepted.
+    @discardableResult
+    private func holdForLostAnswer(_ hermes: HermesChatTurnCoordinator, draft: String?, files: [PendingAttachment] = []) -> Bool {
         isHermesSubmissionUncertain = true
         heldLostAnswer = draft.map { (text: $0, files: files) }
         // The proof may already have been showing when the hold was set; only now is
         // what it held recorded, so the release lands on it.
-        hermes.settleLostConfirmation()
+        let released = hermes.settleLostConfirmation()
         hermes.recoverAfterLostAnswer()
+        return released
     }
 
     /// A Hermes draft reopened with its submission still marked unresolved holds Send until
