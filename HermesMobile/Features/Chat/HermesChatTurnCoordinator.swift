@@ -473,11 +473,13 @@ struct HermesChatTranscript: Equatable {
                                            runtime: runtime) { dispatched = true; self.promptSent = true; self.lostConfirmation = false }
         } catch {
             // The prompt reached the socket but its answer never came back: the host may
-            // have run it (#508). Its turn may have begun before the failure surfaced, so
-            // the send's caller settles that proof once it has recorded what it held. A
-            // definite refusal answered the prompt, so nothing ran and nothing is held.
+            // have run it (#508). Only a turn begun while the write was out — one this
+            // send started — settles at once; a turn already running when it went out
+            // says nothing about it. The send's caller settles that proof once it has
+            // recorded what it held. A definite refusal answered the prompt, so nothing
+            // ran and nothing is held.
             if dispatched, !mode.definitelyRejected(error) {
-                holdLostConfirmation(proven: turnsStarted != startsBefore || activeStreamID != nil)
+                holdLostConfirmation(proven: turnsStarted != startsBefore)
             }
             // A reaped runtime (4001): reattach to the stored key, which reads only.
             if case BotFailure.rejected(4001) = error { reattach() }
@@ -501,9 +503,11 @@ struct HermesChatTranscript: Equatable {
         case .rejected, .unknown:
             // A reply this build cannot read may still have been taken (#508): the proof
             // it ran releases the hold, and nothing is sent again. A readable refusal
-            // answered the prompt, so nothing ran.
+            // answered the prompt, so nothing ran. Only a turn begun while the write was
+            // out counts — one already running when it went out says nothing about a
+            // steer or queue sent into it.
             if outcome == .unknown {
-                holdLostConfirmation(proven: turnsStarted != startsBefore || activeStreamID != nil)
+                holdLostConfirmation(proven: turnsStarted != startsBefore)
             }
             return outcome
         }

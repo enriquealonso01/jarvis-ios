@@ -354,6 +354,30 @@ import SwiftUI
         XCTAssertEqual(chat.writes("prompt.submit").count, 1)
     }
 
+    /// #508: a send into a running turn (a Steer here) that loses its answer is not proven
+    /// by the turn that was already running — only its own turn, once begun, or the
+    /// reattach's rows prove it. Until then the banner and hold stand and the draft stays.
+    func testALostSteerIntoARunningTurnIsNotProvenByThatTurn() async throws {
+        let drafts = ChatDraftStore(persistence: InMemoryDraftPersistence(), debounceDuration: .seconds(60))
+        let chat = await openChat(drafts: drafts)
+        chat.receive(event(1, "message.start"))
+        chat.receive(event(2, "message.delta", ["text": .string("Working")]))
+        XCTAssertNotNil(chat.model.activeStreamID)
+        let key = try XCTUnwrap(chat.model.hermesDraftKey)
+        drafts.setDraft("Use tabs", for: key)
+
+        // A Steer cannot read "streaming": the reply is unknown, so its answer was lost.
+        chat.host.always("session.steer", .init(result: .object(["status": .string("streaming")])))
+        _ = await chat.model.submitStreamingMessage("Use tabs", behavior: .steer)
+
+        XCTAssertEqual(chat.model.sendErrorMessage, "Hermes did not confirm this message. Your draft is still here.")
+        XCTAssertTrue(chat.model.isHermesSubmissionUncertain)
+        XCTAssertEqual(chat.model.lostAnswerDraftClearTrigger, 0)
+        let kept = await drafts.draft(for: key)
+        XCTAssertEqual(kept?.text, "Use tabs")
+        XCTAssertEqual(chat.writes("session.steer").count, 1, "nothing is resent")
+    }
+
     /// An accepted send never raises the lost-answer hold.
     func testAnAcceptedSendRaisesNoLostAnswerHold() async {
         let chat = await openChat()
