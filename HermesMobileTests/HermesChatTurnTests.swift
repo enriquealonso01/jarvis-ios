@@ -303,6 +303,68 @@ import SwiftUI
                        "returning resumed the created session")
     }
 
+    /// #508: a lost answer's prompt ran after all — its turn's frames arrive — so the turn
+    /// is the confirmation the reply never carried: the banner goes, a new session's draft
+    /// moves to its session key, and the still-sent draft clears like an accepted send's.
+    /// Nothing is sent again.
+    func testTheLostAnswerPromptRunningClearsItsHoldAndDraft() async {
+        let drafts = ChatDraftStore(persistence: InMemoryDraftPersistence(), debounceDuration: .seconds(60))
+        let server = URL(string: "https://hermes.example")!
+        let newKey = ChatDraftKey.hermesSession(server: server, connectionID: Self.connection.id, profile: "default", key: nil)
+        drafts.setDraft("Deploy it", for: newKey)
+        let chat = await openChat(key: "fresh", target: .new(profile: "default"), drafts: drafts)
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("something new")])))
+        _ = await chat.model.sendMessage("Deploy it")
+        XCTAssertEqual(chat.model.sendErrorMessage, "Hermes did not confirm this message. Your draft is still here.")
+        XCTAssertTrue(chat.model.isHermesSubmissionUncertain)
+        // The reattach the lost answer started read no prompt row: nothing is proven yet.
+        await chat.model.reconnectStreamIfNeeded()
+        XCTAssertEqual(chat.model.sendErrorMessage, "Hermes did not confirm this message. Your draft is still here.")
+
+        chat.receive(event(1, "message.start"))
+        chat.receive(event(2, "message.delta", ["text": .string("On it")]))
+        await waitUntil("the ran prompt releases the hold") {
+            chat.model.sendErrorMessage == nil && chat.model.lostAnswerDraftClearTrigger == 1
+        }
+        XCTAssertFalse(chat.model.isHermesSubmissionUncertain)
+        let sessionKey = ChatDraftKey.hermesSession(server: server, connectionID: Self.connection.id, profile: "default", key: "fresh")
+        XCTAssertEqual(chat.model.hermesDraftKey, sessionKey, "the ran prompt is the session's first accepted one")
+        let held = await drafts.draft(for: sessionKey)
+        XCTAssertNil(held, "the draft the host now holds is cleared, not kept")
+        let left = await drafts.draft(for: newKey)
+        XCTAssertNil(left)
+        XCTAssertEqual(chat.writes("prompt.submit").count, 1, "nothing is resent")
+    }
+
+    /// #508: a lost answer whose reattach shows the host never ran the prompt keeps today's
+    /// behavior — Send's hold releases, the banner and the draft stay, and nothing is sent
+    /// again.
+    func testTheLostAnswerReattachWithoutThePromptKeepsTheBanner() async {
+        let chat = await openChat()
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("something new")])))
+        let sent = await chat.model.sendMessage("Deploy it")
+        XCTAssertFalse(sent)
+        XCTAssertTrue(chat.model.isHermesSubmissionUncertain)
+
+        await chat.model.reconnectStreamIfNeeded()
+        await chat.model.submissionMarkRelease?.value
+        XCTAssertFalse(chat.model.isHermesSubmissionUncertain, "the snapshot read frees Send")
+        XCTAssertEqual(chat.model.sendErrorMessage, "Hermes did not confirm this message. Your draft is still here.")
+        XCTAssertEqual(chat.model.lostAnswerDraftClearTrigger, 0)
+        XCTAssertEqual(chat.writes("prompt.submit").count, 1)
+    }
+
+    /// An accepted send never raises the lost-answer hold.
+    func testAnAcceptedSendRaisesNoLostAnswerHold() async {
+        let chat = await openChat()
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("streaming")])))
+        let sent = await chat.model.sendMessage("Deploy it")
+        XCTAssertTrue(sent)
+        XCTAssertNil(chat.model.sendErrorMessage)
+        XCTAssertFalse(chat.model.isHermesSubmissionUncertain)
+        XCTAssertEqual(chat.model.lostAnswerDraftClearTrigger, 0)
+    }
+
     /// A legacy compression chain keeps one draft whichever segment opened it (#1176): its list
     /// row (the tip) and links to its root or middle restore and edit the same draft, under the
     /// chain's root, while each resumes the key it named. A draft the tip kept before drafts

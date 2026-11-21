@@ -276,11 +276,15 @@ final class ChatViewModel {
     private(set) var sendErrorMessage: String? {
         didSet {
             sendErrorIsFromStreamRecovery = false
+            sendErrorIsLostAnswer = false
             // Slash commands re-set the same text after a failed send; keep the kind then.
             if sendErrorMessage != oldValue, sendErrorRuntimeStale != nil { sendErrorRuntimeStale = nil }
         }
     }
     @ObservationIgnored private var sendErrorIsFromStreamRecovery = false
+    /// The composer's error is the #508 lost-answer banner, so the proof the prompt ran
+    /// clears it and nothing else does.
+    @ObservationIgnored private var sendErrorIsLostAnswer = false
     /// Set when the server refused a send because Hermes was updated under the
     /// running WebUI (#955), so the composer can offer Copy fix prompt. A
     /// different `sendErrorMessage` clears it.
@@ -2896,6 +2900,12 @@ final class ChatViewModel {
     private(set) var isHermesSubmissionUncertain = false
     /// The last attach's release of a lost prompt's mark (`releaseSubmissionMark`).
     @ObservationIgnored private(set) var submissionMarkRelease: Task<Void, Never>?
+    /// #508: what a lost answer's send was holding — the text the composer kept and the
+    /// files it carried — until the host proves it ran the prompt.
+    @ObservationIgnored private var heldLostAnswer: (text: String, files: [PendingAttachment])?
+    /// Bumped when a lost answer's prompt proved to have run and its draft was still the
+    /// sent one (#508): the composer empties like an accepted send's.
+    private(set) var lostAnswerDraftClearTrigger = 0
 
     /// A Hermes session's draft key: the new-session key until the host names the session.
     var hermesDraftKey: ChatDraftKey? { hermesTurn?.currentDraftKey }
@@ -3127,6 +3137,9 @@ final class ChatViewModel {
         let files = mode.startsTurn && shown == nil ? attachmentCoordinator.pendingAttachments : []
         lastSubmitNeverWentOut = false
         guard !text.isEmpty || !files.isEmpty, !isHermesSubmissionUncertain else { return false }
+        // This prompt's own outcome owns the composer from here; a lost answer it may
+        // still be holding is superseded (#508).
+        heldLostAnswer = nil
         sendErrorMessage = nil
         lastError = nil
         // A staging error is stale once the files go; the status line shows the upload and its Cancel.
@@ -3191,7 +3204,8 @@ final class ChatViewModel {
                 sendErrorMessage = String(localized: "Hermes did not accept this message. Your draft is still here.")
             } else {
                 sendErrorMessage = String(localized: "Hermes did not confirm this message. Your draft is still here.")
-                holdForLostAnswer(hermes)
+                sendErrorIsLostAnswer = true
+                holdForLostAnswer(hermes, draft: draft, files: files)
             }
             return false
         }
@@ -3227,7 +3241,8 @@ final class ChatViewModel {
         case .unknown:
             rollbackOptimisticMessage(id: promptID)
             sendErrorMessage = String(localized: "Hermes did not confirm this message. Your draft is still here.")
-            holdForLostAnswer(hermes)
+            sendErrorIsLostAnswer = true
+            holdForLostAnswer(hermes, draft: draft, files: files)
             return false
         }
         // Accepted: the host holds the files now, so their local copies go.
@@ -3236,9 +3251,15 @@ final class ChatViewModel {
     }
 
     /// A prompt's answer was lost: Send waits, and the chat reattaches so the snapshot
-    /// shows whether it ran (#508). Its connect releases the hold.
-    private func holdForLostAnswer(_ hermes: HermesChatTurnCoordinator) {
+    /// shows whether it ran (#508). Its connect releases the hold. What the send was
+    /// holding — `draft` and its `files` — stays for the proof it ran to release; a
+    /// rewind's lost answer holds no composer draft.
+    private func holdForLostAnswer(_ hermes: HermesChatTurnCoordinator, draft: String?, files: [PendingAttachment] = []) {
         isHermesSubmissionUncertain = true
+        heldLostAnswer = draft.map { (text: $0, files: files) }
+        // The proof may already have been showing when the hold was set; only now is
+        // what it held recorded, so the release lands on it.
+        hermes.settleLostConfirmation()
         hermes.recoverAfterLostAnswer()
     }
 
@@ -6349,7 +6370,7 @@ final class ChatViewModel {
         case BotSettingFailure.rejected(_, let message):
             return message
         default:
-            holdForLostAnswer(hermes)
+            holdForLostAnswer(hermes, draft: nil)
             return String(localized: "The server did not confirm the change.")
         }
     }
@@ -8562,6 +8583,32 @@ extension ChatViewModel: HermesChatTurnDelegate {
         drafts.moveDraft(from: from, to: to)
         VoiceNoteOutbox.shared.move(from: VoiceNoteOutbox.chatKey(for: from), to: VoiceNoteOutbox.chatKey(for: to))
         textOutbox.move(from: TextMessageOutbox.chatKey(for: from), to: TextMessageOutbox.chatKey(for: to))
+    }
+
+    /// A lost answer's prompt ran after all, as its turn's frames or its saved prompt row
+    /// prove (#508): the banner goes, the hold releases, and the draft clears the way an
+    /// accepted send's does — when the composer still shows what went out; anything typed
+    /// since is unsent work that stays. The composer empties on `lostAnswerDraftClearTrigger`.
+    func hermesLostPromptDidRun() {
+        if sendErrorIsLostAnswer { sendErrorMessage = nil }
+        isHermesSubmissionUncertain = false
+        let held = heldLostAnswer
+        heldLostAnswer = nil
+        guard let key = hermesDraftKey else { return }
+        submissionMarkRelease = Task { [weak self, drafts] in
+            guard let self else { return }
+            if await drafts.draft(for: key)?.botSubmissionUncertain == true {
+                drafts.setBotSubmissionUncertain(false, for: key)
+            }
+            // The host holds the prompt now, so the draft reads as sent. Only the one
+            // still showing what went out clears — the stored draft formats to the sent
+            // text — since a draft that moved on is new unsent work.
+            guard let held, let draft = await drafts.draft(for: key),
+                  ComposerQuoteMessageFormatter.message(text: draft.text, quotes: draft.quotes) == held.text else { return }
+            drafts.clearDraft(for: key)
+            await self.attachmentCoordinator.consumeSentAttachments(held.files)
+            self.lostAnswerDraftClearTrigger += 1
+        }
     }
 
     func hermesRequestDidFail(_ message: String) {

@@ -33,6 +33,11 @@ import SwiftData
     /// The host accepted a new session's first prompt: the draft under `from` moves to the
     /// session's key `to`.
     func hermesDraftKeyDidChange(from: ChatDraftKey, to: ChatDraftKey)
+    /// A prompt whose confirmation was lost ran after all (#508): its turn began, or its
+    /// saved prompt joined the rows the chat reads. That proof stands in for the host's
+    /// confirmation, so what the lost answer held — banner, draft hold, composer —
+    /// releases as an accepted send's does.
+    func hermesLostPromptDidRun()
     /// The host refused an answer to one of its requests, or a bypass change (#1011).
     func hermesRequestDidFail(_ message: String)
     /// A `/background` task's card changed: started, finished, or its result unavailable (#1013).
@@ -207,6 +212,16 @@ struct HermesChatTranscript: Equatable {
     @ObservationIgnored private var promptAccepted = false
     /// A prompt reached the socket on this chat, whatever its reply: the host may have run it.
     @ObservationIgnored private var promptSent = false
+    /// A prompt went out whose confirmation never came back (#508): the host may have run
+    /// it. The first proof that it did — its turn's frames, or its saved prompt joining the
+    /// rows the chat reads — releases what the lost answer held.
+    @ObservationIgnored private var lostConfirmation = false
+    /// The proof was already showing when the hold was set — the turn began before the
+    /// failure surfaced — so the send's caller settles it once it records what it held.
+    @ObservationIgnored private var lostConfirmationProofSeen = false
+    /// The newest prompt row the chat's pages held when that confirmation was lost, so a
+    /// newer row the host saved names a prompt that ran while the chat could not see it.
+    @ObservationIgnored private var lostConfirmationPromptRowID: Int?
     /// The chat opened as a new session (`.new`), which the host keeps no row for until its
     /// first accepted prompt.
     private let opensNew: Bool
@@ -455,8 +470,15 @@ struct HermesChatTranscript: Equatable {
         let reply: BotJSON
         do {
             reply = try await engine.write(mode.call(runtime: runtime, text: prompt + mentionNote), attempt: attempt,
-                                           runtime: runtime) { dispatched = true; self.promptSent = true }
+                                           runtime: runtime) { dispatched = true; self.promptSent = true; self.lostConfirmation = false }
         } catch {
+            // The prompt reached the socket but its answer never came back: the host may
+            // have run it (#508). Its turn may have begun before the failure surfaced, so
+            // the send's caller settles that proof once it has recorded what it held. A
+            // definite refusal answered the prompt, so nothing ran and nothing is held.
+            if dispatched, !mode.definitelyRejected(error) {
+                holdLostConfirmation(proven: turnsStarted != startsBefore || activeStreamID != nil)
+            }
             // A reaped runtime (4001): reattach to the stored key, which reads only.
             if case BotFailure.rejected(4001) = error { reattach() }
             throw dispatched ? error : NotSent(underlying: error)
@@ -477,6 +499,12 @@ struct HermesChatTranscript: Equatable {
             // what it withdrew.
             break
         case .rejected, .unknown:
+            // A reply this build cannot read may still have been taken (#508): the proof
+            // it ran releases the hold, and nothing is sent again. A readable refusal
+            // answered the prompt, so nothing ran.
+            if outcome == .unknown {
+                holdLostConfirmation(proven: turnsStarted != startsBefore || activeStreamID != nil)
+            }
             return outcome
         }
         requests.promptAccepted()
@@ -700,6 +728,43 @@ struct HermesChatTranscript: Equatable {
         let previous = draftKey
         draftKey = key
         delegate?.hermesDraftKeyDidChange(from: previous, to: key)
+    }
+
+    /// A prompt went out whose confirmation never came back (#508): the host may have run
+    /// it. Records what the chat's pages hold, so a prompt row the host saved later names
+    /// a turn that ran while the chat could not see it. `proven` says its turn was already
+    /// showing when the failure surfaced.
+    private func holdLostConfirmation(proven: Bool) {
+        lostConfirmation = true
+        lostConfirmationProofSeen = proven
+        lostConfirmationPromptRowID = Self.lastPromptRowID(in: history)
+    }
+
+    /// Releases a held lost confirmation whose proof was already showing when the hold was
+    /// set (#508): the send's caller records what it held first, then settles. Later proof
+    /// — the turn's frames, or a reattach's rows — releases on its own.
+    func settleLostConfirmation() {
+        guard lostConfirmation, lostConfirmationProofSeen else { return }
+        releaseLostConfirmation()
+    }
+
+    /// The host demonstrably ran a prompt while a lost confirmation was held (#508): its
+    /// turn began, or its saved prompt joined the rows the chat reads. That is the
+    /// confirmation the lost answer never carried, so the prompt reads accepted.
+    private func releaseLostConfirmation() {
+        guard lostConfirmation else { return }
+        lostConfirmation = false
+        lostConfirmationProofSeen = false
+        requests.promptAccepted()
+        acceptPrompt()
+        delegate?.hermesLostPromptDidRun()
+    }
+
+    /// The newest prompt row the chat's pages hold: the last turn boundary, nil when none
+    /// is saved yet.
+    private static func lastPromptRowID(in rows: HermesTranscriptHistory) -> Int? {
+        HermesTranscriptProjection.project(rows.rows, root: "")
+            .messages.last(where: HermesTranscriptProjection.isTurnBoundary)?.rowID
     }
 
     /// Stops the running turn (`session.interrupt`); false when there is none or a stop is
@@ -958,6 +1023,9 @@ struct HermesChatTranscript: Equatable {
             }
         }
         startLiveActivity()
+        // A turn while a lost confirmation was held is the reply showing (#508): the host
+        // ran a prompt, which stands in for the confirmation the send never got.
+        releaseLostConfirmation()
     }
 
     private func ensureTurn() {
@@ -1207,6 +1275,10 @@ struct HermesChatTranscript: Equatable {
         if continuing { startLiveActivity() }
         readOutcome(snapshot, in: history, followsTurn: continuing, endedTurnStartedAt: running ? nil : followedStart)
         if lostFrames { rebuild(from: snapshot, running: running) }
+        // A prompt row the host saved beyond the one the lost confirmation began with is a
+        // turn that ran while the chat could not see it (#508): the reply shows, so the
+        // hold releases. A running turn released above, at its `beginTurn`.
+        if lostConfirmation, Self.lastPromptRowID(in: history) != lostConfirmationPromptRowID { releaseLostConfirmation() }
     }
 
     /// Takes the plan and the retained failure from a snapshot, with the failed prompt's saved
