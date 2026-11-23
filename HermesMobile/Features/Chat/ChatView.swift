@@ -1013,6 +1013,13 @@ struct ChatView: View {
                 viewModel.routedHermesChat = nil
                 if let onReplaceHermesSession { onReplaceHermesSession(chat) } else { pushedHermesSession = chat }
             }
+            // A lost answer's prompt proved to have run (#508): the host holds it, so the
+            // composer empties like an accepted send's. Not the user's edit, so nothing
+            // persists here — the model cleared the stored draft.
+            .onChange(of: viewModel.lostAnswerDraftClearTrigger) { _, _ in
+                draftMessage = ""
+                draftQuotes = []
+            }
             .onChange(of: viewModel.transcriptRelayoutScrollToken) {
                 // Open a brief snap window so the cache-first reconcile re-pin (and any
                 // message-count auto-follow racing it) lands without an animated jump (#289).
