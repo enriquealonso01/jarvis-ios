@@ -744,7 +744,8 @@ import SwiftData
 
     /// A new chat closed before its create answered a key leaves no row on the host, so its
     /// placeholder leaves with it; one that keyed keeps its row for its first prompt to
-    /// replace.
+    /// replace, and its close tells the host the session was read — the placeholder stands
+    /// in for it until a read brings the row.
     func testAClosedUnkeyedNewChatLeavesItsPlaceholder() async {
         let wire = HermesSessionListWire()
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
@@ -762,6 +763,49 @@ import SwiftData
 
         list.noteHermesNewChatClosed(id: keyed.id)
         XCTAssertEqual(list.sessions.compactMap(\.sessionId).sorted(), ["a", "fresh"])
+        await waitUntil("read mark sent") { wire.unreadWrites.count == 1 }
+        XCTAssertEqual(wire.unreadWrites, [.init(key: "fresh", profile: "default", unread: false)])
+    }
+
+    /// A keyed new chat closes after the reply its user watched: the row the first prompt
+    /// gained had already replaced the placeholder while the chat was open, and the close
+    /// counts as a return from the session the key names — its dot clears at once, the read
+    /// mark reaches the host, and the read that uncovers the list settles it read again.
+    func testAKeyedNewChatClosingMarksItsRowRead() async throws {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire)
+        await list.openHermes()
+
+        let chat = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: chat)
+        // The chat covers the list for its whole life, as one pushed over the rows does.
+        list.pauseHermes()
+
+        // The create answers with the host already holding the first prompt's row: the read
+        // the answer asks for runs covered and replaces the placeholder with that row.
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "fresh", lastActive: 200, unread: true),
+                                          HermesSessionRow(id: "a", lastActive: 100)])]
+        list.noteHermesNewChat(id: chat.id, key: "fresh")
+        await waitUntil("the row replaced the placeholder") {
+            list.sessions.contains { $0.sessionId == "fresh" && $0.lastMessageAt == 200 }
+        }
+        let watched = try XCTUnwrap(list.sessions.first { $0.sessionId == "fresh" })
+        XCTAssertTrue(list.isUnread(watched), "the reply finished while the chat was open")
+
+        // The chat closes: the dot clears before any read, and the host is told.
+        list.noteHermesNewChatClosed(id: chat.id)
+        XCTAssertFalse(list.isUnread(watched), "the dot clears the moment the chat closes")
+        await waitUntil("read mark sent") { wire.unreadWrites.count == 1 }
+        XCTAssertEqual(wire.unreadWrites, [.init(key: "fresh", profile: "default", unread: false)])
+
+        // The list uncovers: its read marks the row read again — the host still had it
+        // unread — and the dot stays clear.
+        await list.openHermes()
+        await waitUntil("marked read again") { wire.unreadWrites.count == 2 }
+        XCTAssertEqual(wire.unreadWrites.map(\.unread), [false, false])
+        let settled = try XCTUnwrap(list.sessions.first { $0.sessionId == "fresh" })
+        XCTAssertFalse(list.isUnread(settled))
     }
 
     /// A create's answer reads the list on the user-action path, not a background change's

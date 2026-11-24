@@ -214,6 +214,11 @@ final class SessionListViewModel {
     /// stands in as a "New Chat" row until the host has one for it, which the key its chat's
     /// create answers finds. `HermesNewChat` below.
     @ObservationIgnored private var hermesNewChats: [UUID: HermesNewChat] = [:]
+    /// The session keys new chats this list opened resolved to, by the chat that opened them.
+    /// A chat opened as `.new` never becomes `.session` on this side — identify only changes
+    /// the chat's own engine — so its close has nowhere else to read the key from once the
+    /// row it stands in for arrived and the placeholder left. Cleaned as each chat closes.
+    @ObservationIgnored private var hermesNewChatKeys: [UUID: String] = [:]
     /// The list read a user's own action asked for, waiting out `userActionDebounce`.
     @ObservationIgnored private var hermesUserReloadTask: Task<Void, Never>?
     /// The project lane that claims each listed session, by session id, from the last
@@ -1945,10 +1950,14 @@ final class SessionListViewModel {
     /// The new chat `id`'s create answered its `key`: its placeholder row takes the key as
     /// its identity — the row a read brings for it then replaces the placeholder, never
     /// joining it — and its cached copy moves with it. A read follows on the user-action
-    /// path, so the row settles without a background change's wait. Nothing for a chat whose
-    /// placeholder left, or already keyed.
+    /// path, so the row settles without a background change's wait. The key outlives all of
+    /// that for the chat's close, which reads it to count as a return from the session it
+    /// names — the placeholder the row replaced is gone by then. The row and cache move only
+    /// while a placeholder holds: nothing for a chat whose placeholder left, or already keyed.
     func noteHermesNewChat(id: UUID, key: String) {
-        guard var chat = hermesNewChats[id], chat.key == nil, !key.isEmpty else { return }
+        guard !key.isEmpty else { return }
+        if hermesNewChatKeys[id] == nil { hermesNewChatKeys[id] = key }
+        guard var chat = hermesNewChats[id], chat.key == nil else { return }
         let unkeyed = chat
         chat.key = key
         hermesNewChats[id] = chat
@@ -1973,10 +1982,18 @@ final class SessionListViewModel {
         return true
     }
 
-    /// The new chat `id`'s chat closed before its create answered a key: the chat's retries
-    /// left with it, so its placeholder row leaves too. One that keyed keeps its row: its
-    /// session is on the host, and the row its first prompt gains replaces the placeholder.
+    /// The new chat `id`'s chat closed. One whose create never answered a key leaves its
+    /// placeholder behind — the chat's retries left with it, so the row it promised never
+    /// comes — while one that keyed keeps its row: its session is on the host, and the row
+    /// its first prompt gains replaces the placeholder. That one's close counts as a return
+    /// from the session its key names, so the reply its user watched there marks it read
+    /// like any session's: the chat's own target stays `.new`, and the placeholder left when
+    /// the row arrived, so the key the identify kept is the only place its close reads it.
     func noteHermesNewChatClosed(id: UUID) {
+        if let key = hermesNewChatKeys.removeValue(forKey: id) {
+            noteHermesReturn(from: key)
+            return
+        }
         guard let chat = hermesNewChats[id], chat.key == nil else { return }
         removeHermesNewChat(id: id)
     }

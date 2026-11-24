@@ -348,8 +348,10 @@ struct HermesSessionListView: View {
         .onChange(of: covers.chat) { old, new in
             if let old, new?.id != old.id {
                 if case .session(_, let key) = old.target { viewModel.noteHermesReturn(from: key) }
-                // A new chat that closed before its create answered a key leaves no row on
-                // the host, so its placeholder leaves with it.
+                // A new chat's close is its own note: one whose create never answered a key
+                // leaves its placeholder (the host holds no row for it), while one that keyed
+                // counts as a return from the session it created — its target stays `.new`,
+                // so it cannot take the line above.
                 if case .new = old.target { viewModel.noteHermesNewChatClosed(id: old.id) }
             }
             if let new, new.id != old?.id { SessionOpenSignpost.begin(sessionID: new.id.uuidString) }
