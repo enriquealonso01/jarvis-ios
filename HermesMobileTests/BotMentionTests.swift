@@ -225,7 +225,12 @@ final class BotMentionTests: XCTestCase {
     /// pictures itself, for its pill and its `@` panel. A session loads none.
     func testABotChatLoadsItsRostersPictures() async throws {
         let chat = await openChat(target: .canonicalChat(profile: "default"), roster: Self.pictured)
-        await waitUntil("the pictures") { chat.turn.settings.avatars.count == 2 }
+        // Past the roster this needs one more round trip per picture, each a hop through
+        // the gateway's reader, and a stalled runner can schedule that hop tens of seconds
+        // late (PR #43's failing CI run consumed the first reply 19 s after sending it,
+        // while unrelated suites in the same run stalled 10-15 s). The roster, read while
+        // openChat still drives the attach, never needed the room; this wait does.
+        await waitUntil("the pictures", budget: 30) { chat.turn.settings.avatars.count == 2 }
         XCTAssertEqual(chat.turn.settings.avatars.keys.sorted(), ["default", "helper"])
         XCTAssertEqual(chat.writes("profiles.get_asset").compactMap { $0["name"]?.text }, ["default", "helper"])
 
@@ -274,13 +279,19 @@ final class BotMentionTests: XCTestCase {
         return Chat(model: model, turn: turn, host: host)
     }
 
-    /// Waits on observation, never a clock, until `condition` holds.
-    private func waitUntil(_ description: String, file: StaticString = #filePath, line: UInt = #line,
+    /// Waits on observation, never a clock, until `condition` holds. `budget` bounds one
+    /// silent window, not the whole wait: the wait still ends the moment the observation
+    /// fires. A loaded full-suite runner can starve the cooperative executors for tens of
+    /// seconds — the same run stalls image- and math-heavy suites 10-15 s — which delays a
+    /// scripted reply's reader hop without anything being wrong, so a wait whose condition
+    /// needs a reply that has not landed yet gives itself room for that.
+    private func waitUntil(_ description: String, budget: TimeInterval = 5,
+                           file: StaticString = #filePath, line: UInt = #line,
                            _ condition: @escaping @MainActor () -> Bool) async {
         while !condition() {
             let changed = XCTestExpectation(description: description)
             withObservationTracking { _ = condition() } onChange: { changed.fulfill() }
-            guard await XCTWaiter().fulfillment(of: [changed], timeout: 5) == .completed else {
+            guard await XCTWaiter().fulfillment(of: [changed], timeout: budget) == .completed else {
                 return XCTFail("Nothing changed while waiting for: \(description)", file: file, line: line)
             }
         }
