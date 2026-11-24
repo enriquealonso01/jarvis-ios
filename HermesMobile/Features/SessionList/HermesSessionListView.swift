@@ -192,8 +192,13 @@ struct HermesSessionListView: View {
                 searchText = opened.query
                 if !opened.query.isEmpty && home != nil { isSearchExpanded = true }
             }, onHermesNewChatIdentified: { key in
+                // Only a new chat's create answer tells the list anything: every attach of a
+                // session's own chat reports its root too, and none of that is a create
+                // answering, so the records the list keeps for new chats stay theirs alone.
+                guard case .new = chat.target else { return }
                 viewModel.noteHermesNewChat(id: chat.id, key: key)
             }, onHermesNewChatFailed: {
+                guard case .new = chat.target else { return }
                 if viewModel.noteHermesNewChatFailed(id: chat.id) { showNewChatNotice() }
             })
             .id(chat.id)

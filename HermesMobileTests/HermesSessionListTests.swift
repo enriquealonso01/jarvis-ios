@@ -836,6 +836,28 @@ import SwiftData
         XCTAssertFalse(list.takeHermesNewChatNotice(), "the late answer keeps the promise")
     }
 
+    /// One new chat's answer keeps its own promise, not another's: the notice a rolled-back
+    /// placeholder owes survives another chat's create answering — a chat the user moved into
+    /// without the list uncovering — and only the owing chat's own late answer clears it.
+    func testAnotherChatsAnswerDoesNotClearARolledBackChatsNotice() async {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire, newChatGrace: .milliseconds(30))
+        await list.openHermes()
+
+        let rolledBack = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: rolledBack)
+        await waitUntil("the rolled-back placeholder left") { list.sessions.count == 1 }
+
+        let working = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: working)
+        list.noteHermesNewChat(id: working.id, key: "fresh")
+        XCTAssertTrue(list.takeHermesNewChatNotice(), "the rolled-back chat still owes its notice")
+
+        list.noteHermesNewChat(id: rolledBack.id, key: "fresh")
+        XCTAssertFalse(list.takeHermesNewChatNotice(), "its own late answer keeps the promise")
+    }
+
     /// A create's answer reads the list on the user-action path, not a background change's
     /// quiet time: with the change's debounce parked, the read still runs.
     func testACreateAnswerReadsTheListOnTheUserActionPath() async {

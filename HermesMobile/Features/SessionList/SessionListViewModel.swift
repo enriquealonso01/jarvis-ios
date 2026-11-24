@@ -219,12 +219,12 @@ final class SessionListViewModel {
     /// the chat's own engine — so its close has nowhere else to read the key from once the
     /// row it stands in for arrived and the placeholder left. Cleaned as each chat closes.
     @ObservationIgnored private var hermesNewChatKeys: [UUID: String] = [:]
-    /// A new chat's placeholder left without its user closing the chat — the create never
-    /// answered within its grace, or the socket it needed dropped — while the chat covered
-    /// the rows, so the notice the list owes waits here for the uncover to show it. A create
-    /// that answers late clears it: the session it promised is real, and its row arrives on
-    /// the next read.
-    @ObservationIgnored private var hermesNewChatNoticePending = false
+    /// The new chats whose placeholders left without their users closing them — the create
+    /// never answered within its grace, or the socket it needed dropped — while the chat
+    /// covered the rows, so the notice each owes waits here for the uncover to show it. A
+    /// chat's own create answering late takes it out — the session it promised is real, and
+    /// its row arrives on the next read — while another chat's answer leaves it owed.
+    @ObservationIgnored private var hermesNewChatNoticePending: Set<UUID> = []
     /// The list read a user's own action asked for, waiting out `userActionDebounce`.
     @ObservationIgnored private var hermesUserReloadTask: Task<Void, Never>?
     /// The project lane that claims each listed session, by session id, from the last
@@ -1942,7 +1942,7 @@ final class SessionListViewModel {
         guard let hermes, case .new = chat.target, hermesNewChats[chat.id] == nil else { return }
         let expiry = Task { [weak self] in
             guard (try? await Task.sleep(for: hermes.newChatGrace)) != nil, let self, !Task.isCancelled else { return }
-            if self.removeExpiredHermesNewChat(id: chat.id) { self.hermesNewChatNoticePending = true }
+            if self.removeExpiredHermesNewChat(id: chat.id) { self.hermesNewChatNoticePending.insert(chat.id) }
         }
         let entry = HermesNewChat(profile: chat.target.profile, startedAt: Date().timeIntervalSince1970,
                                   key: nil, localKey: UUID().uuidString, expiry: expiry)
@@ -1960,11 +1960,14 @@ final class SessionListViewModel {
     /// that for the chat's close, which reads it to count as a return from the session it
     /// names — the placeholder the row replaced is gone by then. The row and cache move only
     /// while a placeholder holds: nothing for a chat whose placeholder left, or already keyed.
+    /// Called for a new chat's create alone — the view wires only new chats here, since every
+    /// attach of a session's own chat reports its root too.
     func noteHermesNewChat(id: UUID, key: String) {
         guard !key.isEmpty else { return }
-        // The session the placeholder promised is real, even answering after its row left:
-        // any notice that rollback owed is off, and the next read brings the row.
-        hermesNewChatNoticePending = false
+        // The session this chat's placeholder promised is real, even answering after its row
+        // left: the notice its own rollback owed is off, and the next read brings the row.
+        // Another chat's notice is not this one's to clear.
+        hermesNewChatNoticePending.remove(id)
         if hermesNewChatKeys[id] == nil { hermesNewChatKeys[id] = key }
         guard var chat = hermesNewChats[id], chat.key == nil else { return }
         let unkeyed = chat
@@ -2028,8 +2031,8 @@ final class SessionListViewModel {
 
     /// The notice a rolled-back placeholder owes, if any, for the list's uncover to show.
     func takeHermesNewChatNotice() -> Bool {
-        defer { hermesNewChatNoticePending = false }
-        return hermesNewChatNoticePending
+        defer { hermesNewChatNoticePending.removeAll() }
+        return !hermesNewChatNoticePending.isEmpty
     }
 
     /// Puts `row` at the top of the rows the list shows, whatever their source, without
@@ -2321,7 +2324,7 @@ final class SessionListViewModel {
         hermesPages = HermesProfilePages()
         hermesReadSerial += 1
         sessions = []; hasMoreSessions = false; isLoadingMoreSessions = false; isViewingCachedData = false
-        hermesUnreadMarks = [:]; hermesReturnedFrom = []; hermesNewChatNoticePending = false
+        hermesUnreadMarks = [:]; hermesReturnedFrom = []; hermesNewChatNoticePending = []
         projects = []; hermesProjectOwners = [:]; hermesProjectsRead = false
         clearHermesSearchMatches()
         errorMessage = nil; sessionLoadError = nil
@@ -2343,7 +2346,7 @@ final class SessionListViewModel {
         guard !hermesShowsAllProfiles else { return false }
         hermesPages = HermesProfilePages()
         sessions = []; hasMoreSessions = false; isViewingCachedData = false
-        hermesUnreadMarks = [:]; hermesReturnedFrom = []
+        hermesUnreadMarks = [:]; hermesReturnedFrom = []; hermesNewChatNoticePending = []
         projects = []; hermesProjectOwners = [:]; hermesProjectsRead = false
         clearHermesSearchMatches()
         setHermesStates([:])
@@ -2381,7 +2384,7 @@ final class SessionListViewModel {
         // keeps trying on its own socket, and a late answer clears it.
         let swept = hermesNewChats.keys.filter { hermesNewChats[$0]?.key == nil }
         for id in swept { removeHermesNewChat(id: id) }
-        if !swept.isEmpty { hermesNewChatNoticePending = true }
+        hermesNewChatNoticePending.formUnion(swept)
         // Rows shown while connecting stay only as the offline state.
         if isCachedCopyProvisional { showCachedHermesSessions(after: error) }
         let listening = hermesIsListening
