@@ -71,6 +71,13 @@ struct HermesSessionListSource {
     var preferences: UserDefaults = .standard
     /// The quiet time after the last `sessions.changed` before the list reads again.
     var changeDebounce: Duration = .seconds(1)
+    /// The wait before a read the user's own action asked for — leaving a chat, a new chat's
+    /// create answering — shorter than `changeDebounce`, so the rows their action changed
+    /// settle without a background change's quiet time.
+    var userActionDebounce: Duration = .seconds(0.4)
+    /// How long a new chat's placeholder row waits for the host's own row before it leaves,
+    /// so no row ghosts: two reload cycles' worth, long enough for a slow read to settle it.
+    var newChatGrace: Duration = .seconds(10)
     /// The gap between live-state re-reads while a row is busy: `sessions.changed` can miss a
     /// turn's end, since post-turn work writes nothing.
     var statusPollInterval: Duration = .seconds(5)
@@ -203,6 +210,12 @@ final class SessionListViewModel {
     @ObservationIgnored private var hermesRetriesStatus = false
     /// Sessions a chat opened from this list has just closed.
     @ObservationIgnored private var hermesReturnedFrom: Set<String> = []
+    /// New chats this list opened, by the `HermesSessionChat.id` that opened them: each
+    /// stands in as a "New Chat" row until the host has one for it, which the key its chat's
+    /// create answers finds. `HermesNewChat` below.
+    @ObservationIgnored private var hermesNewChats: [UUID: HermesNewChat] = [:]
+    /// The list read a user's own action asked for, waiting out `userActionDebounce`.
+    @ObservationIgnored private var hermesUserReloadTask: Task<Void, Never>?
     /// The project lane that claims each listed session, by session id, from the last
     /// `projects.tree` (#1052).
     @ObservationIgnored private var hermesProjectOwners: [String: String] = [:]
@@ -1819,6 +1832,7 @@ final class SessionListViewModel {
     func pauseHermes() {
         hermesIsListening = false
         hermesDebounceTask?.cancel(); hermesDebounceTask = nil
+        hermesUserReloadTask?.cancel(); hermesUserReloadTask = nil
         hermesStatusTask?.cancel(); hermesStatusTask = nil
     }
 
@@ -1898,7 +1912,128 @@ final class SessionListViewModel {
     func noteHermesReturn(from key: String) {
         hermesReturnedFrom.insert(key)
         hermesReadSerial += 1
-        if hermesIsListening { requestHermesReload() }
+        // The dot clears at once — the user just left the chat, so its latest reply was
+        // seen — and the mark this queues tells the host, so Desktop agrees. The read the
+        // return asks for settles whatever else changed, on the user-action path.
+        if let row = sessions.first(where: { $0.sessionId == key }) { setHermesUnread(false, row) }
+        if hermesIsListening { requestHermesUserReload() }
+    }
+
+    // MARK: New chats
+
+    /// Shows a "New Chat" row at once for the new chat `chat` this list just opened: the
+    /// host holds no row for a session until its first prompt, so this row stands in until
+    /// the chat's create answers its key and a read brings the row that key names, which
+    /// replaces it — never joining it. The row's cached copy leaves with it, so nothing
+    /// ghosts, once its grace ends, its chat closes, its attach fails or the list's socket
+    /// drops. Nothing for a chat that is not new, or already has one.
+    func insertHermesPlaceholder(for chat: HermesSessionChat, animation: Animation? = nil) {
+        guard let hermes, case .new = chat.target, hermesNewChats[chat.id] == nil else { return }
+        let expiry = Task { [weak self] in
+            guard (try? await Task.sleep(for: hermes.newChatGrace)) != nil, let self, !Task.isCancelled else { return }
+            self.removeHermesNewChat(id: chat.id)
+        }
+        let entry = HermesNewChat(profile: chat.target.profile, startedAt: Date().timeIntervalSince1970,
+                                  key: nil, localKey: UUID().uuidString, expiry: expiry)
+        hermesNewChats[chat.id] = entry
+        cacheHermesNewChatRow(entry)
+        // Over the host's rows or the cached ones the offline state shows, without reading
+        // either: every read rebuilds the row from the map, so the two never disagree.
+        insertRow(hermesNewChatRow(entry), animation: animation)
+    }
+
+    /// The new chat `id`'s create answered its `key`: its placeholder row takes the key as
+    /// its identity — the row a read brings for it then replaces the placeholder, never
+    /// joining it — and its cached copy moves with it. A read follows on the user-action
+    /// path, so the row settles without a background change's wait. Nothing for a chat whose
+    /// placeholder left, or already keyed.
+    func noteHermesNewChat(id: UUID, key: String) {
+        guard var chat = hermesNewChats[id], chat.key == nil, !key.isEmpty else { return }
+        let unkeyed = chat
+        chat.key = key
+        hermesNewChats[id] = chat
+        // The cached placeholder row moves with the identity the row it stands in for owns.
+        forgetCachedHermesNewChat(unkeyed)
+        cacheHermesNewChatRow(chat)
+        if let index = sessions.firstIndex(where: { $0.sessionId == unkeyed.rowKey }) {
+            var rows = sessions
+            rows[index] = hermesNewChatRow(chat)
+            sessions = rows
+        }
+        requestHermesUserReload()
+    }
+
+    /// The new chat `id`'s create failed, so the row its placeholder promised never comes:
+    /// it leaves, and true says the caller owes the user a notice. A keyed chat keeps its
+    /// row — its session is on the host — as does one whose placeholder already left.
+    @discardableResult
+    func noteHermesNewChatFailed(id: UUID) -> Bool {
+        guard let chat = hermesNewChats[id], chat.key == nil else { return false }
+        removeHermesNewChat(id: id)
+        return true
+    }
+
+    /// The new chat `id`'s chat closed before its create answered a key: the chat's retries
+    /// left with it, so its placeholder row leaves too. One that keyed keeps its row: its
+    /// session is on the host, and the row its first prompt gains replaces the placeholder.
+    func noteHermesNewChatClosed(id: UUID) {
+        guard let chat = hermesNewChats[id], chat.key == nil else { return }
+        removeHermesNewChat(id: id)
+    }
+
+    /// Takes a pending new chat's placeholder row and cached copy away, and shows the rows
+    /// without it. Nothing when its row already left.
+    private func removeHermesNewChat(id: UUID) {
+        guard let chat = hermesNewChats.removeValue(forKey: id) else { return }
+        chat.expiry.cancel()
+        forgetCachedHermesNewChat(chat)
+        removeRow(chat.rowKey)
+    }
+
+    /// Puts `row` at the top of the rows the list shows, whatever their source, without
+    /// reading anything.
+    private func insertRow(_ row: SessionSummary, animation: Animation?) {
+        var rows = sessions
+        rows.insert(row, at: 0)
+        if let animation { withAnimation(animation) { sessions = rows } } else { sessions = rows }
+    }
+
+    /// Takes the row `key` names out of the rows the list shows, whatever their source.
+    private func removeRow(_ key: String) {
+        guard sessions.contains(where: { $0.sessionId == key }) else { return }
+        var rows = sessions
+        rows.removeAll { $0.sessionId == key }
+        sessions = rows
+    }
+
+    /// Writes a pending new chat's placeholder row to the offline cache, so a relaunch
+    /// mid-flight still shows it; a read that reaches the list's end sweeps any row it
+    /// outlives.
+    private func cacheHermesNewChatRow(_ chat: HermesNewChat) {
+        guard let hermesCache else { return }
+        do {
+            try CacheStore.cacheHermesSessions([hermesNewChatRow(chat)], profile: chat.profile, reachedEnd: false,
+                                               serverURL: server, in: hermesCache)
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// Drops a pending new chat's cached placeholder row.
+    private func forgetCachedHermesNewChat(_ chat: HermesNewChat) {
+        guard let hermesCache else { return }
+        do {
+            try CacheStore.removeHermesSession(lineageRoot: chat.rowKey, profile: chat.profile, serverURL: server,
+                                               in: hermesCache)
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// The row a pending new chat shows, in its Profile, started when it opened.
+    private func hermesNewChatRow(_ chat: HermesNewChat) -> SessionSummary {
+        HermesSessionRow(id: chat.rowKey, title: String(localized: "New Chat"), startedAt: chat.startedAt)
+            .summary(in: chat.profile)
     }
 
     /// The list is uncovered with its socket still up: it listens once more and reads at once,
@@ -1984,12 +2119,15 @@ final class SessionListViewModel {
     }
 
     /// Writes each listed Profile's rows read so far to its offline cache, every row it read,
-    /// shown or held back, and says when they run from its list's first page to its end.
+    /// shown or held back, and says when they run from its list's first page to its end. A
+    /// pending new chat's placeholder row is written beside them, so a read that reaches the
+    /// list's end never sweeps the row it still stands in for.
     private func cacheHermesRows(_ pages: HermesProfilePages) {
         guard let hermesCache else { return }
         do {
             for profile in hermesListedProfiles {
                 let rows = pages[profile].rows.map { $0.summary(in: profile, project: hermesProjectOwners[$0.id]) }
+                    + hermesNewChats.values.filter { $0.profile == profile }.map(hermesNewChatRow)
                 try CacheStore.cacheHermesSessions(rows, profile: profile, reachedEnd: !pages[profile].hasMore,
                                                    serverURL: server, in: hermesCache)
             }
@@ -2052,9 +2190,25 @@ final class SessionListViewModel {
         }
     }
 
-    /// The rows `pages` show, each in its Profile and the project lane that claims it.
+    /// The rows `pages` show, each in its Profile and the project lane that claims it, plus a
+    /// "New Chat" placeholder for each pending new chat of a listed Profile whose real row
+    /// has yet to arrive. A placeholder keys on the session key once its chat's create
+    /// answered it, so the row a read brings for that key replaces the placeholder — the
+    /// entry leaves here, never showing beside its row — while one still waiting keeps its
+    /// own identity, which no row can arrive with.
     private func hermesRows(_ pages: HermesProfilePages) -> [SessionSummary] {
-        pages.rows.map { $0.row.summary(in: $0.profile, project: hermesProjectOwners[$0.row.id]) }
+        var rows = pages.rows.map { $0.row.summary(in: $0.profile, project: hermesProjectOwners[$0.row.id]) }
+        guard !hermesNewChats.isEmpty else { return rows }
+        let shown = Set(rows.compactMap(\.sessionId))
+        for (id, chat) in hermesNewChats.filter({ shown.contains($0.value.rowKey) }) {
+            chat.expiry.cancel()
+            hermesNewChats[id] = nil
+        }
+        let listed = Set(hermesListedProfiles)
+        for chat in hermesNewChats.values where listed.contains(chat.profile) {
+            rows.insert(hermesNewChatRow(chat), at: 0)
+        }
+        return rows
     }
 
     private func showHermesFailure(_ error: Error) {
@@ -2178,6 +2332,10 @@ final class SessionListViewModel {
     /// shows once no rows do; pull to refresh tries again.
     private func dropHermes(_ error: Error) {
         guard let hermes else { return }
+        // A new chat whose create never answered a key leaves with the socket: the read the
+        // reconnect brings cannot hold a row for it, so no placeholder ghosts. One that keyed
+        // keeps its row — its session is on the host, and its first prompt's row replaces it.
+        for id in hermesNewChats.keys.filter({ hermesNewChats[$0]?.key == nil }) { removeHermesNewChat(id: id) }
         // Rows shown while connecting stay only as the offline state.
         if isCachedCopyProvisional { showCachedHermesSessions(after: error) }
         let listening = hermesIsListening
@@ -2203,6 +2361,21 @@ final class SessionListViewModel {
         hermesDebounceTask = Task { [weak self] in
             guard (try? await Task.sleep(for: hermes.changeDebounce)) != nil, let self, !Task.isCancelled else { return }
             self.hermesDebounceTask = nil
+            self.requestHermesReload()
+        }
+    }
+
+    /// One list read a user's own action asked for — leaving a chat settled its reply's read
+    /// mark, a new chat's create answered — after `userActionDebounce`, without a background
+    /// change's quiet time: the rows their action changed settle sooner. A `sessions.changed`
+    /// that arrives meanwhile keeps its own, slower clock; the read here absorbs whatever it
+    /// asked for.
+    private func requestHermesUserReload() {
+        guard let hermes else { return }
+        hermesUserReloadTask?.cancel()
+        hermesUserReloadTask = Task { [weak self] in
+            guard (try? await Task.sleep(for: hermes.userActionDebounce)) != nil, let self, !Task.isCancelled else { return }
+            self.hermesUserReloadTask = nil
             self.requestHermesReload()
         }
     }
@@ -2714,4 +2887,22 @@ private struct HermesUnreadMark: Equatable {
     let id = UUID()
     let unread: Bool
     var settledBefore: Int?
+}
+
+/// A new chat this list opened, standing in for the row the host has yet to send: the host
+/// keeps no row for a session until its first prompt. The chat's create answering its session
+/// `key` threads the key in, so the row a read then brings for it replaces the placeholder,
+/// never joining it. `expiry` takes the placeholder away once its grace ends without that, so
+/// no row ghosts.
+private struct HermesNewChat {
+    let profile: String
+    let startedAt: Double
+    /// The session key the chat's create answered, once it has. Until then the placeholder
+    /// keys on `localKey`, so it and the row it becomes never share an identity.
+    var key: String?
+    let localKey: String
+    let expiry: Task<Void, Never>
+
+    /// The placeholder row's identity.
+    var rowKey: String { key ?? localKey }
 }

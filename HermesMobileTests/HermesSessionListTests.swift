@@ -1,5 +1,6 @@
 import XCTest
 import Observation
+import SwiftData
 @testable import HermesMobile
 
 /// A Hermes server's Sessions list (#1046): `SessionListViewModel` with a Hermes backend on a
@@ -231,6 +232,58 @@ import Observation
         await waitUntil("fresh read applied") {
             list.sessions.count == 1 && list.sessions.first.map { !list.isUnread($0) } == true
         }
+    }
+
+    /// Leaving a chat clears its row's dot at once — the chat was just watched — with the
+    /// read mark that tells the host, before any read of the list runs.
+    func testLeavingAChatClearsItsUnreadDotBeforeAnyRead() async throws {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: true)])]
+        let list = makeList(wire)
+        await list.openHermes()
+        let row = try XCTUnwrap(list.sessions.first)
+
+        // The chat opens on the unread row, and its read mark is refused: the dot comes back.
+        wire.unreadFails = true
+        list.beginViewing(row)
+        await waitUntil("refused write") { wire.unreadWrites.count == 1 }
+        XCTAssertTrue(list.isUnread(row), "the host's mark shows again after a refused write")
+        wire.unreadFails = false
+
+        // The chat covers the list, so the return reads nothing yet.
+        list.pauseHermes()
+        list.noteHermesReturn(from: "a")
+        XCTAssertFalse(list.isUnread(row), "the dot clears the moment the chat closes")
+        await waitUntil("read mark sent") { wire.unreadWrites.count == 2 }
+        XCTAssertEqual(wire.unreadWrites.last, .init(key: "a", profile: "default", unread: false))
+
+        // The reply finished while the chat was open, so the host calls it unread: the read
+        // that follows marks it seen again.
+        await list.openHermes()
+        await waitUntil("marked read again") { wire.unreadWrites.count == 3 }
+        XCTAssertEqual(list.sessions.map { list.isUnread($0) }, [false])
+    }
+
+    /// A reply that finishes after the chat closed — the user never watched it land — shows
+    /// its dot: the mark a return wrote settles only marks the host had when a read began.
+    func testAReplyThatFinishesAfterTheReturnShowsItsDot() async throws {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: false)])]
+        let list = makeList(wire)
+        await list.openHermes()
+        let row = try XCTUnwrap(list.sessions.first)
+
+        list.beginViewing(row)
+        await waitUntil("open write") { wire.unreadWrites.count == 1 }
+        list.pauseHermes()
+        list.noteHermesReturn(from: "a")
+        await list.openHermes()
+        await waitUntil("return settled") { wire.unreadWrites.count >= 2 && !list.isUnread(row) }
+
+        // A newer reply lands once the user is back on the list.
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: true)])]
+        wire.emit("sessions.changed")
+        await waitUntil("the newer reply shows") { list.isUnread(row) }
     }
 
     // MARK: Live state
@@ -570,14 +623,208 @@ import Observation
         XCTAssertEqual(afterRead.target, .new(profile: "default"))
     }
 
+    // MARK: New chats
+
+    /// New Session shows its row the moment it opens: the host holds none until the chat's
+    /// first prompt, so the placeholder stands in at the top of the list, and a read with
+    /// no row for it yet keeps it.
+    func testANewChatShowsItsPlaceholderRowAtOnce() async throws {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire)
+        await list.openHermes()
+
+        let chat = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: chat)
+
+        XCTAssertEqual(list.sessions.count, 2, "the row shows without any read")
+        let row = try XCTUnwrap(list.sessions.first { $0.sessionId != "a" })
+        XCTAssertEqual(row.profile, "default")
+        XCTAssertEqual(list.visibleSessions(searchText: "", selectedProjectID: nil).first?.sessionId,
+                       row.sessionId, "the new chat sorts to the top")
+
+        // A read with nothing for the chat yet — the host lists no row before its first
+        // prompt — keeps the placeholder.
+        wire.emit("sessions.changed")
+        await waitUntil("read kept the placeholder") {
+            wire.pageReads.count == 2 && list.sessions.count == 2
+        }
+    }
+
+    /// The key the new chat's create answers becomes its placeholder row's identity, so the
+    /// row the host gains with its first prompt replaces the placeholder, never doubling it.
+    func testTheRowAKeyNamesReplacesThePlaceholder() async throws {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire)
+        await list.openHermes()
+
+        let chat = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: chat)
+        let placeholder = try XCTUnwrap(list.sessions.first { $0.sessionId != "a" }?.sessionId)
+
+        list.noteHermesNewChat(id: chat.id, key: "fresh")
+        XCTAssertNil(list.sessions.first { $0.sessionId == placeholder }, "the row re-keys in place")
+        XCTAssertEqual(list.sessions.compactMap(\.sessionId).filter { $0 == "fresh" }.count, 1)
+
+        // The user-action read the key asked for brings no row yet, so the keyed
+        // placeholder stays; the row the first prompt gains then replaces it.
+        await waitUntil("keyed read") { wire.pageReads.count == 2 }
+        XCTAssertEqual(list.sessions.count, 2, "the keyed placeholder waits for its row")
+
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "fresh", lastActive: 200),
+                                          HermesSessionRow(id: "a", lastActive: 100)])]
+        wire.emit("sessions.changed")
+        await waitUntil("the row replaced the placeholder") {
+            list.sessions.contains { $0.sessionId == "fresh" && $0.lastMessageAt == 200 }
+        }
+        XCTAssertEqual(list.sessions.compactMap(\.sessionId).filter { $0 == "fresh" }.count, 1,
+                       "never two rows for one session")
+    }
+
+    /// A placeholder nothing confirms leaves once its grace ends, so no row ghosts.
+    func testAnUnconfirmedPlaceholderLeavesOnceItsGraceEnds() async {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire, newChatGrace: .milliseconds(30))
+        await list.openHermes()
+
+        let chat = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: chat)
+        XCTAssertEqual(list.sessions.count, 2)
+
+        await waitUntil("the placeholder left") { list.sessions.count == 1 }
+        XCTAssertEqual(list.sessions.compactMap(\.sessionId), ["a"])
+    }
+
+    /// A create that fails takes its placeholder back — with the chat's retries gone once
+    /// it closed, the row it promised never comes — while one that keyed keeps its row: its
+    /// session is on the host.
+    func testAFailedCreateTakesThePlaceholderBack() async {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire)
+        await list.openHermes()
+
+        let failed = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: failed)
+        let keyed = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: keyed)
+        list.noteHermesNewChat(id: keyed.id, key: "fresh")
+
+        XCTAssertTrue(list.noteHermesNewChatFailed(id: failed.id))
+        XCTAssertEqual(list.sessions.compactMap(\.sessionId).sorted(), ["a", "fresh"])
+
+        XCTAssertFalse(list.noteHermesNewChatFailed(id: keyed.id), "a keyed chat's session is real")
+        XCTAssertEqual(list.sessions.compactMap(\.sessionId).sorted(), ["a", "fresh"])
+    }
+
+    /// A lost socket takes the placeholders whose creates never answered back — the read the
+    /// reconnect brings can hold no row for them — while a keyed one keeps its row.
+    func testALostSocketTakesUnkeyedPlaceholdersBack() async {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire, reconnectDelays: [.seconds(3600)])
+        await list.openHermes()
+
+        let unkeyed = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: unkeyed)
+        let keyed = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: keyed)
+        list.noteHermesNewChat(id: keyed.id, key: "fresh")
+
+        wire.onDisconnect?(BotFailure.transport)
+
+        XCTAssertEqual(list.sessions.compactMap(\.sessionId).sorted(), ["a", "fresh"])
+    }
+
+    /// A new chat closed before its create answered a key leaves no row on the host, so its
+    /// placeholder leaves with it; one that keyed keeps its row for its first prompt to
+    /// replace.
+    func testAClosedUnkeyedNewChatLeavesItsPlaceholder() async {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire)
+        await list.openHermes()
+
+        let unkeyed = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: unkeyed)
+        let keyed = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: keyed)
+        list.noteHermesNewChat(id: keyed.id, key: "fresh")
+
+        list.noteHermesNewChatClosed(id: unkeyed.id)
+        XCTAssertEqual(list.sessions.compactMap(\.sessionId).sorted(), ["a", "fresh"])
+
+        list.noteHermesNewChatClosed(id: keyed.id)
+        XCTAssertEqual(list.sessions.compactMap(\.sessionId).sorted(), ["a", "fresh"])
+    }
+
+    /// A create's answer reads the list on the user-action path, not a background change's
+    /// quiet time: with the change's debounce parked, the read still runs.
+    func testACreateAnswerReadsTheListOnTheUserActionPath() async {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire, changeDebounce: .seconds(3600))
+        await list.openHermes()
+
+        let chat = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: chat)
+        list.noteHermesNewChat(id: chat.id, key: "fresh")
+
+        await waitUntil("the user-action read ran") { wire.pageReads.count == 2 }
+    }
+
+    /// The placeholder's cached copy shows a relaunch mid-flight, moves with the key the
+    /// create answers, and leaves with the placeholder, surviving the end-reaching read that
+    /// would sweep a row the pages lack.
+    func testAPlaceholderIsCachedAndMovesWithItsKey() async throws {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire)
+        let context = try makeContext()
+        await list.openHermes(modelContext: context)
+
+        let chat = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: chat)
+        let placeholder = try XCTUnwrap(list.sessions.first { $0.sessionId != "a" }?.sessionId)
+        XCTAssertEqual(try CacheStore.cachedHermesSessions(serverURL: server, profile: "default", in: context)
+            .compactMap(\.sessionId).sorted(), ["a", placeholder])
+
+        list.noteHermesNewChat(id: chat.id, key: "fresh")
+        // The read the key asks for reaches the list's end, so only the merge with the
+        // placeholder keeps the cached row a sweep would take.
+        await waitUntil("keyed read applied") { wire.pageReads.count == 2 }
+        XCTAssertEqual(try CacheStore.cachedHermesSessions(serverURL: server, profile: "default", in: context)
+            .compactMap(\.sessionId).sorted(), ["a", "fresh"])
+
+        // A chat that closes before its create answers takes its cached copy with it; the
+        // keyed one keeps its row, its session real on the host.
+        let unkeyed = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: unkeyed)
+        XCTAssertEqual(try CacheStore.cachedHermesSessions(serverURL: server, profile: "default", in: context)
+            .compactMap(\.sessionId).count, 3)
+        list.noteHermesNewChatClosed(id: unkeyed.id)
+        XCTAssertEqual(try CacheStore.cachedHermesSessions(serverURL: server, profile: "default", in: context)
+            .compactMap(\.sessionId).sorted(), ["a", "fresh"])
+    }
+
     // MARK: Fixture
 
     private func makeList(_ wire: HermesSessionListWire, profile: String? = "default",
-                          reconnectDelays: [Duration] = [.seconds(3600)]) -> SessionListViewModel {
+                          reconnectDelays: [Duration] = [.seconds(3600)], changeDebounce: Duration = .zero,
+                          newChatGrace: Duration = .seconds(3600),
+                          userActionDebounce: Duration = .zero) -> SessionListViewModel {
         SessionListViewModel(server: server, unreadStore: SessionUnreadStore(defaults: defaults), hermes: HermesSessionListSource(
             connection: connection, profile: profile, makeWire: { _ in wire }, preferences: defaults,
-            changeDebounce: .zero, statusPollInterval: .seconds(3600), reconnectDelays: reconnectDelays
+            changeDebounce: changeDebounce, userActionDebounce: userActionDebounce, newChatGrace: newChatGrace,
+            statusPollInterval: .seconds(3600), reconnectDelays: reconnectDelays
         ))
+    }
+
+    private func makeContext() throws -> ModelContext {
+        ModelContext(try ModelContainer(for: CachedSession.self, CachedMessage.self,
+                                         configurations: ModelConfiguration(isStoredInMemoryOnly: true)))
     }
 
     private func page(_ rows: [HermesSessionRow]) -> HermesSessionPage { HermesSessionPage(rows: rows) }

@@ -392,6 +392,14 @@ final class ChatViewModel {
     /// and reads its bot's Bot Chat's copy of that root while it has none (#1144). Nil for any
     /// other chat.
     @ObservationIgnored var hermesBotChatRoot: String?
+    /// Told the key this new chat's create answered, so the list that opened it can stand its
+    /// placeholder row in for the row the key names. Set by the opening list; unset for any
+    /// chat it did not open as new.
+    @ObservationIgnored var hermesNewChatDidIdentify: ((String) -> Void)?
+    /// Told this new chat's attach failed, so the list that opened it can take its
+    /// placeholder row back. Set by the opening list; unset for any chat it did not open as
+    /// new.
+    @ObservationIgnored var hermesNewChatDidFail: (() -> Void)?
     /// A session's lineage root as its row or link named it (`HermesSessionChat.lineageRoot`);
     /// nil asks the cache.
     @ObservationIgnored var hermesLineageRoot: String?
@@ -8432,6 +8440,9 @@ extension ChatViewModel: HermesChatTurnDelegate {
     }
 
     func hermesAttachDidFail(_ error: Error) {
+        // A new chat's create is part of its attach, so a first failure here is the create
+        // failing: the list's placeholder for it leaves rather than ghosting.
+        if case .new = hermesTurn?.engine.target { hermesNewChatDidFail?() }
         if !showCachedHermesTranscript(after: error), case .canonicalChat = hermesTurn?.engine.target {
             _ = showCachedHermesTranscript()
         }
@@ -8442,6 +8453,7 @@ extension ChatViewModel: HermesChatTurnDelegate {
     /// shown from another root, a Bot Chat since made again, leaves the screen, and every
     /// other root's leaves the cache.
     func hermesDidIdentify(root: String) {
+        hermesNewChatDidIdentify?(root)
         guard let engine = hermesTurn?.engine else { return }
         // Taken even before the chat has its cache, so the writes after it still count.
         hermesCacheEpoch = CacheStore.hermesCacheEpoch(serverURL: engine.server)

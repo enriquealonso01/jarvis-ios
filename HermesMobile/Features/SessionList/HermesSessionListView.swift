@@ -177,14 +177,24 @@ struct HermesSessionListView: View {
         // Keyed by the chat, so a Profile picked in an empty chat replaces its screen (#1015).
         .navigationDestination(item: $covers.chat) { chat in
             // `/sessions` and `/resume` in the chat come back here, in the chat's Profile, searching
-            // what they name.
-            ChatView(hermesSession: chat, onReplace: { self.covers.chat = $0 }, onOpenSessions: { opened in
+            // what they name. A new session's create answer and its failures reach the list, so
+            // the row it stands in for settles or leaves.
+            ChatView(hermesSession: chat, onReplace: { replaced in
+                self.covers.chat = replaced
+                // A `/clear` or `/new` replacement starts another new session, whose row the
+                // host has yet to send: the placeholder shows for it too.
+                if case .new = replaced.target { self.viewModel.insertHermesPlaceholder(for: replaced) }
+            }, onOpenSessions: { opened in
                 self.covers.chat = nil
                 if let listed = opened.profile, listed != profile || viewModel.hermesShowsAllProfiles {
                     Task { await viewModel.selectHermesProfile(listed) }
                 }
                 searchText = opened.query
                 if !opened.query.isEmpty && home != nil { isSearchExpanded = true }
+            }, onHermesNewChatIdentified: { key in
+                viewModel.noteHermesNewChat(id: chat.id, key: key)
+            }, onHermesNewChatFailed: {
+                if viewModel.noteHermesNewChatFailed(id: chat.id) { showNewChatNotice() }
             })
             .id(chat.id)
         }
@@ -336,7 +346,12 @@ struct HermesSessionListView: View {
             }
         }
         .onChange(of: covers.chat) { old, new in
-            if case .session(_, let key)? = old?.target, new?.id != old?.id { viewModel.noteHermesReturn(from: key) }
+            if let old, new?.id != old.id {
+                if case .session(_, let key) = old.target { viewModel.noteHermesReturn(from: key) }
+                // A new chat that closed before its create answered a key leaves no row on
+                // the host, so its placeholder leaves with it.
+                if case .new = old.target { viewModel.noteHermesNewChatClosed(id: old.id) }
+            }
             if let new, new.id != old?.id { SessionOpenSignpost.begin(sessionID: new.id.uuidString) }
             // A closed chat uncovers the list: `.task` does not run again, so it opens here,
             // listens once more and reads at once — the read mark a reply that finished while
@@ -495,8 +510,12 @@ struct HermesSessionListView: View {
 
     private func startNewSession(in folder: String?) {
         guard let profile else { return }
-        covers.chat = HermesSessionChat(server: entry.server, connection: entry.connection,
-                                        target: .new(profile: profile, cwd: folder))
+        let chat = HermesSessionChat(server: entry.server, connection: entry.connection,
+                                    target: .new(profile: profile, cwd: folder))
+        // The row shows before the chat's create has a session for it: the placeholder stands
+        // in until the row the create's key names arrives.
+        viewModel.insertHermesPlaceholder(for: chat, animation: mutationAnimation)
+        covers.chat = chat
     }
 
     /// This phone's offline-born chats (Feature: offline-first): each shows as a row
@@ -740,7 +759,10 @@ struct HermesSessionListView: View {
 
     /// Opens the new session a Shortcut asked for (#1180) over whatever covers the rows.
     private func openPendingNewChat() {
-        if covers.open(pendingNewChat, on: entry, listed: profile, isLive: viewModel.isHermesLive) { pendingNewChat = nil }
+        if covers.open(pendingNewChat, on: entry, listed: profile, isLive: viewModel.isHermesLive) {
+            pendingNewChat = nil
+            if let chat = covers.chat { viewModel.insertHermesPlaceholder(for: chat) }
+        }
     }
 
     /// Opens a share (#1181) as a new session over whatever covers the rows (#1212), once `transfer`
@@ -760,6 +782,7 @@ struct HermesSessionListView: View {
                 try await share.transfer(into: chat, route: didRouteShare)
                 if !Task.isCancelled {
                     covers.bringForward()
+                    viewModel.insertHermesPlaceholder(for: chat)
                     covers.chat = chat
                 }
             } catch is CancellationError {
@@ -785,6 +808,14 @@ struct HermesSessionListView: View {
     }
 
     private func showLinkNotice(_ message: String) {
+        actionToast.show(ActionToast(message: message, systemImage: "exclamationmark.triangle", accessibilityLabel: message))
+    }
+
+    /// The new chat the list showed a row for never started: its create failed, and the chat
+    /// that opens keeps working — offline-first, its first message queues — but the row
+    /// standing in for the session leaves.
+    private func showNewChatNotice() {
+        let message = String(localized: "Could not start a new chat.")
         actionToast.show(ActionToast(message: message, systemImage: "exclamationmark.triangle", accessibilityLabel: message))
     }
 
