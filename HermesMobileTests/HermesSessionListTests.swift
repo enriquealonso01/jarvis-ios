@@ -166,7 +166,8 @@ import SwiftData
     }
 
     /// The reply you just watched finished after the chat marked the session read, so the
-    /// host calls it unread: the first read after returning marks it read again, and only it.
+    /// host calls it unread: the return marks it read at once, and the first read after
+    /// returning marks it read again, and only it.
     func testReturningFromAChatMarksItReadAgain() async throws {
         let wire = HermesSessionListWire()
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: false), HermesSessionRow(id: "b", unread: true)])]
@@ -179,10 +180,10 @@ import SwiftData
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: true), HermesSessionRow(id: "b", unread: true)])]
         list.noteHermesReturn(from: "a")
         await list.openHermes()
-        await waitUntil("marked read again") { wire.unreadWrites.count == 2 }
+        await waitUntil("marked read again") { wire.unreadWrites.count == 3 }
 
-        XCTAssertEqual(wire.unreadWrites.map(\.key), ["a", "a"])
-        XCTAssertEqual(wire.unreadWrites.map(\.unread), [false, false])
+        XCTAssertEqual(wire.unreadWrites.map(\.key), ["a", "a", "a"])
+        XCTAssertEqual(wire.unreadWrites.map(\.unread), [false, false, false])
         XCTAssertEqual(list.sessions.map { list.isUnread($0) }, [false, true])
     }
 
@@ -210,8 +211,9 @@ import SwiftData
     }
 
     /// A list read that began before the chat closed carries pages from before the reply, so
-    /// it must never settle: the return discards it, and the read that follows marks the
-    /// seen chat read again rather than showing the host's stale unread mark.
+    /// it must never settle: the return discards it — marking the seen chat read at once —
+    /// and the read that follows marks it read again rather than showing the host's stale
+    /// unread mark.
     func testAReadBegunBeforeTheChatClosedIsDiscardedNotApplied() async throws {
         let wire = HermesSessionListWire()
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: false)])]
@@ -227,8 +229,8 @@ import SwiftData
         wire.holdsPages = false
         wire.release()
 
-        await waitUntil("marked read again") { wire.unreadWrites.count == 1 }
-        XCTAssertEqual(wire.unreadWrites.map(\.unread), [false], "the seen chat is marked read, not unread")
+        await waitUntil("marked read again") { wire.unreadWrites.count == 2 }
+        XCTAssertEqual(wire.unreadWrites.map(\.unread), [false, false], "the seen chat is marked read, not unread")
         await waitUntil("fresh read applied") {
             list.sessions.count == 1 && list.sessions.first.map { !list.isUnread($0) } == true
         }
@@ -283,7 +285,9 @@ import SwiftData
         // A newer reply lands once the user is back on the list.
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a", unread: true)])]
         wire.emit("sessions.changed")
-        await waitUntil("the newer reply shows") { list.isUnread(row) }
+        await waitUntil("the newer reply shows") {
+            list.sessions.first { $0.sessionId == "a" }.map { list.isUnread($0) } == true
+        }
     }
 
     // MARK: Live state
@@ -789,7 +793,7 @@ import SwiftData
         list.insertHermesPlaceholder(for: chat)
         let placeholder = try XCTUnwrap(list.sessions.first { $0.sessionId != "a" }?.sessionId)
         XCTAssertEqual(try CacheStore.cachedHermesSessions(serverURL: server, profile: "default", in: context)
-            .compactMap(\.sessionId).sorted(), ["a", placeholder])
+            .compactMap(\.sessionId).sorted(), [placeholder, "a"].sorted())
 
         list.noteHermesNewChat(id: chat.id, key: "fresh")
         // The read the key asks for reaches the list's end, so only the merge with the
