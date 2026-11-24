@@ -336,6 +336,30 @@ import SwiftUI
         XCTAssertEqual(chat.writes("prompt.submit").count, 1, "nothing is resent")
     }
 
+    /// A new chat's create is part of its attach, so a failure reads as the chat never
+    /// starting — but only once the engine will not retry it on its own: a refusal the
+    /// engine stops at takes the list's placeholder back, while a momentary dropout it
+    /// retries keeps the row the placeholder promised.
+    func testANewChatTakesItsPlaceholderBackOnlyOnceTheEngineStopsRetrying() async {
+        // 403: the engine will not reconnect on its own, so the refusal is final.
+        var refusals = 0
+        _ = await openChat(key: "fresh", target: .new(profile: "default"), expectAttached: false) { host, model in
+            host.always("session.create", .init(error: 403))
+            model.hermesNewChatDidFail = { refusals += 1 }
+        }
+        XCTAssertEqual(refusals, 1, "the final refusal took the placeholder back")
+
+        // 503: the engine retries it on its own backoff, so the row the placeholder
+        // promised stays until a final refusal or its own grace ends it.
+        var blips = 0
+        let blipped = await openChat(key: "fresh", target: .new(profile: "default"), expectAttached: false) { host, model in
+            host.always("session.create", .init(error: 503))
+            model.hermesNewChatDidFail = { blips += 1 }
+        }
+        XCTAssertEqual(blips, 0, "a blip the engine retries is not a failure yet")
+        blipped.turn.engine.suspend()
+    }
+
     /// #508: the turn's own frames can land before the lost reply surfaces. Then the send
     /// reads accepted at once — no banner, no hold, the draft clears — and the prompt is
     /// never queued for the next connect, which would resend what the host already ran.
@@ -1335,7 +1359,8 @@ import SwiftUI
     private func openChat(runtime: String = "runtime", key: String = "tip", profile: String = "default",
                           target: ConversationTarget? = nil, drafts: ChatDraftStore? = nil, lineageRoot: String? = nil,
                           history: [BotJSON] = [], snapshot: BotJSON? = nil, subagents: [BotJSON] = [],
-                          rpcDeadline: Duration = .seconds(30)) async -> Chat {
+                          rpcDeadline: Duration = .seconds(30), expectAttached: Bool = true,
+                          configure: ((BotSocketHost, ChatViewModel) -> Void)? = nil) async -> Chat {
         addTeardownBlock { HermesHostFixture.reset() }
         let host = BotSocketHost()
         host.always("subagent.list", .init(result: .object(["subagents": .array(subagents), "delegations": .array([])])))
@@ -1358,8 +1383,9 @@ import SwiftUI
             draftStore: drafts ?? ChatDraftStore(persistence: InMemoryDraftPersistence(), debounceDuration: .seconds(60)),
             backend: .hermes(turn)
         )
+        if let configure { configure(host, model) }
         await model.loadMessages()
-        XCTAssertEqual(engine.connectionState, .connected)
+        if expectAttached { XCTAssertEqual(engine.connectionState, .connected) }
         return Chat(model: model, turn: turn, host: host, client: client, liveActivity: liveActivity)
     }
 

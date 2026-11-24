@@ -219,6 +219,12 @@ final class SessionListViewModel {
     /// the chat's own engine — so its close has nowhere else to read the key from once the
     /// row it stands in for arrived and the placeholder left. Cleaned as each chat closes.
     @ObservationIgnored private var hermesNewChatKeys: [UUID: String] = [:]
+    /// A new chat's placeholder left without its user closing the chat — the create never
+    /// answered within its grace, or the socket it needed dropped — while the chat covered
+    /// the rows, so the notice the list owes waits here for the uncover to show it. A create
+    /// that answers late clears it: the session it promised is real, and its row arrives on
+    /// the next read.
+    @ObservationIgnored private var hermesNewChatNoticePending = false
     /// The list read a user's own action asked for, waiting out `userActionDebounce`.
     @ObservationIgnored private var hermesUserReloadTask: Task<Void, Never>?
     /// The project lane that claims each listed session, by session id, from the last
@@ -1936,7 +1942,7 @@ final class SessionListViewModel {
         guard let hermes, case .new = chat.target, hermesNewChats[chat.id] == nil else { return }
         let expiry = Task { [weak self] in
             guard (try? await Task.sleep(for: hermes.newChatGrace)) != nil, let self, !Task.isCancelled else { return }
-            self.removeHermesNewChat(id: chat.id)
+            if self.removeExpiredHermesNewChat(id: chat.id) { self.hermesNewChatNoticePending = true }
         }
         let entry = HermesNewChat(profile: chat.target.profile, startedAt: Date().timeIntervalSince1970,
                                   key: nil, localKey: UUID().uuidString, expiry: expiry)
@@ -1956,6 +1962,9 @@ final class SessionListViewModel {
     /// while a placeholder holds: nothing for a chat whose placeholder left, or already keyed.
     func noteHermesNewChat(id: UUID, key: String) {
         guard !key.isEmpty else { return }
+        // The session the placeholder promised is real, even answering after its row left:
+        // any notice that rollback owed is off, and the next read brings the row.
+        hermesNewChatNoticePending = false
         if hermesNewChatKeys[id] == nil { hermesNewChatKeys[id] = key }
         guard var chat = hermesNewChats[id], chat.key == nil else { return }
         let unkeyed = chat
@@ -2005,6 +2014,22 @@ final class SessionListViewModel {
         chat.expiry.cancel()
         forgetCachedHermesNewChat(chat)
         removeRow(chat.rowKey)
+    }
+
+    /// A pending new chat's grace ended: the row it stood in for never came, so the
+    /// placeholder leaves rather than ghosting. True when the create never answered either
+    /// — that chat never started, so the list owes the notice — while one that keyed has a
+    /// session on the host whose row is only late, and owes nothing.
+    private func removeExpiredHermesNewChat(id: UUID) -> Bool {
+        guard let chat = hermesNewChats[id] else { return false }
+        removeHermesNewChat(id: id)
+        return chat.key == nil
+    }
+
+    /// The notice a rolled-back placeholder owes, if any, for the list's uncover to show.
+    func takeHermesNewChatNotice() -> Bool {
+        defer { hermesNewChatNoticePending = false }
+        return hermesNewChatNoticePending
     }
 
     /// Puts `row` at the top of the rows the list shows, whatever their source, without
@@ -2296,7 +2321,7 @@ final class SessionListViewModel {
         hermesPages = HermesProfilePages()
         hermesReadSerial += 1
         sessions = []; hasMoreSessions = false; isLoadingMoreSessions = false; isViewingCachedData = false
-        hermesUnreadMarks = [:]; hermesReturnedFrom = []
+        hermesUnreadMarks = [:]; hermesReturnedFrom = []; hermesNewChatNoticePending = false
         projects = []; hermesProjectOwners = [:]; hermesProjectsRead = false
         clearHermesSearchMatches()
         errorMessage = nil; sessionLoadError = nil
@@ -2352,7 +2377,11 @@ final class SessionListViewModel {
         // A new chat whose create never answered a key leaves with the socket: the read the
         // reconnect brings cannot hold a row for it, so no placeholder ghosts. One that keyed
         // keeps its row — its session is on the host, and its first prompt's row replaces it.
-        for id in hermesNewChats.keys.filter({ hermesNewChats[$0]?.key == nil }) { removeHermesNewChat(id: id) }
+        // A swept chat never started, so the list owes its notice at the uncover; the chat
+        // keeps trying on its own socket, and a late answer clears it.
+        let swept = hermesNewChats.keys.filter { hermesNewChats[$0]?.key == nil }
+        for id in swept { removeHermesNewChat(id: id) }
+        if !swept.isEmpty { hermesNewChatNoticePending = true }
         // Rows shown while connecting stay only as the offline state.
         if isCachedCopyProvisional { showCachedHermesSessions(after: error) }
         let listening = hermesIsListening

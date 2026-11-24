@@ -358,16 +358,20 @@ struct HermesSessionListView: View {
             // A closed chat uncovers the list: `.task` does not run again, so it opens here,
             // listens once more and reads at once — the read mark a reply that finished while
             // the chat was open owes, and everything that changed meanwhile, show without a
-            // manual refresh.
+            // manual refresh. A new chat that rolled back under the cover says so now.
             if old != nil, new == nil, !covers.isCoveredByScreen {
+                showHermesNewChatNoticeIfNeeded()
                 Task { await viewModel.openHermes(modelContext: modelContext) }
             }
         }
         // A pushed screen (Tasks, Files, …) closed the list's socket when it covered the rows;
         // uncovered, the list opens again and is live.
         .onChange(of: covers.isCoveredByScreen) { _, covered in
-            if !covered, covers.chat == nil, !viewModel.isHermesConnected {
-                Task { await viewModel.openHermes(modelContext: modelContext) }
+            if !covered, covers.chat == nil {
+                showHermesNewChatNoticeIfNeeded()
+                if !viewModel.isHermesConnected {
+                    Task { await viewModel.openHermes(modelContext: modelContext) }
+                }
             }
         }
         .onChange(of: viewModel.sessions.count, initial: true) { LaunchSignpost.end(rows: viewModel.sessions.count) }
@@ -819,6 +823,13 @@ struct HermesSessionListView: View {
     private func showNewChatNotice() {
         let message = String(localized: "Could not start a new chat.")
         actionToast.show(ActionToast(message: message, systemImage: "exclamationmark.triangle", accessibilityLabel: message))
+    }
+
+    /// A new chat that rolled back while its chat covered the rows — the create never
+    /// answered within its grace, or the socket it needed dropped — owes the list's notice,
+    /// which waited for this uncover to be seen.
+    private func showHermesNewChatNoticeIfNeeded() {
+        if viewModel.takeHermesNewChatNotice() { showNewChatNotice() }
     }
 
     private var mutationAnimation: Animation? { SessionListMotion.sessionMutationAnimation(reduceMotion: reduceMotion) }

@@ -8440,9 +8440,10 @@ extension ChatViewModel: HermesChatTurnDelegate {
     }
 
     func hermesAttachDidFail(_ error: Error) {
-        // A new chat's create is part of its attach, so a first failure here is the create
-        // failing: the list's placeholder for it leaves rather than ghosting.
-        if case .new = hermesTurn?.engine.target { hermesNewChatDidFail?() }
+        // A new chat's create is part of its attach, but a failure here may be a blip the
+        // engine retries on its own backoff: the list's placeholder for it waits for the
+        // failure the engine will not retry (`hermesConnectionDidChange`) or its own grace,
+        // so a momentary dropout does not take the row it promised back.
         if !showCachedHermesTranscript(after: error), case .canonicalChat = hermesTurn?.engine.target {
             _ = showCachedHermesTranscript()
         }
@@ -8591,6 +8592,10 @@ extension ChatViewModel: HermesChatTurnDelegate {
             Task { [weak self] in await self?.drainTextOutbox() }
             return
         }
+        // The engine will not retry this failure on its own. A chat still on its `.new`
+        // target never got its create through — the list's placeholder for it leaves now,
+        // not on a momentary blip the engine retried past.
+        if case .new = hermesTurn?.engine.target { hermesNewChatDidFail?() }
         // With nothing on screen yet it is the chat's error, with its retry; otherwise the composer's.
         if messages.isEmpty {
             errorMessage = failure

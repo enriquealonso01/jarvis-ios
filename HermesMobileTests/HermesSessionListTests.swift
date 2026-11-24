@@ -686,7 +686,8 @@ import SwiftData
                        "never two rows for one session")
     }
 
-    /// A placeholder nothing confirms leaves once its grace ends, so no row ghosts.
+    /// A placeholder nothing confirms leaves once its grace ends, so no row ghosts — and,
+    /// its create never having answered, the uncovered list is owed the notice.
     func testAnUnconfirmedPlaceholderLeavesOnceItsGraceEnds() async {
         let wire = HermesSessionListWire()
         wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
@@ -699,6 +700,7 @@ import SwiftData
 
         await waitUntil("the placeholder left") { list.sessions.count == 1 }
         XCTAssertEqual(list.sessions.compactMap(\.sessionId), ["a"])
+        XCTAssertTrue(list.takeHermesNewChatNotice(), "the chat never started, so the list is owed its notice")
     }
 
     /// A create that fails takes its placeholder back — with the chat's retries gone once
@@ -740,6 +742,7 @@ import SwiftData
         wire.onDisconnect?(BotFailure.transport)
 
         XCTAssertEqual(list.sessions.compactMap(\.sessionId).sorted(), ["a", "fresh"])
+        XCTAssertTrue(list.takeHermesNewChatNotice(), "the swept chat never started, so the list is owed its notice")
     }
 
     /// A new chat closed before its create answered a key leaves no row on the host, so its
@@ -808,6 +811,31 @@ import SwiftData
         XCTAssertFalse(list.isUnread(settled))
     }
 
+    /// A create that failed, timed out, or lost its socket owes the uncovered list its
+    /// notice; a keyed chat and a late-answered create owe nothing. The keyed chat's session
+    /// is on the host — its row is only late — and a create that answers after its row left
+    /// keeps the promise the placeholder made.
+    func testAKeyedOrLateAnsweredPlaceholderOwesNoNotice() async {
+        let wire = HermesSessionListWire()
+        wire.pages["default"] = [0: page([HermesSessionRow(id: "a", lastActive: 100)])]
+        let list = makeList(wire, newChatGrace: .milliseconds(30))
+        await list.openHermes()
+
+        // Keyed: the session is real, so a row that never came within the grace owes nothing.
+        let keyed = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: keyed)
+        list.noteHermesNewChat(id: keyed.id, key: "fresh")
+        await waitUntil("the keyed placeholder left") { list.sessions.count == 1 }
+        XCTAssertFalse(list.takeHermesNewChatNotice(), "its row is only late, not lost")
+
+        // A create answering after its row left clears the notice the rollback owed.
+        let late = HermesSessionChat(server: server, connection: connection, target: .new(profile: "default"))
+        list.insertHermesPlaceholder(for: late)
+        await waitUntil("the late placeholder left") { list.sessions.count == 1 }
+        list.noteHermesNewChat(id: late.id, key: "fresh")
+        XCTAssertFalse(list.takeHermesNewChatNotice(), "the late answer keeps the promise")
+    }
+
     /// A create's answer reads the list on the user-action path, not a background change's
     /// quiet time: with the change's debounce parked, the read still runs.
     func testACreateAnswerReadsTheListOnTheUserActionPath() async {
@@ -821,6 +849,18 @@ import SwiftData
         list.noteHermesNewChat(id: chat.id, key: "fresh")
 
         await waitUntil("the user-action read ran") { wire.pageReads.count == 2 }
+    }
+
+    /// The list reads on two clocks, and the split is the feature: a user's own action —
+    /// leaving a chat, a create answering — waits 0.4 s for its read, while a background
+    /// `sessions.changed` keeps its 1 s quiet time, so the rows the user changed settle
+    /// sooner than the host's noise. Both clocks are pinned as the app builds them, so a
+    /// change to either is a deliberate one.
+    func testAUsersOwnActionWaitsLessThanAChange() {
+        let source = HermesSessionListSource(connection: connection, profile: "default",
+                                             makeWire: { _ in HermesSessionListWire() })
+        XCTAssertEqual(source.userActionDebounce, .milliseconds(400))
+        XCTAssertEqual(source.changeDebounce, .seconds(1))
     }
 
     /// The placeholder's cached copy shows a relaunch mid-flight, moves with the key the
