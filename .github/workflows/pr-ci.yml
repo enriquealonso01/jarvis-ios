@@ -157,14 +157,10 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"udid={udid}\n")
           PYTHON
-          # Start booting the simulator now, so the boot overlaps with the build instead of
-          # costing the test step its first minutes (measured 2026-11-24: a 39-test class took
-          # 7m40s, of which the tests themselves took 2 seconds). simctl returns at once; the
-          # test step waits for the boot to finish. A build-only run needs no simulator.
-          if [[ "${RUN_MODE}" != "compile" ]]; then
-            udid=$(sed -nE 's/^udid=//p' "${GITHUB_OUTPUT}" | tail -1)
-            xcrun simctl boot "${udid}" || echo "Pre-boot did not start; the test step boots the simulator itself."
-          fi
+          # Do NOT boot the simulator here to overlap with the build. Measured 2026-11-25 (run
+          # 45655671867): a first boot on this runner keeps xcodebuild waiting about four minutes
+          # before it resolves packages, then competes with the compile, and the build step went
+          # from under 6 minutes to over 15.
 
       - name: Build for testing
         id: build
@@ -200,10 +196,6 @@ jobs:
             echo "- Tests (mode ${RUN_MODE}): $((SECONDS - start_seconds))s" >> "${GITHUB_STEP_SUMMARY}"
           }
           trap report_duration EXIT
-          # The simulator has been booting since the "Select simulator" step; -b boots it here if
-          # that did not happen. Tests then run on this device itself.
-          xcrun simctl bootstatus "${SIMULATOR_UDID}" -b 2>&1 | tail -3
-          echo "- Simulator ready after waiting $((SECONDS - start_seconds))s in the test step" >> "${GITHUB_STEP_SUMMARY}"
           # mode=tests narrows the run to the named classes or methods. The names
           # come from a manual input, so they are checked before reaching xcodebuild.
           only_args=()
