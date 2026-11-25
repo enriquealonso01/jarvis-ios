@@ -1,0 +1,152 @@
+appId: com.enriquecodes.jarvis
+# PR #43: the Sessions list reacts at once to the user's own actions. 1. A new
+# chat's row is on the list the moment the user returns right after Send — the
+# New Chat placeholder the list inserted when New Session was tapped, or the
+# real row once the create answered and the return's read brought it — and the
+# real row replaces the placeholder, never joining it. 2. An unread mark set
+# from the row's context menu clears when its chat is left: back on the list,
+# the row no longer carries Unread. The stub host's turn waits for an approval,
+# which the row shows as an attention label where Unread would sit, so the
+# middle section answers it and settles the row before the unread part.
+name: 14 session list reacts at once
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: Settings
+    timeout: 30000
+# New Session stays disabled while the list still shows cached rows after launch,
+# so try again until the chat opens.
+- retry:
+    maxRetries: 3
+    commands:
+      - waitForAnimationToEnd:
+          timeout: 5000
+      - tapOn: New Session
+      # Once a project lane names a folder, New Session asks where; General is the default.
+      - tapOn:
+          text: General
+          optional: true
+      - extendedWaitUntil:
+          visible: Ask anything.*
+          timeout: 10000
+- tapOn: Ask anything.*
+- inputText: Instant list QA fourteen
+- tapOn:
+    text: Send
+    optional: true
+# Leave the chat the way a user does, right after Send. Maestro has no Back on
+# iOS and the chat has no in-app back control, so this is the system edge-back
+# swipe: a rightward drag from the left edge pops the pushed chat. The bottom
+# bar's New Session marks the home; retry in case the gesture needs a second drag.
+- retry:
+    maxRetries: 3
+    commands:
+      - swipe:
+          start: 0%,50%
+          end: 75%,50%
+      - extendedWaitUntil:
+          visible: New Session
+          timeout: 5000
+# The pop can still be settling when the button shows: the composer's
+# placeholder leaving marks the chat's own end, so what follows reads a
+# settled list, never a half-popped chat.
+- extendedWaitUntil:
+    notVisible: Ask anything.*
+    timeout: 5000
+# The new chat's row must be up within 3 s of the return — never neither: the
+# placeholder this list kept, or the real row the create and the return's read
+# settled.
+- extendedWaitUntil:
+    visible: New Chat|Instant list QA fourteen
+    timeout: 3000
+- takeScreenshot: 14-new-chat-row
+# The read the return asked for brings the row the first prompt titles (the stub
+# host generates no titles), replacing the placeholder: the two are never on the
+# list together.
+- extendedWaitUntil:
+    visible: Instant list QA fourteen
+    timeout: 30000
+- assertNotVisible: New Chat
+- takeScreenshot: 14-real-row
+# Hermex's one-time notification offer can cover the screen; answer it if so.
+- extendedWaitUntil:
+    visible: Want a notification.*
+    timeout: 20000
+    optional: true
+- tapOn:
+    text: Not now
+    optional: true
+# The turn is still waiting for its approval, so finish it before the unread
+# part: reopen the row and answer the stub host's request.
+- scrollUntilVisible:
+    element: Instant list QA fourteen
+    direction: DOWN
+    optional: true
+- tapOn: Instant list QA fourteen
+- extendedWaitUntil:
+    visible: Allow once
+    timeout: 60000
+    optional: true
+- tapOn:
+    text: Allow once
+    optional: true
+- extendedWaitUntil:
+    visible: The command returned.*
+    timeout: 60000
+# Back to the list the same way; the return's read settles the row, its
+# attention label leaving with the finished turn.
+- retry:
+    maxRetries: 3
+    commands:
+      - swipe:
+          start: 0%,50%
+          end: 75%,50%
+      - extendedWaitUntil:
+          visible: New Session
+          timeout: 5000
+- extendedWaitUntil:
+    notVisible: Ask anything.*
+    timeout: 5000
+- extendedWaitUntil:
+    notVisible: Instant list QA fourteen.*(Working|Waiting for approval|Needs input)
+    timeout: 10000
+# 2. The unread mark, set by the user's own action: the row's context menu
+# writes it at once, so the row carries Unread in its label.
+- scrollUntilVisible:
+    element: Instant list QA fourteen
+    direction: DOWN
+    optional: true
+- longPressOn:
+    text: Instant list QA fourteen
+- tapOn: Mark as Unread
+- waitForAnimationToEnd:
+    timeout: 5000
+- extendedWaitUntil:
+    visible: Instant list QA fourteen.*Unread
+    timeout: 10000
+- takeScreenshot: 14-unread
+# Open the chat — the mark clears when the row is opened...
+- tapOn: Instant list QA fourteen
+- extendedWaitUntil:
+    visible: The command returned.*
+    timeout: 15000
+# ...and leave it. Within 3 s of the return the mark must be gone: the row is
+# still on the list, and its label no longer carries Unread.
+- retry:
+    maxRetries: 3
+    commands:
+      - swipe:
+          start: 0%,50%
+          end: 75%,50%
+      - extendedWaitUntil:
+          visible: New Session
+          timeout: 5000
+- extendedWaitUntil:
+    notVisible: Ask anything.*
+    timeout: 5000
+- extendedWaitUntil:
+    notVisible: Instant list QA fourteen.*Unread
+    timeout: 3000
+- assertVisible: Instant list QA fourteen
+- takeScreenshot: 14-read-after-return

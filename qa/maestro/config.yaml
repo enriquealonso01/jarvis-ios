@@ -15,3 +15,4 @@ executionOrder:
     - 10 aura states on the voice screen
     - 11 plan strip stays pinned between turns
     - 12 first send loading row shows immediately
+    - 14 session list reacts at once
