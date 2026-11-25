@@ -29,10 +29,19 @@ on:
     branches: [v3]
   # Manual runs are the fast inner loop for a branch that has no PR yet (JARVIS
   # has no Xcode on its Linux host, so this is its compiler):
-  #   compile  build only, about 6 minutes
+  #   compile  build only: about 3 minutes on the cached build, about 6 from scratch
   #   tests    build, then only the test classes named in only_testing
   #   full     the whole suite, same as a PR
-  # PR and push runs are always full.
+  # PR and push runs are always full, and always build from scratch.
+  #
+  # The cached build (measured 2026-11-25, runs 45684456400 to 45686080032): a manual run
+  # restores the DerivedData of a recent v3 build and gives unchanged files their old times
+  # back (ci/derived_cache.py), so Xcode compiles only what the branch changed. The build step
+  # took 62 s with nothing changed and 115 s after a change to a central type, against 324 s
+  # from scratch. The cache is written only by the warm-up run on the default branch
+  # (warm-build-cache.yml on main, which calls this workflow with save_cache), because a run
+  # on any branch can read the default branch's caches and no other branch's.
+  # PR and push runs never read it: the gate that guards v3 stays a clean build.
   workflow_dispatch:
     inputs:
       mode:
@@ -42,6 +51,34 @@ on:
         default: full
       only_testing:
         description: "mode=tests: test identifiers separated by spaces, e.g. HermesMobileTests/TextMessageOutboxTests"
+        type: string
+        default: ""
+      clean:
+        description: "build from scratch instead of on the cached build"
+        type: boolean
+        default: false
+      save_cache:
+        description: "build from scratch and save the result as the cache (the warm-up run does this)"
+        type: boolean
+        default: false
+  # The warm-up run on the default branch calls this workflow, so the build it caches is made
+  # by exactly these steps.
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        default: compile
+      only_testing:
+        type: string
+        default: ""
+      clean:
+        type: boolean
+        default: false
+      save_cache:
+        type: boolean
+        default: false
+      checkout_ref:
+        description: "branch to build (the caller's own ref when empty)"
         type: string
         default: ""
 
@@ -116,13 +153,20 @@ jobs:
       SIMULATOR_NAME: iPhone 17
       CI_LOG_DIR: ci-logs
       TEST_WORKER_COUNT: 1
-      # Only a manual run can ask for less than the full suite.
-      RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
-      ONLY_TESTING: ${{ github.event_name == 'workflow_dispatch' && inputs.only_testing || '' }}
+      # Only a manual run (or the warm-up run) can ask for less than the full suite. PR and
+      # push runs carry no inputs, so they are always full.
+      RUN_MODE: ${{ inputs.mode || 'full' }}
+      ONLY_TESTING: ${{ inputs.only_testing || '' }}
+      # Never for a PR or a push (the gate builds from scratch), and never for the run that
+      # writes the cache (a cache must itself be a clean build).
+      USE_BUILD_CACHE: ${{ github.event_name != 'pull_request' && github.event_name != 'push' && !inputs.clean && !inputs.save_cache }}
+      SAVE_BUILD_CACHE: ${{ github.event_name != 'pull_request' && github.event_name != 'push' && inputs.save_cache == true }}
 
     steps:
       - name: Check out
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || '' }}
 
       - name: Verify Xcode
         id: toolchain
@@ -137,6 +181,12 @@ jobs:
             xcodebuild -version
             xcrun --find simctl
           } 2>&1 | tee "${CI_LOG_DIR}/toolchain.log"
+          # A cached build is only good for the runner image and Xcode that made it.
+          xcode=$(xcodebuild -version | tr -s ' \n' '--' | sed 's/-*$//')
+          {
+            echo "cache_prefix=derived-v1-${ImageOS:-macos}-${ImageVersion:-0}-${xcode}"
+            echo "head_sha=$(git rev-parse HEAD)"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Select simulator
         id: sim
@@ -159,6 +209,27 @@ jobs:
               output.write(f"udid={udid}\n")
           PYTHON
 
+      # Manual runs only (see the note at the top). The newest cache for this image and Xcode
+      # is taken; one made for exactly this commit wins if it exists. No cache is not an
+      # error: the build is then a clean one, as before.
+      - name: Restore the cached build
+        id: buildcache
+        if: ${{ env.USE_BUILD_CACHE == 'true' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.DERIVED_DATA_PATH }}
+          key: ${{ steps.toolchain.outputs.cache_prefix }}-${{ steps.toolchain.outputs.head_sha }}
+          restore-keys: |
+            ${{ steps.toolchain.outputs.cache_prefix }}-
+
+      - name: Restore file times
+        if: ${{ env.USE_BUILD_CACHE == 'true' }}
+        run: |
+          set -euo pipefail
+          # Xcode reads file times to decide what to rebuild; a fresh checkout made them all new.
+          python3 ci/derived_cache.py restore "${DERIVED_DATA_PATH}" | tee "${CI_LOG_DIR}/cache.log"
+          echo "- Cached build: $(cat "${CI_LOG_DIR}/cache.log")" >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Build for testing
         id: build
         env:
@@ -170,13 +241,33 @@ jobs:
             echo "- Build for testing: $((SECONDS - start_seconds))s" >> "${GITHUB_STEP_SUMMARY}"
           }
           trap report_duration EXIT
+          # No index store: CI never reads it, and it would only add to the cached build's size
+          # (measured: no difference in build time). The setting is the same for every run,
+          # cached or not, because a cache built with other settings would not be reused.
           xcodebuild build-for-testing \
             -project "${PROJECT_PATH}" \
             -scheme "${SCHEME}" \
             -destination "platform=iOS Simulator,id=${SIMULATOR_UDID}" \
             -derivedDataPath "${DERIVED_DATA_PATH}" \
             -showBuildTimingSummary \
+            COMPILER_INDEX_STORE_ENABLE=NO \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "${CI_LOG_DIR}/build.log"
+
+      # The warm-up run only: this clean build becomes the cache manual runs start from.
+      - name: Record file times for the cache
+        if: ${{ env.SAVE_BUILD_CACHE == 'true' && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          rm -rf "${DERIVED_DATA_PATH}/Logs"
+          python3 ci/derived_cache.py record "${DERIVED_DATA_PATH}"
+          du -sh "${DERIVED_DATA_PATH}"
+
+      - name: Save the build as the cache
+        if: ${{ env.SAVE_BUILD_CACHE == 'true' && steps.build.outcome == 'success' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.DERIVED_DATA_PATH }}
+          key: ${{ steps.toolchain.outputs.cache_prefix }}-${{ steps.toolchain.outputs.head_sha }}
 
       - name: Test without building
         id: tests
