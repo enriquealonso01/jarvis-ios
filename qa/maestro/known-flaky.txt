@@ -1,0 +1,8 @@
+# Journeys known to fail for reasons that are not the app's, one name per line exactly as the
+# journey's `name:` reads. `ios-ci-wait <pr> --journeys` reports a failure of one of these as
+# KNOWN FLAKY: it never holds a merge and is never a reason to run the 45-minute lane again.
+#
+# The lane already gives every failed journey one more try (ci/retry_failed_journeys.py), which
+# covers the runner's stalls. A name belongs here only while a journey itself is wrong and its
+# fix is on the way: add it with the run that showed it and the date, in its own PR, and take it
+# out in the PR that fixes the journey. An empty list is the goal.

@@ -26,6 +26,10 @@ name: 06 voice note pause continue and delete
       - extendedWaitUntil:
           visible: Ask anything.*
           timeout: 10000
+# An earlier journey's unconfirmed send can be waiting here as a draft, which hides the camera
+# and the mic (run 44566657162).
+- runFlow:
+    file: lib/empty-composer.yaml
 # The new chat focuses the text field; with the keyboard up Maestro reads the mic's old
 # frame and taps the keyboard instead (run 39656104871), so put the keyboard away first.
 # (hideKeyboard can't dismiss this text view, run 39660097889; a tap on the empty transcript does.)

@@ -143,6 +143,25 @@ jobs:
             --test-output-dir "$GITHUB_WORKSPACE/qa-out/maestro" \
             "$GITHUB_WORKSPACE/qa/maestro"
 
+      # A journey that failed gets one more try on its own before the lane calls it failed. The
+      # 3-core runner stalls the stub host often enough (a lost confirmation, a dropped socket)
+      # that one red journey in twelve was the usual result: every run from 2026-11-11 to PR #38
+      # was red, on a different journey each time. A journey that fails twice is a real failure;
+      # more than four failures is a broken build and nothing is retried. The step's log has one
+      # final line per failed journey (ci/retry_failed_journeys.py), which `ios-ci-wait --journeys`
+      # reads. It runs before the Documents step, whose seeded files flow 08 needs absent.
+      - name: Retry failed journeys once
+        id: retry
+        if: steps.maestro.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          cd qa-out
+          python3 "$GITHUB_WORKSPACE/ci/retry_failed_journeys.py" \
+            --report "$GITHUB_WORKSPACE/qa-out/report.xml" \
+            --flows "$GITHUB_WORKSPACE/qa/maestro" \
+            --device "${{ steps.env.outputs.udid }}" \
+            --out "$GITHUB_WORKSPACE/qa-out/maestro-retry"
+
       # Documents (flow 12) need files in ~/JARVIS-Files on the host, which flow 08 needs absent,
       # so they run after the journeys: seed ~/JARVIS-Files/documents, keep the dashboard's data
       # file and one document changing (qa/fixtures/documents/feed.sh), then drive the screen.
@@ -190,6 +209,7 @@ jobs:
           for f in $(ls -t ~/Library/Logs/DiagnosticReports/HermesMobile* 2>/dev/null | head -3); do cp "$f" qa-out/; done
           find qa-out -name "*.png" | sort
           echo "---- JUnit ----"; cat qa-out/report.xml || true
+          echo "---- JUnit (retries) ----"; cat qa-out/maestro-retry/*.xml 2>/dev/null || true
           echo "---- JUnit (documents) ----"; cat qa-out/report-documents.xml || true
           echo "---- JUnit (approvals) ----"; cat qa-out/report-approvals.xml || true
           # Stop the host, then keep its logs: local-hermes prints the kept home on exit.
@@ -222,6 +242,8 @@ jobs:
           path: qa-out/
           if-no-files-found: warn
 
+      # A journey that passed its retry does not fail the lane; one that failed twice, or a first
+      # pass whose retry step did not finish green for any reason, does.
       - name: Fail if any journey failed
-        if: steps.maestro.outcome == 'failure' || steps.documents.outcome == 'failure' || steps.approvals.outcome == 'failure' || steps.probe.outcome == 'failure'
+        if: (steps.maestro.outcome == 'failure' && steps.retry.outcome != 'success') || steps.documents.outcome == 'failure' || steps.approvals.outcome == 'failure' || steps.probe.outcome == 'failure'
         run: exit 1

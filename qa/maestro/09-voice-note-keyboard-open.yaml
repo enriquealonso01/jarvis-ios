@@ -21,6 +21,9 @@ name: 09 voice note keyboard open
       - extendedWaitUntil:
           visible: Ask anything.*
           timeout: 10000
+# An earlier journey's unconfirmed send can be waiting here as a draft (run 44566657162).
+- runFlow:
+    file: lib/empty-composer.yaml
 # Keyboard up: tap the field.
 - tapOn:
     text: Ask anything.*
