@@ -254,20 +254,27 @@ fails when it fails.
 ### The cached build (manual runs only)
 
 A manual run of `pr-ci.yml` (the `compile` and `tests` modes JARVIS uses as its
-compiler) starts from a cached build: it restores the `DerivedData` of a recent
-`v3` build and `ci/derived_cache.py restore` gives every unchanged file its old
-time back, so Xcode compiles only what the branch changed. Measured 2026-11-25:
-the build step took 62 s with nothing changed and 115 s after a change to a
-central type, against 324 s from scratch.
+compiler) starts from a cached build: it restores an earlier `DerivedData` and
+`ci/derived_cache.py restore` gives every unchanged file its old time back, so
+Xcode compiles only what changed since. Measured 2026-11-25: the build step
+took 48 to 67 s with nothing changed, 92 s on a cache built on the other runner
+image, and 115 s after a change to a central type, against about 300 s from
+scratch.
 
 - PR and push runs never read the cache. The gate that guards `v3` is always a
   clean build, so a wrong answer from a reused build cannot reach `v3`.
-- The cache is written only by `warm-build-cache.yml` on `main`, daily and on
-  request. It lives on the default branch because a run on any branch can read
-  the default branch's caches and no other branch's. It calls `pr-ci.yml` from
-  `v3` with `save_cache`, so the cached build is made by the same steps.
-- No cache (a new runner image, a new Xcode, or the cache aged out) is not an
-  error: the run builds from scratch, as before.
+- A run can read caches saved on its own branch and on the default branch, no
+  others. So a branch's first manual run finds none, builds from scratch and
+  saves its build; later manual runs on that branch start from it.
+- `warm-build-cache.yml` on `main`, if present, builds `v3` daily by calling
+  `pr-ci.yml` with `save_cache` and saves that build on the default branch.
+  Every branch then finds a cache, and the first run is fast too.
+- Only a build made from scratch is ever saved. A run that started from a cache
+  saves nothing.
+- The key names the Xcode build, not the runner image: GitHub runs two image
+  versions side by side, and a build from one is reused on the other.
+- No cache (a new Xcode, or the cache aged out) is not an error: the run builds
+  from scratch, as before.
 - If a manual run fails in a way the code does not explain, run it again with
   the `clean` input before believing it.
 

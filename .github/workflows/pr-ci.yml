@@ -38,9 +38,13 @@ on:
   # restores the DerivedData of a recent v3 build and gives unchanged files their old times
   # back (ci/derived_cache.py), so Xcode compiles only what the branch changed. The build step
   # took 62 s with nothing changed and 115 s after a change to a central type, against 324 s
-  # from scratch. The cache is written only by the warm-up run on the default branch
-  # (warm-build-cache.yml on main, which calls this workflow with save_cache), because a run
-  # on any branch can read the default branch's caches and no other branch's.
+  # from scratch. Where the cache comes from:
+  #   - A run can read caches saved on its own branch and on the default branch, no others.
+  #   - A branch's first manual run therefore finds none, builds from scratch, and saves its
+  #     build; every later manual run on that branch starts from it.
+  #   - If the warm-up run exists on the default branch (warm-build-cache.yml on main, which
+  #     calls this workflow with save_cache), every branch finds its cache and the first run
+  #     is fast too.
   # PR and push runs never read it: the gate that guards v3 stays a clean build.
   workflow_dispatch:
     inputs:
@@ -212,9 +216,9 @@ jobs:
               output.write(f"udid={udid}\n")
           PYTHON
 
-      # Manual runs only (see the note at the top). The newest cache for this image and Xcode
-      # is taken; one made for exactly this commit wins if it exists. No cache is not an
-      # error: the build is then a clean one, as before.
+      # Manual runs only (see the note at the top). The newest cache for this Xcode is taken;
+      # one made for exactly this commit wins if it exists. No cache is not an error: the
+      # build is then a clean one, and it is saved below for the branch's next run.
       - name: Restore the cached build
         id: buildcache
         if: ${{ env.USE_BUILD_CACHE == 'true' }}
@@ -257,9 +261,12 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "${CI_LOG_DIR}/build.log"
 
-      # The warm-up run only: this clean build becomes the cache manual runs start from.
+      # Only a build made from scratch is ever saved: the warm-up run's, or a manual run's when
+      # it found no cache to start from (a branch's first run). A run that started from a
+      # cache saves nothing, so a cache never stacks reuse on reuse.
       - name: Record file times for the cache
-        if: ${{ env.SAVE_BUILD_CACHE == 'true' && steps.build.outcome == 'success' }}
+        id: record
+        if: ${{ steps.build.outcome == 'success' && (env.SAVE_BUILD_CACHE == 'true' || (env.USE_BUILD_CACHE == 'true' && steps.buildcache.outputs.cache-matched-key == '')) }}
         run: |
           set -euo pipefail
           rm -rf "${DERIVED_DATA_PATH}/Logs"
@@ -268,7 +275,7 @@ jobs:
           du -sh "${DERIVED_DATA_PATH}"
 
       - name: Save the build as the cache
-        if: ${{ env.SAVE_BUILD_CACHE == 'true' && steps.build.outcome == 'success' }}
+        if: ${{ steps.record.outcome == 'success' }}
         uses: actions/cache/save@v6
         with:
           path: ${{ env.DERIVED_DATA_PATH }}
