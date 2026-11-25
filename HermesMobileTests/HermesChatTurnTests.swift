@@ -303,6 +303,143 @@ import SwiftUI
                        "returning resumed the created session")
     }
 
+    /// #508: a lost answer's prompt ran after all — its turn's frames arrive — so the turn
+    /// is the confirmation the reply never carried: the banner goes, a new session's draft
+    /// moves to its session key, and the still-sent draft clears like an accepted send's.
+    /// Nothing is sent again.
+    func testTheLostAnswerPromptRunningClearsItsHoldAndDraft() async {
+        let drafts = ChatDraftStore(persistence: InMemoryDraftPersistence(), debounceDuration: .seconds(60))
+        let server = URL(string: "https://hermes.example")!
+        let newKey = ChatDraftKey.hermesSession(server: server, connectionID: Self.connection.id, profile: "default", key: nil)
+        drafts.setDraft("Deploy it", for: newKey)
+        let chat = await openChat(key: "fresh", target: .new(profile: "default"), drafts: drafts)
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("something new")])))
+        _ = await chat.model.sendMessage("Deploy it")
+        XCTAssertEqual(chat.model.sendErrorMessage, "Hermes did not confirm this message. Your draft is still here.")
+        XCTAssertTrue(chat.model.isHermesSubmissionUncertain)
+        // The reattach the lost answer started read no prompt row: nothing is proven yet.
+        await chat.model.reconnectStreamIfNeeded()
+        XCTAssertEqual(chat.model.sendErrorMessage, "Hermes did not confirm this message. Your draft is still here.")
+
+        chat.receive(event(1, "message.start"))
+        chat.receive(event(2, "message.delta", ["text": .string("On it")]))
+        await waitUntil("the ran prompt releases the hold") {
+            chat.model.sendErrorMessage == nil && chat.model.lostAnswerDraftClearTrigger == 1
+        }
+        XCTAssertFalse(chat.model.isHermesSubmissionUncertain)
+        let sessionKey = ChatDraftKey.hermesSession(server: server, connectionID: Self.connection.id, profile: "default", key: "fresh")
+        XCTAssertEqual(chat.model.hermesDraftKey, sessionKey, "the ran prompt is the session's first accepted one")
+        let held = await drafts.draft(for: sessionKey)
+        XCTAssertNil(held, "the draft the host now holds is cleared, not kept")
+        let left = await drafts.draft(for: newKey)
+        XCTAssertNil(left)
+        XCTAssertEqual(chat.writes("prompt.submit").count, 1, "nothing is resent")
+    }
+
+    /// A new chat's create is part of its attach, so a failure reads as the chat never
+    /// starting — but only once the engine will not retry it on its own: a refusal the
+    /// engine stops at takes the list's placeholder back, while a momentary dropout it
+    /// retries keeps the row the placeholder promised.
+    func testANewChatTakesItsPlaceholderBackOnlyOnceTheEngineStopsRetrying() async {
+        // 403: the engine will not reconnect on its own, so the refusal is final.
+        var refusals = 0
+        _ = await openChat(key: "fresh", target: .new(profile: "default"), expectAttached: false) { host, model in
+            host.always("session.create", .init(error: 403))
+            model.hermesNewChatDidFail = { refusals += 1 }
+        }
+        XCTAssertEqual(refusals, 1, "the final refusal took the placeholder back")
+
+        // 503: the engine retries it on its own backoff, so the row the placeholder
+        // promised stays until a final refusal or its own grace ends it.
+        var blips = 0
+        let blipped = await openChat(key: "fresh", target: .new(profile: "default"), expectAttached: false) { host, model in
+            host.always("session.create", .init(error: 503))
+            model.hermesNewChatDidFail = { blips += 1 }
+        }
+        XCTAssertEqual(blips, 0, "a blip the engine retries is not a failure yet")
+        blipped.turn.engine.suspend()
+    }
+
+    /// #508: the turn's own frames can land before the lost reply surfaces. Then the send
+    /// reads accepted at once — no banner, no hold, the draft clears — and the prompt is
+    /// never queued for the next connect, which would resend what the host already ran.
+    func testTheLostAnswerWhoseTurnAlreadyBeganReadsAccepted() async throws {
+        let drafts = ChatDraftStore(persistence: InMemoryDraftPersistence(), debounceDuration: .seconds(60))
+        let chat = await openChat(drafts: drafts)
+        let key = try XCTUnwrap(chat.model.hermesDraftKey)
+        drafts.setDraft("Deploy it", for: key)
+        // The turn's frames arrive ahead of a reply this build cannot read.
+        chat.host.always("prompt.submit", .init(
+            result: .object(["status": .string("something new")]),
+            before: [event(1, "message.start"), event(2, "message.delta", ["text": .string("On it")])]
+        ))
+
+        let sent = await chat.model.sendMessage("Deploy it")
+
+        XCTAssertTrue(sent, "a turn already showing is the confirmation")
+        XCTAssertNil(chat.model.sendErrorMessage)
+        XCTAssertFalse(chat.model.isHermesSubmissionUncertain)
+        await waitUntil("the draft clears") { chat.model.lostAnswerDraftClearTrigger == 1 }
+        let cleared = await drafts.draft(for: key)
+        XCTAssertNil(cleared)
+        // A reconnect drains the text outbox; nothing was queued, so nothing is resent.
+        await chat.model.reconnectStreamIfNeeded()
+        XCTAssertEqual(chat.writes("prompt.submit").count, 1)
+    }
+
+    /// #508: a lost answer whose reattach shows the host never ran the prompt keeps today's
+    /// behavior — Send's hold releases, the banner and the draft stay, and nothing is sent
+    /// again.
+    func testTheLostAnswerReattachWithoutThePromptKeepsTheBanner() async {
+        let chat = await openChat()
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("something new")])))
+        let sent = await chat.model.sendMessage("Deploy it")
+        XCTAssertFalse(sent)
+        XCTAssertTrue(chat.model.isHermesSubmissionUncertain)
+
+        await chat.model.reconnectStreamIfNeeded()
+        await chat.model.submissionMarkRelease?.value
+        XCTAssertFalse(chat.model.isHermesSubmissionUncertain, "the snapshot read frees Send")
+        XCTAssertEqual(chat.model.sendErrorMessage, "Hermes did not confirm this message. Your draft is still here.")
+        XCTAssertEqual(chat.model.lostAnswerDraftClearTrigger, 0)
+        XCTAssertEqual(chat.writes("prompt.submit").count, 1)
+    }
+
+    /// #508: a send into a running turn (a Steer here) that loses its answer is not proven
+    /// by the turn that was already running — only its own turn, once begun, or the
+    /// reattach's rows prove it. Until then the banner and hold stand and the draft stays.
+    func testALostSteerIntoARunningTurnIsNotProvenByThatTurn() async throws {
+        let drafts = ChatDraftStore(persistence: InMemoryDraftPersistence(), debounceDuration: .seconds(60))
+        let chat = await openChat(drafts: drafts)
+        chat.receive(event(1, "message.start"))
+        chat.receive(event(2, "message.delta", ["text": .string("Working")]))
+        XCTAssertNotNil(chat.model.activeStreamID)
+        let key = try XCTUnwrap(chat.model.hermesDraftKey)
+        drafts.setDraft("Use tabs", for: key)
+
+        // A Steer cannot read "streaming": the reply is unknown, so its answer was lost.
+        chat.host.always("session.steer", .init(result: .object(["status": .string("streaming")])))
+        _ = await chat.model.submitStreamingMessage("Use tabs", behavior: .steer)
+
+        XCTAssertEqual(chat.model.sendErrorMessage, "Hermes did not confirm this message. Your draft is still here.")
+        XCTAssertTrue(chat.model.isHermesSubmissionUncertain)
+        XCTAssertEqual(chat.model.lostAnswerDraftClearTrigger, 0)
+        let kept = await drafts.draft(for: key)
+        XCTAssertEqual(kept?.text, "Use tabs")
+        XCTAssertEqual(chat.writes("session.steer").count, 1, "nothing is resent")
+    }
+
+    /// An accepted send never raises the lost-answer hold.
+    func testAnAcceptedSendRaisesNoLostAnswerHold() async {
+        let chat = await openChat()
+        chat.host.always("prompt.submit", .init(result: .object(["status": .string("streaming")])))
+        let sent = await chat.model.sendMessage("Deploy it")
+        XCTAssertTrue(sent)
+        XCTAssertNil(chat.model.sendErrorMessage)
+        XCTAssertFalse(chat.model.isHermesSubmissionUncertain)
+        XCTAssertEqual(chat.model.lostAnswerDraftClearTrigger, 0)
+    }
+
     /// A legacy compression chain keeps one draft whichever segment opened it (#1176): its list
     /// row (the tip) and links to its root or middle restore and edit the same draft, under the
     /// chain's root, while each resumes the key it named. A draft the tip kept before drafts
@@ -1222,7 +1359,8 @@ import SwiftUI
     private func openChat(runtime: String = "runtime", key: String = "tip", profile: String = "default",
                           target: ConversationTarget? = nil, drafts: ChatDraftStore? = nil, lineageRoot: String? = nil,
                           history: [BotJSON] = [], snapshot: BotJSON? = nil, subagents: [BotJSON] = [],
-                          rpcDeadline: Duration = .seconds(30)) async -> Chat {
+                          rpcDeadline: Duration = .seconds(30), expectAttached: Bool = true,
+                          configure: ((BotSocketHost, ChatViewModel) -> Void)? = nil) async -> Chat {
         addTeardownBlock { HermesHostFixture.reset() }
         let host = BotSocketHost()
         host.always("subagent.list", .init(result: .object(["subagents": .array(subagents), "delegations": .array([])])))
@@ -1245,8 +1383,9 @@ import SwiftUI
             draftStore: drafts ?? ChatDraftStore(persistence: InMemoryDraftPersistence(), debounceDuration: .seconds(60)),
             backend: .hermes(turn)
         )
+        if let configure { configure(host, model) }
         await model.loadMessages()
-        XCTAssertEqual(engine.connectionState, .connected)
+        if expectAttached { XCTAssertEqual(engine.connectionState, .connected) }
         return Chat(model: model, turn: turn, host: host, client: client, liveActivity: liveActivity)
     }
 

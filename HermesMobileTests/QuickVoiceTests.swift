@@ -13,92 +13,279 @@ import XCTest
 
     // MARK: - Toggle state machine
 
+    /// What the pill and the recorder did, in order, so a test can check which came first.
+    private final class Events {
+        var log: [String] = []
+        /// What the fake send was handed, and the hold a test releases it from.
+        var delivered: [Data] = []
+        var held: CheckedContinuation<Void, Never>?
+        /// The `exclusive` each start was asked for.
+        var exclusive: [Bool] = []
+    }
+
+    /// Five seconds between presses unless a test says otherwise, so no press reads as a
+    /// second run of the one before.
+    private final class Clock {
+        private var current = Date(timeIntervalSince1970: 1_000_000)
+        let step: TimeInterval
+        init(step: TimeInterval = 5) { self.step = step }
+        func tick() -> Date {
+            current += step
+            return current
+        }
+    }
+
     private final class Recording: QuickVoiceRecording {
+        let events: Events
         var startError: Error?
-        var clip: Data?
+        var clip: QuickVoiceClip?
         private(set) var starts = 0
         private(set) var stops = 0
+        let usesEngine = false
 
-        func start() throws {
-            if let startError { throw startError }
-            starts += 1
+        init(_ events: Events, clip: QuickVoiceClip? = nil) {
+            self.events = events
+            self.clip = clip
         }
 
-        func stop() -> Data? {
+        func start(exclusive: Bool) throws {
+            events.exclusive.append(exclusive)
+            if let startError { throw startError }
+            starts += 1
+            events.log.append("record")
+        }
+
+        func stop() -> QuickVoiceClip? {
             stops += 1
+            events.log.append("stop")
             return clip
         }
     }
 
-    private var chatURL: URL { URL(string: "hermes-agent://session?id=key-1")! }
+    @MainActor private final class Pill: QuickVoicePill {
+        let events: Events
+        /// False plays a system that refuses the Live Activity (Live Activities off).
+        var allowed = true
+        private(set) var lines: [(QuickVoiceActivityAttributes.Phase, String)] = []
+        private(set) var destination: URL?
 
-    func testToggleStartsRecordingThenStopsSendsAndReturnsToIdle() async {
-        let clip = Data("clip".utf8)
-        let recording = Recording()
-        recording.clip = clip
-        var delivered: [Data] = []
-        var outcome: QuickVoiceController.Outcome?
-        let controller = QuickVoiceController(makeRecorder: { recording }) { audio in
-            delivered.append(audio)
-            outcome = .sent(self.chatURL)
-            return .sent(self.chatURL)
+        init(_ events: Events) { self.events = events }
+
+        func clearLeftovers() async { events.log.append("clear") }
+
+        func show(_ phase: QuickVoiceActivityAttributes.Phase, message: String) -> Bool {
+            guard allowed else { return false }
+            events.log.append("show")
+            lines.append((phase, message))
+            return true
         }
 
-        let started = await controller.toggle()
-        XCTAssertTrue(started, "The first press records")
-        XCTAssertEqual(controller.phase, .recording)
-        XCTAssertEqual(recording.starts, 1)
+        func update(_ phase: QuickVoiceActivityAttributes.Phase, message: String, destinationURL: URL?) async {
+            lines.append((phase, message))
+            destination = destinationURL
+        }
 
-        let stopped = await controller.toggle()
-        XCTAssertTrue(stopped)
-        XCTAssertEqual(delivered, [clip], "The second press sends exactly the recorded clip")
+        func finish() async { events.log.append("finish") }
+
+        var phases: [QuickVoiceActivityAttributes.Phase] { lines.map { $0.0 } }
+        var lastLine: String? { lines.last?.1 }
+    }
+
+    private var chatURL: URL { URL(string: "hermes-agent://session?id=key-1")! }
+    private let note = QuickVoiceClip(audio: Data("clip".utf8), duration: 4)
+
+    func testThePillGoesUpBeforeRecordingAndTheNextPressSendsInTheBackground() async {
+        let events = Events()
+        let recording = Recording(events, clip: note)
+        let pill = Pill(events)
+        let url = chatURL
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { audio in
+            events.delivered.append(audio)
+            return .sent(url)
+        }, pill: pill, now: Clock().tick)
+
+        let first = await controller.toggle()
+        XCTAssertEqual(first, .recording, "The first press records")
+        XCTAssertEqual(controller.phase, .recording)
+        XCTAssertEqual(events.log, ["clear", "show", "record"],
+                       "Leftover pills go, then the pill goes up, and only then the recorder starts: "
+                       + "iOS stops a background recording that has no Live Activity")
+
+        let second = await controller.toggle()
+        XCTAssertEqual(second, .sending, "The second press returns once the clip is stopped")
+        await controller.sendTask?.value
+        XCTAssertEqual(events.delivered, [note.audio], "The second press sends exactly the recorded clip")
         XCTAssertEqual(recording.stops, 1)
+        XCTAssertEqual(pill.phases, [.recording, .sending, .done])
+        XCTAssertEqual(pill.destination, chatURL, "The finished pill opens the new chat")
+        XCTAssertEqual(events.log.last, "finish")
         XCTAssertEqual(controller.phase, .idle, "A finished send returns the toggle to idle")
     }
 
-    func testARefusedStartReportsFailureAndReturnsToIdle() async {
-        let recording = Recording()
+    func testWithoutAPillNothingRecordsAndThePressSaysWhy() async {
+        let events = Events()
+        let recording = Recording(events, clip: note)
+        let pill = Pill(events)
+        pill.allowed = false
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in
+            XCTFail("Nothing is sent when nothing was recorded")
+            return .failed("unreachable")
+        }, pill: pill, now: Clock().tick)
+
+        let press = await controller.toggle()
+        guard case .refused(let reason) = press else { return XCTFail("A press with no pill is refused, got \(press)") }
+        XCTAssertFalse(reason.isEmpty, "The refusal carries the reason the system shows instead of its check mark")
+        XCTAssertEqual(recording.starts, 0, "No pill, no recording")
+        XCTAssertEqual(controller.phase, .idle)
+    }
+
+    func testAMicrophoneRefusalShowsOnThePillAndTheNextPressStartsAgain() async {
+        let events = Events()
+        let recording = Recording(events, clip: note)
         recording.startError = QuickVoiceError.microphoneOff
-        let controller = QuickVoiceController(makeRecorder: { recording }) { _ in
+        let pill = Pill(events)
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in
             XCTFail("Nothing is sent when recording never started")
             return .failed("unreachable")
-        }
+        }, pill: pill, now: Clock().tick)
 
         let refused = await controller.toggle()
-        XCTAssertFalse(refused, "A mic permission failure refuses the start")
+        XCTAssertEqual(refused, .notSent, "A mic permission failure is shown on the pill")
+        XCTAssertEqual(pill.phases.last, .failed)
+        XCTAssertEqual(pill.lastLine, QuickVoiceError.microphoneOff.errorDescription)
         XCTAssertEqual(controller.phase, .idle)
         // The next press is a fresh start, not a stop of a recording that never was.
         recording.startError = nil
-        recording.clip = Data("clip".utf8)
         let restarted = await controller.toggle()
-        XCTAssertTrue(restarted)
+        XCTAssertEqual(restarted, .recording)
         XCTAssertEqual(controller.phase, .recording)
     }
 
-    func testAnEmptyClipFailsWithoutSending() async {
-        let recording = Recording()
-        recording.clip = Data()
-        let controller = QuickVoiceController(makeRecorder: { recording }) { _ in
+    func testAnEmptyClipIsNotSent() async {
+        let events = Events()
+        let recording = Recording(events, clip: QuickVoiceClip(audio: Data(), duration: 3))
+        let pill = Pill(events)
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in
             XCTFail("An empty clip is never delivered")
             return .failed("unreachable")
-        }
+        }, pill: pill, now: Clock().tick)
 
-        let firstPress = await controller.toggle()
-        XCTAssertTrue(firstPress)
-        await controller.toggle()
+        let first = await controller.toggle()
+        XCTAssertEqual(first, .recording)
+        let second = await controller.toggle()
+        XCTAssertEqual(second, .notSent)
+        XCTAssertEqual(pill.phases.last, .failed)
         XCTAssertEqual(controller.phase, .idle, "The empty clip ends where it failed, back at idle")
     }
 
-    func testAFailedSendStillReturnsTheToggleToIdle() async {
-        let recording = Recording()
-        recording.clip = Data("clip".utf8)
-        let controller = QuickVoiceController(makeRecorder: { recording }) { _ in .failed("no network") }
+    func testADoublePressIsTooShortToSend() async {
+        let events = Events()
+        let recording = Recording(events, clip: QuickVoiceClip(audio: Data("clip".utf8), duration: 0.4))
+        let pill = Pill(events)
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in
+            XCTFail("A clip under a second is a misfire, never a note")
+            return .failed("unreachable")
+        }, pill: pill, now: Clock().tick)
 
-        let start = await controller.toggle()
-        XCTAssertTrue(start)
-        let finish = await controller.toggle()
-        XCTAssertTrue(finish)
+        await controller.toggle()
+        let second = await controller.toggle()
+        XCTAssertEqual(second, .notSent)
+        XCTAssertEqual(pill.phases.last, .failed)
         XCTAssertEqual(controller.phase, .idle)
+    }
+
+    func testAPressWhileTheNoteSendsIsBusy() async {
+        let events = Events()
+        let recording = Recording(events, clip: note)
+        let pill = Pill(events)
+        let url = chatURL
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in
+            await withCheckedContinuation { events.held = $0 }
+            return .sent(url)
+        }, pill: pill, now: Clock().tick)
+
+        await controller.toggle()
+        let second = await controller.toggle()
+        XCTAssertEqual(second, .sending)
+        let third = await controller.toggle()
+        XCTAssertEqual(third, .busy, "A press during the send neither starts nor stops anything")
+        XCTAssertEqual(recording.starts, 1)
+        while events.held == nil { await Task.yield() }
+        events.held?.resume()
+        await controller.sendTask?.value
+        XCTAssertEqual(controller.phase, .idle)
+        let fourth = await controller.toggle()
+        XCTAssertEqual(fourth, .recording, "Once the send ends the next press records again")
+    }
+
+    func testAFailedSendShowsItsReasonAndReturnsTheToggleToIdle() async {
+        let events = Events()
+        let recording = Recording(events, clip: note)
+        let pill = Pill(events)
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in .failed("no network") },
+                                              pill: pill, now: Clock().tick)
+
+        await controller.toggle()
+        let second = await controller.toggle()
+        XCTAssertEqual(second, .sending)
+        await controller.sendTask?.value
+        XCTAssertEqual(pill.phases.last, .failed)
+        XCTAssertEqual(pill.lastLine, "no network")
+        XCTAssertEqual(controller.phase, .idle)
+    }
+
+    func testEveryStartClearsLeftoverPills() async {
+        let events = Events()
+        let recording = Recording(events, clip: note)
+        let pill = Pill(events)
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in .sent(self.chatURL) },
+                                              pill: pill, now: Clock().tick)
+
+        await controller.toggle()
+        await controller.toggle()
+        await controller.sendTask?.value
+        await controller.toggle()
+        XCTAssertEqual(events.log.filter { $0 == "clear" }.count, 2,
+                       "Each new recording first ends the pill the last one left on screen")
+    }
+
+    func testASecondRunOfTheSamePressDoesNotStopTheClipItStarted() async {
+        let events = Events()
+        let recording = Recording(events, clip: note)
+        let pill = Pill(events)
+        let controller = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in
+            XCTFail("A repeated run sends nothing")
+            return .failed("unreachable")
+        }, pill: pill, now: Clock(step: 0.3).tick)
+
+        let first = await controller.toggle()
+        XCTAssertEqual(first, .recording)
+        let again = await controller.toggle()
+        XCTAssertEqual(again, .repeated, "The system ran the same press twice: the clip keeps recording")
+        XCTAssertEqual(controller.phase, .recording)
+        XCTAssertEqual(recording.stops, 0)
+    }
+
+    func testABackgroundPressAsksForTheMixableSessionAndAPressInFrontForTheExclusiveOne() async {
+        let events = Events()
+        let recording = Recording(events, clip: note)
+        let pill = Pill(events)
+        let background = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in .failed("x") },
+                                              pill: pill, isInFront: { false }, now: Clock().tick)
+        await background.toggle()
+        let inFront = QuickVoiceController(makeRecorder: { recording }, deliver: { _ in .failed("x") },
+                                           pill: pill, isInFront: { true }, now: Clock().tick)
+        await inFront.toggle()
+        XCTAssertEqual(events.exclusive, [false, true],
+                       "iOS refuses a background press an exclusive session; in front other audio may pause")
+    }
+
+    func testAStartFailureNamesItsStepAndCode() {
+        let failure = QuickVoiceStartFailure(step: .activate, code: 560557684)
+        let line = failure.errorDescription ?? ""
+        XCTAssertTrue(line.hasPrefix(String(localized: "Recording could not start.")))
+        XCTAssertTrue(line.hasSuffix("(activate 560557684)"), "got \(line)")
+        XCTAssertEqual(QuickVoiceStartFailure(step: .engine, code: nil).errorDescription?.hasSuffix("(engine)"), true)
     }
 
     // MARK: - The send path (transcribe → route → new chat → 🎤 prompt)
