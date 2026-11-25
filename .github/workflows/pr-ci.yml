@@ -181,11 +181,14 @@ jobs:
             xcodebuild -version
             xcrun --find simctl
           } 2>&1 | tee "${CI_LOG_DIR}/toolchain.log"
-          # A cached build is only good for the runner image and Xcode that made it.
+          # A cached build is only good for the Xcode that made it. The runner image is not part
+          # of the key: GitHub runs two image versions side by side for days (seen 2026-11-25,
+          # 20261104 and 20261123, both with Xcode 27A266a), and a key per image missed half the time.
           xcode=$(xcodebuild -version | tr -s ' \n' '--' | sed 's/-*$//')
           {
-            echo "cache_prefix=derived-v1-${ImageOS:-macos}-${ImageVersion:-0}-${xcode}"
+            echo "cache_prefix=derived-v2-${xcode}"
             echo "head_sha=$(git rev-parse HEAD)"
+            echo "runner=${ImageOS:-macos} ${ImageVersion:-unknown}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Select simulator
@@ -228,7 +231,8 @@ jobs:
           set -euo pipefail
           # Xcode reads file times to decide what to rebuild; a fresh checkout made them all new.
           python3 ci/derived_cache.py restore "${DERIVED_DATA_PATH}" | tee "${CI_LOG_DIR}/cache.log"
-          echo "- Cached build: $(cat "${CI_LOG_DIR}/cache.log")" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Cache built on: $(cat "${DERIVED_DATA_PATH}/built-on.txt" 2>/dev/null || echo 'no cache'); this runner: ${{ steps.toolchain.outputs.runner }}, simulator ${{ steps.sim.outputs.udid }}" | tee -a "${CI_LOG_DIR}/cache.log"
+          sed 's/^/- Cached build: /' "${CI_LOG_DIR}/cache.log" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Build for testing
         id: build
@@ -259,6 +263,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "${DERIVED_DATA_PATH}/Logs"
+          echo "${{ steps.toolchain.outputs.runner }}, simulator ${{ steps.sim.outputs.udid }}, commit ${{ steps.toolchain.outputs.head_sha }}" > "${DERIVED_DATA_PATH}/built-on.txt"
           python3 ci/derived_cache.py record "${DERIVED_DATA_PATH}"
           du -sh "${DERIVED_DATA_PATH}"
 
