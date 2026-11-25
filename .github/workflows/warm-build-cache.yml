@@ -1,0 +1,36 @@
+name: Warm build cache
+
+# Builds v3 from scratch once a day, and on request, and saves that build as the cache that
+# manual runs of pr-ci.yml start from (the compile and tests modes JARVIS uses as its compiler).
+#
+# It lives on main because a run on any branch can read the default branch's caches and no
+# other branch's. The build itself is pr-ci.yml as v3 has it, called with save_cache, so the
+# cached build is made by exactly the steps that later reuse it. Nothing here builds main.
+#
+# Why (jarvis-ios PR #47, measured 2026-11-25): on the cached build a compile check takes about
+# 3 minutes instead of about 6. PR and push runs never read the cache; the gate stays clean.
+#
+# When to run it by hand: after a merge into v3 (`gh workflow run warm-build-cache.yml --ref main`),
+# so the next manual runs start from that merge instead of from yesterday's v3. Skipping it costs
+# only time: an older cache still works, the run just compiles more.
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: warm-build-cache
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    uses: enriquealonso01/jarvis-ios/.github/workflows/pr-ci.yml@v3
+    with:
+      mode: compile
+      save_cache: true
+      checkout_ref: v3
