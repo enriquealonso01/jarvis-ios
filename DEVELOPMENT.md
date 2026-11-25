@@ -251,6 +251,26 @@ suites and the TestFlight build-number selector test on every PR and master
 push, including docs- and scripts-only PRs that skip the macOS runner. CI Gate
 fails when it fails.
 
+### The cached build (manual runs only)
+
+A manual run of `pr-ci.yml` (the `compile` and `tests` modes JARVIS uses as its
+compiler) starts from a cached build: it restores the `DerivedData` of a recent
+`v3` build and `ci/derived_cache.py restore` gives every unchanged file its old
+time back, so Xcode compiles only what the branch changed. Measured 2026-11-25:
+the build step took 62 s with nothing changed and 115 s after a change to a
+central type, against 324 s from scratch.
+
+- PR and push runs never read the cache. The gate that guards `v3` is always a
+  clean build, so a wrong answer from a reused build cannot reach `v3`.
+- The cache is written only by `warm-build-cache.yml` on `main`, daily and on
+  request. It lives on the default branch because a run on any branch can read
+  the default branch's caches and no other branch's. It calls `pr-ci.yml` from
+  `v3` with `save_cache`, so the cached build is made by the same steps.
+- No cache (a new runner image, a new Xcode, or the cache aged out) is not an
+  error: the run builds from scratch, as before.
+- If a manual run fails in a way the code does not explain, run it again with
+  the `clean` input before believing it.
+
 ## Build and Launch With XcodeBuildMCP
 
 Defaults and the verification flow live in `AGENTS.md` § Verifying. Human/CLI equivalents:
