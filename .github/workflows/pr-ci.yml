@@ -170,18 +170,30 @@ jobs:
             echo "- Build for testing: $((SECONDS - start_seconds))s" >> "${GITHUB_STEP_SUMMARY}"
           }
           trap report_duration EXIT
+          # Whole-module compilation: every run here is a clean build, where per-file mode only
+          # repeats work. Measured 2026-11-25: this step took 308 s (run 45659379869) against
+          # 334 s and 343 s the same day, and the compiler's own task time fell from about 690 s
+          # to 253 s. Local and release builds keep the project's own setting.
           xcodebuild build-for-testing \
             -project "${PROJECT_PATH}" \
             -scheme "${SCHEME}" \
             -destination "platform=iOS Simulator,id=${SIMULATOR_UDID}" \
             -derivedDataPath "${DERIVED_DATA_PATH}" \
             -showBuildTimingSummary \
+            SWIFT_COMPILATION_MODE=wholemodule \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "${CI_LOG_DIR}/build.log"
 
       - name: Test without building
         id: tests
         if: ${{ env.RUN_MODE != 'compile' }}
         # Bound worker clone/boot and suite execution, leaving time for diagnostics.
+        # About seven minutes of this step pass before the first test: the simulator's first boot
+        # on a fresh runner. Two ways around it were measured on 2026-11-25 and did not help, so
+        # do not try them again without new evidence:
+        # - booting the simulator during the build: xcodebuild waited 4m20s before resolving
+        #   packages and the build step went from under 6 minutes to over 15 (run 45655671867);
+        # - -parallel-testing-enabled NO (no clone): 648 s against 621 s for the whole suite
+        #   (runs 45659361536 and 45655316573).
         timeout-minutes: 30
         env:
           SIMULATOR_UDID: ${{ steps.sim.outputs.udid }}
