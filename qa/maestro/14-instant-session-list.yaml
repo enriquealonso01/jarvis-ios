@@ -35,10 +35,16 @@ name: 14 session list reacts at once
 - tapOn:
     text: Send
     optional: true
+# The one-time notification offer can come up over the chat right after Send,
+# where it would block the swipe below; answer it if no earlier journey did.
+- tapOn:
+    text: Not now
+    optional: true
 # Leave the chat the way a user does, right after Send. Maestro has no Back on
-# iOS and the chat has no in-app back control, so this is the system edge-back
-# swipe: a rightward drag from the left edge pops the pushed chat. The bottom
-# bar's New Session marks the home; retry in case the gesture needs a second drag.
+# iOS. The chat keeps the system back button, but its label is the home's title
+# — the host — so the label-free way out is the system edge-back swipe: a
+# rightward drag from the left edge pops the pushed chat. The bottom bar's New
+# Session marks the home; retry in case the gesture needs a second drag.
 - retry:
     maxRetries: 3
     commands:
@@ -111,7 +117,7 @@ name: 14 session list reacts at once
     notVisible: Ask anything.*
     timeout: 5000
 - extendedWaitUntil:
-    notVisible: Instant list QA fourteen.*(Working|Waiting for approval|Needs input)
+    notVisible: Instant list QA fourteen.*(Working|Waiting for approval|Needs input).*
     timeout: 10000
 # 2. The unread mark, set by the user's own action: the row's context menu
 # writes it at once, so the row carries Unread in its label.
@@ -125,7 +131,7 @@ name: 14 session list reacts at once
 - waitForAnimationToEnd:
     timeout: 5000
 - extendedWaitUntil:
-    visible: Instant list QA fourteen.*Unread
+    visible: Instant list QA fourteen.*Unread.*
     timeout: 10000
 - takeScreenshot: 14-unread
 # Open the chat — the mark clears when the row is opened...
@@ -148,7 +154,7 @@ name: 14 session list reacts at once
     notVisible: Ask anything.*
     timeout: 5000
 - extendedWaitUntil:
-    notVisible: Instant list QA fourteen.*Unread
+    notVisible: Instant list QA fourteen.*Unread.*
     timeout: 3000
 - assertVisible: Instant list QA fourteen.*
 - takeScreenshot: 14-read-after-return
